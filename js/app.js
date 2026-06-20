@@ -76,11 +76,16 @@
         U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: TRJ.config.APP_SUB || 'Operacional' })
       ])
     ]);
-    var nav = U.h('nav', { class: 'flex flex-col gap-1 px-3 mt-2', style: { flex: '1' } }, LINKS.map(function (l) {
+    var hasTasks = App.data && App.data.rawTasks && App.data.rawTasks.length > 0;
+    var visibleLinks = hasTasks ? LINKS : LINKS.filter(function (l) { return l.hash === '#/importar' || l.hash === '#/configuracoes'; });
+    var nav = U.h('nav', { class: 'flex flex-col gap-1 px-3 mt-2', style: { flex: '1' } }, visibleLinks.map(function (l) {
       return U.h('a', { class: 'trj-link', href: l.hash, dataset: { hash: l.hash } }, [
         U.h('span', { class: 'ico', html: icon(l.ico) }), U.h('span', { text: l.label })
       ]);
     }));
+    if (!hasTasks) {
+      nav.appendChild(U.h('div', { class: 'text-xs px-2 pt-2', style: { color: 'var(--trj-muted)', lineHeight: '1.4' }, text: 'Faça o upload dos arquivos para liberar as abas de visualização.' }));
+    }
     var footer = U.h('div', { class: 'px-3 py-3', style: { borderTop: '1px solid var(--trj-border)' } }, [
       U.h('div', { class: 'text-xs px-2 mb-2 truncate', style: { color: 'var(--trj-muted)' }, text: user.email || '' }),
       U.h('button', { class: 'trj-link w-full', onclick: doLogout }, [U.h('span', { class: 'ico', html: icon('logout') }), U.h('span', { text: 'Sair' })])
@@ -88,7 +93,7 @@
     return U.h('aside', { id: 'sidebar', class: 'trj-card flex flex-col', style: { width: '256px', minWidth: '256px', borderRadius: '0', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', height: '100vh', position: 'sticky', top: '0' } }, [brand, nav, footer]);
   }
 
-  function doLogout() { TRJ.auth.logout(); location.hash = '#/dashboard'; showLogin(); }
+  function doLogout() { if (TRJ.files && TRJ.files.stopAutoMonitor) TRJ.files.stopAutoMonitor(); if (App._timer) { clearInterval(App._timer); App._timer = null; } TRJ.auth.logout(); location.hash = '#/dashboard'; showLogin(); }
 
   function setActiveLink() {
     var cur = location.hash || '#/dashboard';
@@ -160,7 +165,7 @@
   };
 
   App.refresh = async function () {
-    try { await App.loadAll(); render(); U.toast('Dados atualizados.', 'ok'); }
+    try { await App.loadAll(); buildShell(); render(); if (TRJ.files && TRJ.files.startAutoMonitor) TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000); U.toast('Dados atualizados.', 'ok'); }
     catch (e) { U.toast(e.message || 'Erro ao atualizar.', 'err'); }
   };
 
@@ -202,6 +207,8 @@
     U.closeModal();
     var hash = location.hash || '#/dashboard';
     if (!ROUTES[hash]) { location.hash = '#/dashboard'; return; }
+    var hasTasks = App.data && App.data.rawTasks && App.data.rawTasks.length > 0;
+    if (!hasTasks && hash !== '#/importar' && hash !== '#/configuracoes') { location.hash = '#/importar'; return; }
     setActiveLink();
     var fn = TRJ.pages[ROUTES[hash]];
     page.innerHTML = '';
@@ -221,12 +228,14 @@
     buildShell();
     try {
       await App.loadAll();
+      buildShell();
+      render();
+      if (TRJ.files && TRJ.files.startAutoMonitor) TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000);
     } catch (e) {
       // token expirado -> volta pro login
       if (/token/i.test(e.message || '')) { doLogout(); showLogin(e.message); return; }
       U.toast(e.message || 'Erro ao carregar dados.', 'err');
     }
-    render();
     if (TRJ.config.AUTO_REFRESH_SEG > 0) {
       if (App._timer) clearInterval(App._timer);
       App._timer = setInterval(function () { App.refresh(); }, TRJ.config.AUTO_REFRESH_SEG * 1000);

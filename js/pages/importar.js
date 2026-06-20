@@ -7,7 +7,7 @@
  * ===================================================================== */
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
-  var U = TRJ.ui, C = TRJ.constants, FS = TRJ.files;
+  var U = TRJ.ui, C = TRJ.constants, FS = TRJ.files, G = TRJ.genesis, Comp = TRJ.compute;
 
   function fmtData(iso) {
     if (!iso) return '—';
@@ -24,6 +24,31 @@
       arr.map(function (a) { return U.h('li', { text: a.nome + ' — ' + U.fmtNum(a.qtd) + ' tarefa(s)' }); }));
   }
 
+  function importarIncidentes(input, data, app) {
+    var file = input.files && input.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = async function () {
+      try {
+        U.loading(true);
+        var html = reader.result;
+        if (!G.ehGenesisHtml(html)) { U.toast('Arquivo não parece ser o painel G.E.N.E.S.I.S.', 'err'); return; }
+        var genesisRows = G.parseGenesisHtml(html);
+        if (!genesisRows.length) { U.toast('Nenhum incidente encontrado no arquivo.', 'err'); return; }
+        var ids = genesisRows.map(function (r) { return (r.enderecoId || r.site || '').toString().toUpperCase(); }).filter(Boolean);
+        var validMap = data.validMap || {};
+        if (ids.length) { var lk = await TRJ.api.lookupCities(ids); validMap = Object.assign({}, validMap, lk.map || {}); }
+        var incidentes = Comp.genesisToIncidents(genesisRows, validMap);
+        FS.setIncidents(incidentes, { origem: 'genesis', em: new Date().toISOString(), arquivo: file.name });
+        await app.reloadIncidents();
+        U.toast(incidentes.length + ' incidente(s) importado(s).', 'ok');
+        app.render();
+      } catch (e) { U.toast(e.message || 'Erro ao importar.', 'err'); }
+      finally { U.loading(false); input.value = ''; }
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+
   TRJ.pages.importar = function (container, ctx) {
     var app = ctx.app;
     var meta = FS.getMeta();
@@ -32,7 +57,14 @@
     var nInc = FS.getIncidents().length;
 
     container.appendChild(U.pageHeader('Importar dados',
-      'Carregue as tarefas dos arquivos “Atividades-TRJ_FMMT” — da pasta de Downloads ou por upload manual.'));
+      'Envie os arquivos obrigatórios antes de liberar as abas de visualização.'));
+
+    if (!nTasks) {
+      container.appendChild(U.h('div', { class: 'trj-card p-4 mb-5', style: { border: '1px solid rgba(255,140,0,.35)', background: 'rgba(255,140,0,.08)' } }, [
+        U.h('div', { class: 'font-bold mb-1', text: 'Upload obrigatório para liberar as visualizações' }),
+        U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: 'Faça o upload ou conecte a pasta dos arquivos de atividades. Depois disso, o Dashboard, SLA, Visão Regional e demais abas ficam disponíveis.' })
+      ]));
+    }
 
     // ---- status atual ----
     var statusCards = U.h('div', { class: 'grid grid-cols-2 md:grid-cols-4 gap-3 mb-5' }, [
@@ -93,6 +125,15 @@
     manual.appendChild(btnUp);
     grid.appendChild(manual);
 
+    // ================= bloco de incidentes (Sites Fora) =================
+    var incCard = U.h('div', { class: 'trj-card p-5 mb-5' });
+    incCard.appendChild(U.h('h3', { class: 'text-base font-bold', text: 'Incidentes (Sites Fora)' }));
+    incCard.appendChild(U.h('p', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: 'Importe o painel G.E.N.E.S.I.S nesta mesma aba para manter tudo centralizado.' }));
+    var incInput = U.h('input', { type: 'file', accept: '.html,.htm,.xls,.xlsx', style: { display: 'none' }, onchange: function () { importarIncidentes(this, ctx.data || {}, app); } });
+    var incBtn = U.h('button', { class: 'trj-btn trj-btn-primary mt-1', text: '⬆ Importar painel G.E.N.E.S.I.S', onclick: function () { incInput.click(); } });
+    incCard.appendChild(U.h('div', { class: 'flex gap-2 flex-wrap mt-2' }, [incInput, incBtn]));
+    container.appendChild(incCard);
+
     // ================= bloco de ajuda + limpar =================
     container.appendChild(U.h('div', { class: 'trj-card p-5' }, [
       U.h('h3', { class: 'text-sm font-bold mb-2', text: 'Como funciona' }),
@@ -100,7 +141,7 @@
         'O sistema procura na sua pasta os arquivos cujo nome começa com <b>Atividades-TRJ_FMMT</b>:<br>' +
         '• <b>Atividades-TRJ_FMMT_&lt;DATA&gt;</b> — tarefas agendadas (usa a mais recente)<br>' +
         '• <b>Atividades-TRJ_FMMT_Não-agendada</b> — tarefas não agendadas<br><br>' +
-        'Os <b>incidentes (Sites Fora)</b> são importados na própria página “Sites Fora”, colando/anexando o painel <b>G.E.N.E.S.I.S</b>. Tudo fica salvo no seu navegador.' }),
+        'Os <b>incidentes (Sites Fora)</b> agora podem ser importados também nesta mesma aba, colando/anexando o painel <b>G.E.N.E.S.I.S</b>. Tudo fica salvo no seu navegador.' }),
       U.h('div', { class: 'flex gap-2 flex-wrap mt-4' }, [
         U.h('button', { class: 'trj-btn trj-btn-ghost', text: 'Limpar tarefas', onclick: function () {
           if (!confirm('Remover todas as tarefas carregadas?')) return;

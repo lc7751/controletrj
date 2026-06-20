@@ -20,6 +20,7 @@
  * ===================================================================== */
 (function (TRJ) {
   var F = {};
+  var monitor = { timer: null, onUpdate: null, interval: 45000, lastSignature: null, busy: false };
 
   // ------------------------------------------------------------------
   // 1) MAPA DE COLUNAS  (número da coluna no .xlsx, começando em 1)
@@ -146,12 +147,18 @@
     try { mem.inc = JSON.parse(localStorage.getItem(LS_INC) || '[]') || []; } catch (e) { mem.inc = []; }
     try { mem.meta = JSON.parse(localStorage.getItem(LS_META) || '{}') || {}; } catch (e) { mem.meta = {}; }
   })();
+  monitor.lastSignature = mem.meta && mem.meta.tasks && mem.meta.tasks.signature ? mem.meta.tasks.signature : null;
 
   function saveLS(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* cota cheia: mantém só em memória */ } }
 
   function setTasks(arr, meta) {
     mem.tasks = arr || [];
-    if (meta) mem.meta = Object.assign({}, mem.meta, { tasks: meta });
+    if (meta) {
+      var payload = Object.assign({}, meta);
+      if (payload.signature == null && payload.signatura != null) payload.signature = payload.signatura;
+      mem.meta = Object.assign({}, mem.meta, { tasks: payload });
+      monitor.lastSignature = payload.signature || null;
+    }
     saveLS(LS_TASKS, mem.tasks); saveLS(LS_META, mem.meta);
   }
   function setIncidents(arr, meta) {
@@ -164,7 +171,7 @@
   F.setTasks = setTasks;
   F.setIncidents = setIncidents;
   F.getMeta = function () { return mem.meta || {}; };
-  F.clearTasks = function () { setTasks([], { origem: null, em: null, arquivos: [] }); };
+  F.clearTasks = function () { monitor.lastSignature = null; setTasks([], { origem: null, em: null, arquivos: [], signature: null }); };
   F.clearIncidents = function () { setIncidents([], { origem: null, em: null }); };
 
   // ------------------------------------------------------------------
@@ -211,6 +218,21 @@
     }).catch(function () { return false; });
   }
 
+  function buildSignature(matches) {
+    return (matches || []).map(function (m) { return m.name + '|' + m.key; }).sort().join('::');
+  }
+
+  async function collectMatches(handle) {
+    var matches = [];
+    for await (var entry of handle.values()) {
+      if (entry.kind !== 'file') continue;
+      if (!isAtividadesFile(entry.name)) continue;
+      var file = await entry.getFile();
+      matches.push({ name: entry.name, file: file, naoAgendada: isNaoAgendada(entry.name), key: dateKey(entry.name, file.lastModified) });
+    }
+    return matches;
+  }
+
   // ------------------------------------------------------------------
   // 6) File System Access API (Chrome/Edge + HTTPS)
   // ------------------------------------------------------------------
@@ -235,7 +257,7 @@
     return false;
   }
 
-  async function loadFromMatches(matches, origem) {
+  async function loadFromMatches(matches, origem, signature) {
     var ag = matches.filter(function (m) { return !m.naoAgendada; }).sort(function (a, b) { return b.key - a.key; });
     var na = matches.filter(function (m) { return m.naoAgendada; }).sort(function (a, b) { return b.key - a.key; });
     var chosen = [];
@@ -249,7 +271,7 @@
       tasks = tasks.concat(parsed);
       arquivos.push({ nome: chosen[i].name, qtd: parsed.length });
     }
-    setTasks(tasks, { origem: origem, arquivos: arquivos, em: new Date().toISOString() });
+    setTasks(tasks, { origem: origem, arquivos: arquivos, em: new Date().toISOString(), signature: signature || buildSignature(matches) });
     return { total: tasks.length, arquivos: arquivos };
   }
 
@@ -258,15 +280,13 @@
     var handle = await idbGet(IDB_KEY);
     if (!handle) throw new Error('Nenhuma pasta conectada. Clique em "Conectar pasta de Downloads".');
     if (!(await ensurePermission(handle))) throw new Error('Permissão para ler a pasta foi negada.');
-    var matches = [];
-    for await (var entry of handle.values()) {
-      if (entry.kind !== 'file') continue;
-      if (!isAtividadesFile(entry.name)) continue;
-      var file = await entry.getFile();
-      matches.push({ name: entry.name, file: file, naoAgendada: isNaoAgendada(entry.name), key: dateKey(entry.name, file.lastModified) });
-    }
+    var matches = await collectMatches(handle);
     if (!matches.length) throw new Error('Nenhum arquivo "Atividades-TRJ_FMMT" foi encontrado na pasta conectada.');
-    return await loadFromMatches(matches, 'pasta');
+    var sig = buildSignature(matches);
+    if (sig && sig === monitor.lastSignature) {
+      return { total: mem.tasks.length, arquivos: (mem.meta && mem.meta.tasks && mem.meta.tasks.arquivos) || [], unchanged: true };
+    }
+    return await loadFromMatches(matches, 'pasta', sig);
   };
 
   // ------------------------------------------------------------------
@@ -285,6 +305,34 @@
   };
 
   // Preview rápido (sem salvar) — para o usuário conferir o mapeamento
+  F.startAutoMonitor = function (onUpdate, intervalMs) {
+    F.stopAutoMonitor();
+    monitor.onUpdate = typeof onUpdate === 'function' ? onUpdate : null;
+    monitor.interval = intervalMs || monitor.interval || 45000;
+    if (!F.supportsDirectoryPicker()) return false;
+    monitor.timer = setInterval(async function () {
+      if (monitor.busy) return;
+      monitor.busy = true;
+      try {
+        var res = await F.scanFolder();
+        if (res && !res.unchanged && monitor.onUpdate) {
+          await monitor.onUpdate(res);
+        }
+      } catch (e) {
+        // monitoramento silencioso: erros aparecem quando o usuário tenta acessar manualmente
+      } finally {
+        monitor.busy = false;
+      }
+    }, monitor.interval);
+    return true;
+  };
+
+  F.stopAutoMonitor = function () {
+    if (monitor.timer) clearInterval(monitor.timer);
+    monitor.timer = null;
+    monitor.busy = false;
+  };
+
   F.previewFile = async function (file) {
     var buf = await file.arrayBuffer();
     var parsed = parseArrayBuffer(buf);
