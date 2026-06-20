@@ -102,3 +102,44 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
 
 .chart-wrap { position: relative; height: 280px; }
 .chart-wrap.sm { height: 230px; }
+
+/* ===== EFEITO DE HOVER PARA ITENS CLICÁVEIS / GRÁFICOS ===== */
+/* classe para itens clicáveis dentro do DOM (botões, opções, itens do gráfico) */
+.clickable {
+  transition: background-color .12s ease, border-color .12s ease, box-shadow .12s ease, transform .08s ease;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+/* destaque mais claro ao passar o mouse + borda "quase branca" */
+.clickable:hover {
+  background-color: rgba(255,255,255,0.06); /* cor mais clara */
+  border: 1px solid rgba(255,255,255,0.35); /* borda esbranquiçada no hover */
+  box-shadow: 0 6px 18px rgba(255,255,255,0.04);
+  transform: translateY(-2px);
+}
+
+/* evitar que rótulos/moldura do gráfico tenham hover */
+/* aplique .chart-frame nas divs que representam moldura do gráfico */
+.chart-frame, .chart-frame .chart-label {
+  pointer-events: none;    /* impede efeito hover sobre labels/moldura */
+  background: transparent;
+  box-shadow: none;
+  border: none;
+}
+
+/* Quando for elemento interativo dentro do gráfico (legendas clicáveis, barras customizadas)
+   adicionar classe `.chart-clickable` via JS para aplicar o efeito sem aplicar em labels */
+.chart-clickable { /* herda do .clickable */
+  transition: background-color .12s ease, border-color .12s ease, box-shadow .12s ease, transform .08s ease;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.chart-clickable:hover {
+  background-color: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.28);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+}
+
+/* Ajustes visuais para botões/links que já existem */
+.trj-link.clickable, .trj-btn.clickable { display:inline-flex; align-items:center; }
