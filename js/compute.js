@@ -1,0 +1,422 @@
+/* Agregacoes e enriquecimento (portado de app/api/*) */
+(function (TRJ) {
+  var C = TRJ.constants;
+  var D = TRJ.domain;
+  var G = TRJ.genesis;
+  var C2 = {};
+
+  function up(s) { return (s == null ? '' : s).toString().toUpperCase().trim(); }
+  function cidadeDe(cidadeUf) {
+    if (!cidadeUf) return null;
+    var parte = cidadeUf.split('/')[0];
+    parte = parte ? parte.trim() : '';
+    return parte || null;
+  }
+  function validFor(map, enderecoId, siteId) {
+    if (!map) return null;
+    var k1 = up(enderecoId), k2 = up(siteId);
+    return (k1 && map[k1]) || (k2 && map[k2]) || null;
+  }
+
+  // ---- IDs presentes em tasks/incidents para o lookupCities ----
+  function collectIds(tasks, incidents) {
+    var set = {};
+    (tasks || []).forEach(function (t) {
+      if (t.enderecoId) set[up(t.enderecoId)] = true;
+      if (t.siteId) set[up(t.siteId)] = true;
+    });
+    (incidents || []).forEach(function (r) {
+      if (r.enderecoId) set[up(r.enderecoId)] = true;
+      if (r.site) set[up(r.site)] = true;
+    });
+    return Object.keys(set);
+  }
+
+  // ---- Enriquecimento de TASKS (regiao/cidade/SLA) ----
+  function enrichTasks(rawTasks, validMap, prazoMap, now) {
+    now = now || new Date();
+    return (rawTasks || []).map(function (t) {
+      var v = validFor(validMap, t.enderecoId, t.siteId);
+      var regiao = D.determinarRegiao(t.filaAtual, t.microarea, v);
+      var cidade = (v && v.cidade) || null;
+      var sla = D.computeSla(t, prazoMap, now);
+      return Object.assign({}, t, {
+        sequenciaId: t.sequenciaId === '' || t.sequenciaId == null ? null : Number(t.sequenciaId),
+        regiao: regiao,
+        cidade: cidade,
+        vencimentoCalc: sla.vencimentoCalc,
+        fonteSla: sla.fonteSla,
+        statusSla: sla.statusSla
+      });
+    });
+  }
+
+  // ---- Enriquecimento de INCIDENTES vindos da planilha (so adiciona regiao) ----
+  function enrichIncidents(rawIncidents, validMap) {
+    return (rawIncidents || []).map(function (r) {
+      var v = validFor(validMap, r.enderecoId, r.site);
+      var regiao = D.determinarRegiao(null, null, v);
+      return Object.assign({}, r, {
+        qtdFurtos: Number(r.qtdFurtos || 0),
+        qtdCelulas: Number(r.qtdCelulas || 0),
+        regiao: regiao
+      });
+    });
+  }
+
+  // ---- Converte linhas do painel G.E.N.E.S.I.S em registros de incidente ----
+  function derivarStatusTrat(r) {
+    var ev = (r.statusEvento || '').toLowerCase();
+    if (ev && ev !== 'não iniciado' && ev !== 'nao iniciado') return 'EM TRATAMENTO';
+    if (r.previsao || r.causa) return 'EM TRATAMENTO';
+    return 'ATIVO';
+  }
+
+  function genesisToIncidents(genesisRows, validMap) {
+    var base = new Date();
+    return (genesisRows || []).map(function (r) {
+      var v = validFor(validMap, r.enderecoId, r.site);
+      var cidade = (v && v.cidade) || cidadeDe(r.cidadeUf);
+      var anf = r.anf || null;
+      var horarioDt = G.horarioDtDeDowntime(r.downtime, base) || D.parsePlatformDate(r.horario, base);
+      var obs = [r.eve ? ('EVE ' + r.eve) : null, r.alarme ? ('Alarme: ' + r.alarme) : null].filter(Boolean).join(' | ') || null;
+      return {
+        site: r.site || null,
+        horario: r.horario || null,
+        horarioDt: horarioDt ? horarioDt.toISOString() : null,
+        downtime: r.downtime || null,
+        gsbi: r.gsbi || null,
+        qtdFurtos: r.qtdFurtos || 0,
+        qtdCelulas: r.qtdCelulas || 0,
+        tecnologia: r.tecnologia || null,
+        enderecoId: r.enderecoId || null,
+        anf: anf,
+        cidadeUf: r.cidadeUf || null,
+        cidade: cidade || null,
+        infra: r.infra || null,
+        statusEvento: r.statusEvento || null,
+        previsao: r.previsao || null,
+        causa: r.causa || null,
+        causaGrupo: D.agruparCausa(r.causa),
+        detalhe: r.detalhe || null,
+        obs: obs,
+        tsk: null,
+        statusTrat: derivarStatusTrat(r)
+      };
+    });
+  }
+
+  // ===================== DASHBOARD =====================
+  function dashboard(tasksEnriched, incidentsEnriched, filtros) {
+    filtros = filtros || {};
+    var now = Date.now();
+    var regiaoFiltro = filtros.regiao || 'TODAS';
+    var prioridadeFiltro = filtros.prioridade || 'TODAS';
+
+    var tasks = tasksEnriched.filter(function (t) {
+      if (regiaoFiltro !== 'TODAS' && (t.regiao || 'OTHERS') !== regiaoFiltro) return false;
+      if (prioridadeFiltro !== 'TODAS' && up(t.prioridade) !== prioridadeFiltro) return false;
+      return true;
+    });
+
+    var sep = D.separarTicketsManuais(tasks);
+    var tickets = sep.tickets, manuais = sep.manuais;
+
+    var backlog = tickets.filter(function (t) { return D.isBacklogStatus(t.status); });
+    var concluidas = tickets.filter(function (t) { return !D.isBacklogStatus(t.status); });
+    var fora = backlog.filter(function (t) { return t.statusSla === 'FORA DO SLA'; });
+    var dentro = backlog.filter(function (t) { return t.statusSla === 'DENTRO DO SLA'; });
+    var indef = backlog.filter(function (t) { return t.statusSla === 'INDEFINIDO' || t.fonteSla === 'SEM DADOS'; });
+    var preditiva = tickets.filter(function (t) { return t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA'; });
+
+    function encerradaDentro(t) {
+      if (!t.fim || !t.vencimentoCalc) return null;
+      return new Date(t.fim).getTime() <= new Date(t.vencimentoCalc).getTime();
+    }
+    var encDentro = 0, encFora = 0;
+    concluidas.forEach(function (t) { var r = encerradaDentro(t); if (r === true) encDentro++; else if (r === false) encFora++; });
+    var baseEnc = encDentro + encFora;
+    var slaGeral;
+    if (baseEnc > 0) slaGeral = Math.round((encDentro / baseEnc) * 1000) / 10;
+    else { var baseBl = dentro.length + fora.length; slaGeral = baseBl > 0 ? Math.round((dentro.length / baseBl) * 1000) / 10 : 0; }
+
+    var kpis = {
+      foraSla: fora.length, backlogTotal: backlog.length, backlogIndef: indef.length,
+      preditiva: preditiva.length, produtividade: concluidas.length, slaGeral: slaGeral
+    };
+
+    // Aging
+    var agingCount = C.AGING_BUCKETS.map(function () { return 0; });
+    backlog.forEach(function (t) {
+      if (!t.dataCriacao) return;
+      var idade = Math.round((now - new Date(t.dataCriacao).getTime()) / 60000);
+      var idx = C.AGING_BUCKETS.findIndex(function (b) { return idade >= b.min && idade < b.max; });
+      if (idx >= 0) agingCount[idx]++;
+    });
+    var aging = C.AGING_BUCKETS.map(function (b, i) { return { label: b.label, total: agingCount[i], cor: C.AGING_CORES[i] }; });
+
+    // Vencimento
+    var vencCount = C.VENCIMENTO_BUCKETS.map(function () { return 0; });
+    dentro.forEach(function (t) {
+      if (!t.vencimentoCalc) return;
+      var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
+      if (rest < 0) return;
+      var idx = C.VENCIMENTO_BUCKETS.findIndex(function (b) { return rest >= b.min && rest < b.max; });
+      if (idx >= 0) vencCount[idx]++;
+    });
+    var prazosVencimento = C.VENCIMENTO_BUCKETS.map(function (b, i) { return { label: b.label, total: vencCount[i], cor: b.cor }; });
+
+    // Sites fora por regiao (incidentes ativos)
+    var sfRegMap = {};
+    incidentsEnriched.forEach(function (inc) {
+      if (up(inc.statusTrat) === 'RESOLVIDO') return;
+      var reg = inc.regiao || 'OTHERS';
+      sfRegMap[reg] = (sfRegMap[reg] || 0) + 1;
+    });
+    var sitesForaRegiao = C.REGIOES.map(function (r) { return { regiao: r, label: C.REGIAO_LABELS[r] || r, total: sfRegMap[r] || 0 }; })
+      .filter(function (x) { return x.total > 0; });
+
+    // SLA por regiao (backlog)
+    var slaRegMap = {};
+    backlog.forEach(function (t) {
+      var r = t.regiao || 'OTHERS';
+      if (!slaRegMap[r]) slaRegMap[r] = { dentro: 0, fora: 0 };
+      if (t.statusSla === 'FORA DO SLA') slaRegMap[r].fora++;
+      else if (t.statusSla === 'DENTRO DO SLA') slaRegMap[r].dentro++;
+    });
+    var slaPorRegiao = C.REGIOES.map(function (r) { return { regiao: r, label: C.REGIAO_LABELS[r] || r, dentro: (slaRegMap[r] && slaRegMap[r].dentro) || 0, fora: (slaRegMap[r] && slaRegMap[r].fora) || 0 }; })
+      .filter(function (x) { return x.dentro + x.fora > 0; });
+
+    // Atividades manuais
+    var wo = 0, prev = 0, conj = 0, outras = 0;
+    manuais.forEach(function (t) {
+      switch (D.categoriaManual(t.tipoAtividade)) {
+        case 'prev': prev++; break; case 'conj': conj++; break; case 'wo': wo++; break; default: outras++;
+      }
+    });
+    var atividadesManuais = [
+      { name: 'Atividade WO', value: wo }, { name: 'Atividade Preventiva', value: prev },
+      { name: 'Atividade Conjunta', value: conj }, { name: 'Outras', value: outras }
+    ].filter(function (x) { return x.value > 0; });
+
+    // Produtividade
+    var prod = { Geral: { dentro: encDentro, fora: encFora }, CCI: { dentro: 0, fora: 0 }, Campo: { dentro: 0, fora: 0 } };
+    concluidas.forEach(function (t) {
+      var r = encerradaDentro(t); if (r === null) return;
+      var cat = D.classificarCciCampo(t.filaAtual);
+      if (r) prod[cat].dentro++; else prod[cat].fora++;
+    });
+    var produtividade = ['Geral', 'CCI', 'Campo'].map(function (c) { return { categoria: c, dentro: prod[c].dentro, fora: prod[c].fora }; });
+
+    // Top cidades (incidentes ativos)
+    var ativos = incidentsEnriched.filter(function (i) { return up(i.statusTrat) !== 'RESOLVIDO'; });
+    var totalSitesFora = ativos.length;
+    var anfMap = {}; C.ANF_LIST.forEach(function (a) { anfMap[a] = 0; });
+    var cidMap = {};
+    ativos.forEach(function (inc) {
+      var anf = (inc.anf || '').toString().trim();
+      if (anf in anfMap) anfMap[anf]++;
+      var cid = up(inc.cidade) || 'N/D';
+      cidMap[cid] = (cidMap[cid] || 0) + 1;
+    });
+    var porAnf = C.ANF_LIST.map(function (a) {
+      return { anf: 'ANF ' + a, anfRaw: a, total: anfMap[a], pct: totalSitesFora > 0 ? Math.round((anfMap[a] / totalSitesFora) * 1000) / 10 : 0 };
+    });
+    var maxCid = Math.max.apply(null, [1].concat(Object.keys(cidMap).map(function (k) { return cidMap[k]; })));
+    var cidades = Object.keys(cidMap).map(function (cidade) { return { cidade: cidade, total: cidMap[cidade], pct: Math.round((cidMap[cidade] / maxCid) * 100) }; })
+      .sort(function (a, b) { return b.total - a.total; }).slice(0, 25);
+
+    return {
+      kpis: kpis, aging: aging, prazosVencimento: prazosVencimento, sitesForaRegiao: sitesForaRegiao,
+      slaPorRegiao: slaPorRegiao, atividadesManuais: atividadesManuais, produtividade: produtividade,
+      topCidades: { totalSitesFora: totalSitesFora, porAnf: porAnf, cidades: cidades },
+      atualizadoEm: new Date().toISOString()
+    };
+  }
+
+  // ===================== SLA (pagina) =====================
+  function slaPage(tasksEnriched, prazoMap) {
+    var tasks = D.dedupPorTsk(tasksEnriched).filter(function (t) { return D.isTicketCorretiva(t.tipoAtividade); });
+    function aderencia(list) {
+      var fora = list.filter(function (t) { return t.statusSla === 'FORA DO SLA'; }).length;
+      var dentro = list.filter(function (t) { return t.statusSla === 'DENTRO DO SLA'; }).length;
+      var aval = fora + dentro;
+      return { fora: fora, dentro: dentro, aval: aval, pct: aval > 0 ? Math.round((dentro / aval) * 1000) / 10 : 0 };
+    }
+    var porPrioridade = C.PRIORIDADES.map(function (p) {
+      var list = tasks.filter(function (t) { return up(t.prioridade) === p; });
+      var a = aderencia(list);
+      return Object.assign({ prioridade: p, prazoHoras: prazoMap[p], total: list.length }, a);
+    });
+    var porRegiao = C.REGIOES.map(function (r) {
+      var list = tasks.filter(function (t) { return (t.regiao || 'OTHERS') === r; });
+      var a = aderencia(list);
+      return Object.assign({ regiao: r, label: C.REGIAO_LABELS[r] || r, total: list.length }, a);
+    }).filter(function (x) { return x.total > 0; });
+    var geral = aderencia(tasks);
+    return { porPrioridade: porPrioridade, porRegiao: porRegiao, geral: geral, prazoMap: prazoMap };
+  }
+
+  // ===================== REGIONAL (pagina) =====================
+  function isBacklogSimples(status) {
+    var s = up(status);
+    return !(s.indexOf('CONCLU') >= 0 || s.indexOf('CANCEL') >= 0);
+  }
+  function regionalPage(tasksEnriched) {
+    var tasks = D.dedupPorTsk(tasksEnriched).filter(function (t) { return D.isTicketCorretiva(t.tipoAtividade); });
+    var resumo = C.REGIOES.map(function (r) {
+      var list = tasks.filter(function (t) { return (t.regiao || 'OTHERS') === r; });
+      var backlog = list.filter(function (t) { return isBacklogSimples(t.status); });
+      var fora = list.filter(function (t) { return t.statusSla === 'FORA DO SLA'; }).length;
+      var dentro = list.filter(function (t) { return t.statusSla === 'DENTRO DO SLA'; }).length;
+      var aval = fora + dentro;
+      return {
+        regiao: r, label: C.REGIAO_LABELS[r] || r, total: list.length, backlog: backlog.length,
+        foraSla: fora, dentroSla: dentro, aderencia: aval > 0 ? Math.round((dentro / aval) * 1000) / 10 : 0
+      };
+    }).filter(function (x) { return x.total > 0; });
+    return { resumo: resumo };
+  }
+
+  // ===================== INCIDENTES (pagina) =====================
+  var LIMIAR_MASSIVA = 4;
+  function incidentsPage(incidentsEnriched, filtros) {
+    filtros = filtros || {};
+    var status = filtros.status || '';
+    var anf = filtros.anf || '';
+    var q = (filtros.q || '').trim().toUpperCase();
+
+    var rows = incidentsEnriched.filter(function (r) {
+      if (status && status !== 'TODAS' && up(r.statusTrat) !== up(status)) return false;
+      if (anf && anf !== 'TODAS' && (r.anf || '').toString().trim() !== anf) return false;
+      if (q) {
+        var hay = ((r.site || '') + ' ' + (r.enderecoId || '') + ' ' + (r.cidade || '') + ' ' + (r.causa || '')).toUpperCase();
+        if (hay.indexOf(q) < 0) return false;
+      }
+      return true;
+    });
+    rows.sort(function (a, b) {
+      var ta = a.horarioDt ? new Date(a.horarioDt).getTime() : 0;
+      var tb = b.horarioDt ? new Date(b.horarioDt).getTime() : 0;
+      return tb - ta;
+    });
+
+    // Massivas (todos ativos, ignora filtros)
+    var todos = incidentsEnriched.filter(function (r) { return up(r.statusTrat) !== 'RESOLVIDO'; });
+    var anfAtivos = {};
+    todos.forEach(function (t) {
+      var a = (t.anf || '').toString().trim() || 'N/D';
+      if (!anfAtivos[a]) anfAtivos[a] = { sites: 0, cidades: {} };
+      anfAtivos[a].sites++;
+      var cid = (t.cidade || t.cidadeUf || 'N/D').toString();
+      anfAtivos[a].cidades[cid] = (anfAtivos[a].cidades[cid] || 0) + 1;
+    });
+    var massivas = Object.keys(anfAtivos).filter(function (a) { return a !== 'N/D' && anfAtivos[a].sites >= LIMIAR_MASSIVA; })
+      .map(function (a) {
+        var v = anfAtivos[a];
+        return {
+          anf: a, label: C.ANF_LABELS[a] || ('ANF ' + a), total: v.sites,
+          cidades: Object.keys(v.cidades).map(function (cidade) { return { cidade: cidade, qtd: v.cidades[cidade] }; }).sort(function (x, y) { return y.qtd - x.qtd; })
+        };
+      }).sort(function (x, y) { return y.total - x.total; });
+    var anfsMassivas = {}; massivas.forEach(function (m) { anfsMassivas[m.anf] = true; });
+    var rowsComFlag = rows.map(function (r) {
+      return Object.assign({}, r, { emMassiva: up(r.statusTrat) !== 'RESOLVIDO' && !!anfsMassivas[(r.anf || '').toString().trim()] });
+    });
+
+    var porAnf = {}, porCausa = {}, porGsbi = {}, furtos = 0, celulas = 0;
+    rows.forEach(function (r) {
+      porAnf[r.anf || 'N/D'] = (porAnf[r.anf || 'N/D'] || 0) + 1;
+      porCausa[r.causaGrupo || 'Outros'] = (porCausa[r.causaGrupo || 'Outros'] || 0) + 1;
+      porGsbi[r.gsbi || 'N/D'] = (porGsbi[r.gsbi || 'N/D'] || 0) + 1;
+      furtos += Number(r.qtdFurtos || 0); celulas += Number(r.qtdCelulas || 0);
+    });
+    function toArr(o) { return Object.keys(o).map(function (k) { return { name: k, value: o[k] }; }); }
+
+    return {
+      rows: rowsComFlag, total: rows.length, massivas: massivas, limiarMassiva: LIMIAR_MASSIVA,
+      resumo: {
+        ativos: rows.filter(function (r) { return up(r.statusTrat) === 'ATIVO'; }).length,
+        emTratamento: rows.filter(function (r) { return up(r.statusTrat) === 'EM TRATAMENTO'; }).length,
+        resolvidos: rows.filter(function (r) { return up(r.statusTrat) === 'RESOLVIDO'; }).length,
+        furtos: furtos, celulas: celulas, massivasCount: massivas.length,
+        porAnf: toArr(porAnf), porCausa: toArr(porCausa), porGsbi: toArr(porGsbi)
+      }
+    };
+  }
+
+  // ===================== DRILL (linhas detalhadas) =====================
+  // Retorna a lista de tasks (corretiva) que atende ao tipo de drill.
+  function drillTasks(tasksEnriched, spec, filtros) {
+    filtros = filtros || {};
+    var tasks = tasksEnriched.filter(function (t) {
+      if (filtros.regiao && filtros.regiao !== 'TODAS' && (t.regiao || 'OTHERS') !== filtros.regiao) return false;
+      if (filtros.prioridade && filtros.prioridade !== 'TODAS' && up(t.prioridade) !== filtros.prioridade) return false;
+      return true;
+    });
+    var sep = D.separarTicketsManuais(tasks);
+    var tickets = sep.tickets, manuais = sep.manuais;
+    var backlog = tickets.filter(function (t) { return D.isBacklogStatus(t.status); });
+    var concluidas = tickets.filter(function (t) { return !D.isBacklogStatus(t.status); });
+    function encDentro(t) { if (!t.fim || !t.vencimentoCalc) return null; return new Date(t.fim).getTime() <= new Date(t.vencimentoCalc).getTime(); }
+    var now = Date.now();
+    var tipo = spec.tipo, arg = spec.arg;
+
+    switch (tipo) {
+      case 'foraSla': return backlog.filter(function (t) { return t.statusSla === 'FORA DO SLA'; });
+      case 'backlogTotal': return backlog;
+      case 'backlogIndef': return backlog.filter(function (t) { return t.statusSla === 'INDEFINIDO' || t.fonteSla === 'SEM DADOS'; });
+      case 'preditiva': return tickets.filter(function (t) { return t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA'; });
+      case 'produtividade': return concluidas;
+      case 'aging': {
+        var b = C.AGING_BUCKETS[parseInt(arg, 10)]; if (!b) return [];
+        return backlog.filter(function (t) { if (!t.dataCriacao) return false; var idade = Math.round((now - new Date(t.dataCriacao).getTime()) / 60000); return idade >= b.min && idade < b.max; });
+      }
+      case 'vencimento': {
+        var vb = C.VENCIMENTO_BUCKETS[parseInt(arg, 10)]; if (!vb) return [];
+        return backlog.filter(function (t) { if (t.statusSla !== 'DENTRO DO SLA' || !t.vencimentoCalc) return false; var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000); return rest >= 0 && rest >= vb.min && rest < vb.max; });
+      }
+      case 'slaRegiao': {
+        var parts = (arg || '').split('|'); var reg = parts[0]; var lado = parts[1];
+        return backlog.filter(function (t) { return (t.regiao || 'OTHERS') === reg && t.statusSla === (lado === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA'); });
+      }
+      case 'regiaoBacklog': return backlog.filter(function (t) { return (t.regiao || 'OTHERS') === arg; });
+      case 'regiaoSla': {
+        var p2 = (arg || '').split('|'); var reg2 = p2[0]; var lado2 = p2[1];
+        return tickets.filter(function (t) { return (t.regiao || 'OTHERS') === reg2 && t.statusSla === (lado2 === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA'); });
+      }
+      case 'prioridadeSla': {
+        var p3 = (arg || '').split('|'); var prio = p3[0]; var lado3 = p3[1];
+        var list = D.dedupPorTsk(tickets).filter(function (t) { return up(t.prioridade) === prio; });
+        if (!lado3) return list.filter(function (t) { return t.statusSla === 'DENTRO DO SLA' || t.statusSla === 'FORA DO SLA'; });
+        return list.filter(function (t) { return t.statusSla === (lado3 === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA'); });
+      }
+      case 'atividades': return manuais.filter(function (t) { return D.categoriaManual(t.tipoAtividade) === arg; });
+      case 'produtividadeCat': {
+        var p4 = (arg || '').split('|'); var cat = p4[0]; var lado4 = p4[1];
+        return concluidas.filter(function (t) { var r = encDentro(t); if (r === null) return false; if (cat !== 'Geral' && D.classificarCciCampo(t.filaAtual) !== cat) return false; return lado4 === 'fora' ? r === false : r === true; });
+      }
+      default: return [];
+    }
+  }
+
+  function drillIncidents(incidentsEnriched, spec) {
+    var ativos = incidentsEnriched.filter(function (i) { return up(i.statusTrat) !== 'RESOLVIDO'; });
+    if (spec.tipo === 'sitesFora') return ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; });
+    if (spec.tipo === 'anf') return ativos.filter(function (i) { return (i.anf || '').toString().trim() === spec.arg; });
+    if (spec.tipo === 'cidade') return ativos.filter(function (i) { return up(i.cidade) === up(spec.arg); });
+    return [];
+  }
+
+  C2.collectIds = collectIds;
+  C2.enrichTasks = enrichTasks;
+  C2.enrichIncidents = enrichIncidents;
+  C2.genesisToIncidents = genesisToIncidents;
+  C2.dashboard = dashboard;
+  C2.slaPage = slaPage;
+  C2.regionalPage = regionalPage;
+  C2.incidentsPage = incidentsPage;
+  C2.drillTasks = drillTasks;
+  C2.drillIncidents = drillIncidents;
+  TRJ.compute = C2;
+})(window.TRJ = window.TRJ || {});
