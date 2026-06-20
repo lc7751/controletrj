@@ -25,7 +25,7 @@
 
     const sep = detectSeparator(lines[0]);
     const firstCols = lines[0].split(sep).map((c) => c.trim().toUpperCase());
-    const hasHeader = ['END_ID', 'END_ID'.replace('_','_'), 'SITE', 'BAIRRO', 'RESPONSÁVEL', 'RESPONSAVEL', 'DATA']
+    const hasHeader = ['END_ID','END ID','SITE','BAIRRO','RESPONSÁVEL','RESPONSAVEL','DATA']
       .some((h) => firstCols.includes(h));
 
     const results = [];
@@ -78,7 +78,7 @@
 
           <div class="trj-card p-4">
             <h3 class="font-bold mb-2">2. Incidentes (colar texto)</h3>
-            <textarea id="incidentes-text" class="w-full h-36 mb-3" placeholder="Cole aqui as colunas do painel G.E.N.E.S.I.S (tab/;| separados)"></textarea>
+            <textarea id="incidentes-text" class="w-full h-36 mb-3" placeholder="Cole aqui as colunas do painel G.E.N.E.S.I.S (separadores: tab, ; ou |)"></textarea>
             <button id="btn-parse-incidentes" class="trj-btn w-full py-2">Importar Incidentes</button>
             <div id="incidentes-parse-result" class="text-xs mt-2 text-muted"></div>
           </div>
@@ -181,7 +181,6 @@
   document.addEventListener('DOMContentLoaded', function () {
     const directContainer = document.getElementById('importar-page');
     if (directContainer) {
-      // caso queira que o HTML já existente fique, você pode ajustar
       render(directContainer);
     }
   });
