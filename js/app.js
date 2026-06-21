@@ -1,167 +1,256 @@
-/* app.js — VERSÃO FINAL AJUSTADA */
+/* =====================================================================
+ * app.js  —  NÚCLEO DA APLICAÇÃO (bootstrap + rotas + cache de dados)
+ * ---------------------------------------------------------------------
+ * - Verifica login; mostra a tela de login ou o painel.
+ * - Monta a barra lateral e troca de página pelo hash da URL (#/...).
+ * - Carrega tarefas + incidentes + cidades + config UMA vez e reaproveita.
+ * ===================================================================== */
 (function (TRJ) {
   var U = TRJ.ui, D = TRJ.domain, Comp = TRJ.compute, C = TRJ.constants;
   var App = { data: null };
 
-  // Ícones e Links (Dashboard e SLA agora exigem tarefas)
+  // ícones SVG simples (stroke currentColor)
+  var ICONS = {
+    dashboard: '<path d="M3 13h8V3H3zM13 21h8V3h-8zM3 21h8v-6H3z"/>',
+    sla: '<path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/>',
+    regional: '<path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/>',
+    sites: '<path d="M12 2v6M5 8a7 7 0 0 1 14 0M8 11a4 4 0 0 1 8 0M12 14v8"/>',
+    cadastro: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 14h5"/>',
+    config: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.3 1a7 7 0 0 0-1.7-1l-.4-2.5h-4l-.4 2.5a7 7 0 0 0-1.7 1l-2.3-1-2 3.5L5 11a7 7 0 0 0 0 2l-2 1.5 2 3.5 2.3-1a7 7 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7 7 0 0 0 1.7-1l2.3 1 2-3.5-2-1.5a7 7 0 0 0 .1-1z"/>',
+    refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+    importar: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>'
+  };
+  function icon(name, size) {
+    return '<svg width="' + (size || 18) + '" height="' + (size || 18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || '') + '</svg>';
+  }
+  App.icon = icon;
+
   var LINKS = [
-    { hash: '#/dashboard', label: 'Dashboard', ico: 'dashboard', requiresTasks: true },
-    { hash: '#/sla', label: 'SLA Ativo', ico: 'sla', requiresTasks: true },
-    { hash: '#/regional', label: 'Regional', ico: 'regional', requiresTasks: true },
-    { hash: '#/sites-fora', label: 'Sites Fora', ico: 'sites', requiresTasks: true },
-    { hash: '#/cadastro', label: 'Cadastro Sites', ico: 'cadastro' },
-    { hash: '#/importar', label: 'Importar Dados', ico: 'importar' },
+    { hash: '#/dashboard', label: 'Dashboard', ico: 'dashboard' },
+    { hash: '#/sla', label: 'SLA / Aderência', ico: 'sla' },
+    { hash: '#/regional', label: 'Visão Regional', ico: 'regional' },
+    { hash: '#/sites-fora', label: 'Sites Fora (Incidentes)', ico: 'sites' },
+    { hash: '#/cadastro', label: 'Cadastro de Cidades', ico: 'cadastro' },
+    { hash: '#/importar', label: 'Importar dados', ico: 'importar' },
     { hash: '#/configuracoes', label: 'Configurações', ico: 'config' }
   ];
 
-  function buildSidebar() {
-    const nav = document.getElementById('sidebar-nav');
-    if (!nav) return;
-    const hasTasks = !!localStorage.getItem('trj_tasks');
-    nav.innerHTML = '';
-    
-    LINKS.forEach(link => {
-      if (link.requiresTasks && !hasTasks) return; // Esconde se não houver dados
-      const iconHtml = TRJ.app && TRJ.app.icon ? TRJ.app.icon(link.ico) : '';
-      const a = U.h('a', { 
-        href: link.hash, 
-        class: 'nav-item ' + (window.location.hash === link.hash ? 'active' : ''),
-        html: `<i>${iconHtml}</i><span>${link.label}</span>`
-      });
-      nav.appendChild(a);
+  // ---------------- LOGIN ----------------
+  function showLogin(msg) {
+    document.getElementById('app-shell').style.display = 'none';
+    var ls = document.getElementById('login-screen');
+    ls.style.display = 'flex';
+    var err = document.getElementById('login-error');
+    if (err) err.textContent = msg || '';
+  }
+  function wireLogin() {
+    var form = document.getElementById('login-form');
+    if (!form) return;
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var email = document.getElementById('login-email').value.trim();
+      var pwd = document.getElementById('login-pwd').value;
+      var btn = document.getElementById('login-btn');
+      var err = document.getElementById('login-error');
+      err.textContent = '';
+      btn.disabled = true; btn.textContent = 'Entrando...';
+      try {
+        await TRJ.auth.login(email, pwd);
+        await startApp();
+      } catch (e) {
+        err.textContent = e.message || 'Falha no login.';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Entrar';
+      }
     });
   }
 
- // ---------------- START (substituir por este trecho) ----------------
-  async function startApp() {
-    // mostra loading (UI) mas não oculta a tela de login até o carregamento terminar com sucesso
+  // ---------------- SHELL ----------------
+  function buildSidebar() {
+    var user = TRJ.auth.getUser() || {};
+    var brand = U.h('div', { class: 'flex items-center gap-3 px-4 py-4' }, [
+      U.h('img', { src: 'assets/logo-trj.png', alt: 'TRJ', style: { width: '38px', height: '38px', objectFit: 'contain' } }),
+      U.h('div', null, [
+        U.h('div', { class: 'font-extrabold text-sm', style: { color: 'var(--trj-primary)', letterSpacing: '.5px' }, text: TRJ.config.APP_NAME || 'CONTROLE TRJ' }),
+        U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: TRJ.config.APP_SUB || 'Operacional' })
+      ])
+    ]);
+    var hasTasks = App.data && App.data.rawTasks && App.data.rawTasks.length > 0;
+    var visibleLinks = hasTasks ? LINKS : LINKS.filter(function (l) { return l.hash === '#/importar' || l.hash === '#/configuracoes'; });
+    var nav = U.h('nav', { class: 'flex flex-col gap-1 px-3 mt-2', style: { flex: '1' } }, visibleLinks.map(function (l) {
+      return U.h('a', { class: 'trj-link', href: l.hash, dataset: { hash: l.hash } }, [
+        U.h('span', { class: 'ico', html: icon(l.ico) }), U.h('span', { text: l.label })
+      ]);
+    }));
+    if (!hasTasks) {
+      nav.appendChild(U.h('div', { class: 'text-xs px-2 pt-2', style: { color: 'var(--trj-muted)', lineHeight: '1.4' }, text: 'Faça o upload dos arquivos para liberar as abas de visualização.' }));
+    }
+    var footer = U.h('div', { class: 'px-3 py-3', style: { borderTop: '1px solid var(--trj-border)' } }, [
+      U.h('div', { class: 'text-xs px-2 mb-2 truncate', style: { color: 'var(--trj-muted)' }, text: user.email || '' }),
+      U.h('button', { class: 'trj-link w-full', onclick: doLogout }, [U.h('span', { class: 'ico', html: icon('logout') }), U.h('span', { text: 'Sair' })])
+    ]);
+    return U.h('aside', { id: 'sidebar', class: 'trj-card flex flex-col', style: { width: '256px', minWidth: '256px', borderRadius: '0', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', height: '100vh', position: 'sticky', top: '0' } }, [brand, nav, footer]);
+  }
+
+  function doLogout() { if (TRJ.files && TRJ.files.stopAutoMonitor) TRJ.files.stopAutoMonitor(); if (App._timer) { clearInterval(App._timer); App._timer = null; } TRJ.auth.logout(); location.hash = '#/dashboard'; showLogin(); }
+
+  function setActiveLink() {
+    var cur = location.hash || '#/dashboard';
+    document.querySelectorAll('#sidebar .trj-link[data-hash]').forEach(function (a) {
+      a.classList.toggle('active', a.dataset.hash === cur);
+    });
+  }
+
+  function buildShell() {
+    var shell = document.getElementById('app-shell');
+    shell.innerHTML = '';
+    shell.style.display = 'flex';
+    var sidebar = buildSidebar();
+    // topbar mobile
+    var topbar = U.h('div', { class: 'flex items-center justify-between px-4 py-3 lg:hidden trj-card', style: { borderRadius: '0', borderLeft: 'none', borderRight: 'none', borderTop: 'none' } }, [
+      U.h('div', { class: 'flex items-center gap-2' }, [
+        U.h('img', { src: 'assets/logo-trj.png', alt: 'TRJ', style: { width: '28px', height: '28px' } }),
+        U.h('span', { class: 'font-bold', style: { color: 'var(--trj-primary)' }, text: 'CONTROLE TRJ' })
+      ]),
+      U.h('button', { class: 'trj-btn trj-btn-ghost', text: '☰', onclick: toggleSidebar })
+    ]);
+    var page = U.h('div', { id: 'page', class: 'p-4 lg:p-6', style: { flex: '1' } });
+    var main = U.h('div', { style: { flex: '1', minWidth: '0' } }, [topbar, page]);
+    shell.appendChild(sidebar);
+    shell.appendChild(main);
+    setActiveLink();
+  }
+
+  function toggleSidebar() {
+    var sb = document.getElementById('sidebar');
+    if (!sb) return;
+    sb.style.display = (sb.style.display === 'none' || getComputedStyle(sb).display === 'none') ? 'flex' : 'none';
+  }
+
+  // ---------------- DADOS ----------------
+  function prazoOverride(config) {
+    var o = {};
+    C.PRIORIDADES.forEach(function (p) { if (config['sla_' + p] != null && config['sla_' + p] !== '') o[p] = config['sla_' + p]; });
+    return o;
+  }
+
+  App.loadAll = async function () {
     U.loading(true);
-    // garantir estado consistente da UI enquanto tentamos carregar
     try {
-      // buildShell aqui prepara a estrutura do painel, mas não oculta o login até o sucesso
-      if (typeof buildShell === 'function') buildShell();
-
-      // carrega todos os dados (config do Apps Script + tarefas/incidentes locais)
-      await App.loadAll();
-
-      // reconstruir shell com dados e renderizar
-      if (typeof buildShell === 'function') buildShell();
-      render();
-
-      // iniciar monitor automático (se disponível) de forma defensiva
-      try {
-        if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function') {
-          // a sua versão do startAutoMonitor não aceita callbacks; apenas chame-a
-          TRJ.files.startAutoMonitor();
-        }
-      } catch (e) {
-        console.warn('Falha ao iniciar auto-monitor (silenciado):', e && e.message);
+      // Config (prazos de SLA) continua vindo da planilha via Apps Script.
+      var cfgRes = await TRJ.api.getConfig();
+      var config = cfgRes.config || {};
+      // Tarefas e incidentes vêm dos arquivos lidos no navegador (TRJ.files).
+      var rawTasks = (TRJ.files && TRJ.files.getTasks()) || [];
+      var rawInc = (TRJ.files && TRJ.files.getIncidents()) || [];
+      var prazoMap = D.montarPrazoMap(prazoOverride(config));
+      var ids = Comp.collectIds(rawTasks, rawInc);
+      var validMap = {};
+      if (ids.length) {
+        var lk = await TRJ.api.lookupCities(ids);
+        validMap = lk.map || {};
       }
-
-      // configurar auto-refresh (se habilitado na config)
-      try {
-        if (TRJ.config && Number(TRJ.config.AUTO_REFRESH_SEG) > 0) {
-          if (App._timer) clearInterval(App._timer);
-          App._timer = setInterval(function () { App.refresh(); }, Number(TRJ.config.AUTO_REFRESH_SEG) * 1000);
-        }
-      } catch (e) {
-        console.warn('Erro ao configurar auto-refresh:', e && e.message);
-      }
-
-      // esconder tela de login somente após sucesso total
-      var ls = document.getElementById('login-screen');
-      if (ls) ls.style.display = 'none';
-      var shell = document.getElementById('app-shell');
-      if (shell) shell.style.display = 'flex';
-
-    } catch (e) {
-      // erro no carregamento inicial -> mostrar login (evita tela preta)
-      console.error('Erro no startApp:', e);
-      try { U.toast(e.message || 'Erro ao carregar dados.', 'err'); } catch(_) {}
-
-      // restaurar a tela de login e esconder o shell
-      var ls = document.getElementById('login-screen');
-      if (ls) ls.style.display = 'flex';
-      var shell = document.getElementById('app-shell');
-      if (shell) shell.style.display = 'none';
-
-      // se o erro aparentar ser token inválido, forçar logout
-      try {
-        if (/token/i.test(e && e.message || '')) {
-          if (typeof doLogout === 'function') doLogout();
-          showLogin(e.message);
-          return;
-        }
-      } catch(err){/*ignore*/}
-
-      showLogin(e && e.message ? e.message : '');
-      return;
+      var now = new Date();
+      App.data = {
+        config: config, prazoMap: prazoMap, validMap: validMap,
+        rawTasks: rawTasks, rawInc: rawInc,
+        tasksEnriched: Comp.enrichTasks(rawTasks, validMap, prazoMap, now),
+        incidentsEnriched: Comp.enrichIncidents(rawInc, validMap),
+        loadedAt: new Date()
+      };
     } finally {
       U.loading(false);
+    }
+  };
+
+  App.refresh = async function () {
+    try { await App.loadAll(); buildShell(); render(); if (TRJ.files && TRJ.files.startAutoMonitor) TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000); U.toast('Dados atualizados.', 'ok'); }
+    catch (e) { U.toast(e.message || 'Erro ao atualizar.', 'err'); }
+  };
+
+  // recarrega só incidentes (após upload/alteração de status) — agora da memória/navegador
+  App.reloadIncidents = async function () {
+    var rawInc = (TRJ.files && TRJ.files.getIncidents()) || [];
+    App.data.rawInc = rawInc;
+    App.data.incidentsEnriched = Comp.enrichIncidents(rawInc, App.data.validMap);
+  };
+
+  // ---------------- DRILL ----------------
+  App.openDrillTasks = function (spec, filtros, title) {
+    if (!App.data) return;
+    var rows = Comp.drillTasks(App.data.tasksEnriched, spec, filtros || {});
+    U.openModal(title || 'Detalhamento', U.taskTable(rows));
+  };
+  App.openDrillIncidents = function (spec, title) {
+    if (!App.data) return;
+    var rows = Comp.drillIncidents(App.data.incidentsEnriched, spec);
+    U.openModal(title || 'Detalhamento', U.incidentTable(rows));
+  };
+
+  // ---------------- ROTAS ----------------
+  var ROUTES = {
+    '#/dashboard': 'dashboard',
+    '#/sla': 'sla',
+    '#/regional': 'regional',
+    '#/sites-fora': 'sitesFora',
+    '#/cadastro': 'cadastro',
+    '#/importar': 'importar',
+    '#/configuracoes': 'configuracoes'
+  };
+
+  function render() {
+    if (!TRJ.auth.isLogged()) { showLogin(); return; }
+    var page = document.getElementById('page');
+    if (!page) return;
+    U.destroyCharts();
+    U.closeModal();
+    var hash = location.hash || '#/dashboard';
+    if (!ROUTES[hash]) { location.hash = '#/dashboard'; return; }
+    var hasTasks = App.data && App.data.rawTasks && App.data.rawTasks.length > 0;
+    if (!hasTasks && hash !== '#/importar' && hash !== '#/configuracoes') { location.hash = '#/importar'; return; }
+    setActiveLink();
+    var fn = TRJ.pages[ROUTES[hash]];
+    page.innerHTML = '';
+    if (typeof fn === 'function') {
+      try { fn(page, { data: App.data, app: App }); }
+      catch (e) { page.appendChild(U.h('div', { class: 'trj-card p-6', style: { color: 'var(--trj-red)' }, text: 'Erro ao renderizar a página: ' + (e.message || e) })); }
+    } else {
+      page.appendChild(U.h('div', { class: 'trj-card p-6', text: 'Página não encontrada.' }));
+    }
+  }
+  App.render = render;
+  App.navigate = function (hash) { if (location.hash === hash) render(); else location.hash = hash; };
+
+  // ---------------- START ----------------
+  async function startApp() {
+    document.getElementById('login-screen').style.display = 'none';
+    buildShell();
+    try {
+      await App.loadAll();
+      buildShell();
+      render();
+      if (TRJ.files && TRJ.files.startAutoMonitor) TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000);
+    } catch (e) {
+      // token expirado -> volta pro login
+      if (/token/i.test(e.message || '')) { doLogout(); showLogin(e.message); return; }
+      U.toast(e.message || 'Erro ao carregar dados.', 'err');
+    }
+    if (TRJ.config.AUTO_REFRESH_SEG > 0) {
+      if (App._timer) clearInterval(App._timer);
+      App._timer = setInterval(function () { App.refresh(); }, TRJ.config.AUTO_REFRESH_SEG * 1000);
     }
   }
 
   function boot() {
-    if (typeof wireLogin === 'function') wireLogin();
+    wireLogin();
     window.addEventListener('hashchange', render);
-
-    // Se usuário já estiver logado, tentamos iniciar; caso falhe, mostramos login.
-    if (TRJ.auth && typeof TRJ.auth.isLogged === 'function' && TRJ.auth.isLogged()) {
-      // chamar startApp() mas não bloquear o thread do boot
-      startApp().catch(function(e){
-        console.error('Boot: startApp falhou', e);
-        try { showLogin(e && e.message); } catch(_) {}
-      });
-    } else {
-      showLogin();
-    }
+    if (TRJ.auth.isLogged()) startApp();
+    else showLogin();
   }
 
-  // registra atualização quando tasks são carregadas
-  document.addEventListener('trj:tasksLoaded', render);
-
-  // inicialização quando DOM estiver pronto (mantemos o boot seguro)
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
-
-  // render robusto: aceita página como função OU objeto com método rebuild
-  function render() {
-    const container = document.getElementById('main-content') || document.getElementById('page') || document.getElementById('app-root');
-    if (!container) return;
-    buildSidebar();
-
-    const rawHash = window.location.hash || '#/dashboard';
-    const route = (rawHash.replace('#/', '') || 'dashboard');
-    const hasTasks = !!localStorage.getItem('trj_tasks');
-
-    // Redirecionamento se tentar acessar aba protegida sem dados
-    if (!hasTasks && ['dashboard', 'sla', 'regional', 'sites-fora'].includes(route)) {
-      if (window.location.hash !== '#/importar') window.location.hash = '#/importar';
-      return;
-    }
-
-    container.innerHTML = '';
-    const page = TRJ.pages && TRJ.pages[route];
-
-    if (!page) {
-      container.innerHTML = `<div class="p-8 text-muted">Aba ${route} em construção.</div>`;
-      return;
-    }
-
-    // page pode ser função (page(container, opts)) ou objeto { rebuild(container, data) }
-    try {
-      if (typeof page === 'function') {
-        page(container, { data: App.data, app: App });
-      } else if (page && typeof page.rebuild === 'function') {
-        page.rebuild(container, App.data);
-      } else {
-        container.innerHTML = `<div class="p-8 text-muted">Aba ${route} em construção.</div>`;
-      }
-    } catch (e) {
-      container.innerHTML = `<div class="p-6 trj-card" style="color:var(--trj-red)">Erro ao renderizar a página: ${e && e.message || e}</div>`;
-      console.error('Erro ao renderizar página', route, e);
-    }
-  }
 
   TRJ.app = App;
 })(window.TRJ = window.TRJ || {});
