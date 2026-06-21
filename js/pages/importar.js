@@ -5,6 +5,23 @@
   TRJ.pages = TRJ.pages || {};
   var U = TRJ.ui || (TRJ.ui = {});
   var FS = TRJ.files || (TRJ.files = {});
+  // Garantir compatibilidade retroativa com F
+  if (!window.F) {
+    if (TRJ.files && Object.keys(TRJ.files).length) {
+      window.F = TRJ.files;
+    } else {
+      window.F = {};
+    }
+  }
+  var F = window.F; // alias seguro
+  // Sincroniza FS e F referências se possível
+  if (!FS || !Object.keys(FS).length) {
+    FS = TRJ.files = TRJ.files || F || {};
+  } else {
+    // se FS existe, garantir que window.F aponte para ela
+    window.F = window.F || FS;
+  }
+
   var G = TRJ.genesis || {};
   var Comp = TRJ.compute || {};
 
@@ -26,43 +43,41 @@
   function fmtName(h) { try { return h && (h.name || h.handleName || 'Pasta'); } catch (e) { return 'Pasta'; } }
 
   // Generic row -> task mapper (heurística)
-  // mapRowToTask: normaliza chaves e extrai campos úteis
-function mapRowToTask(row) {
-  if (!row) return {};
-  if (typeof row === 'string') return { descricao: row, _raw: row };
+  function mapRowToTask(row) {
+    if (!row) return {};
+    if (typeof row === 'string') return { descricao: row, _raw: row };
 
-  function normalizeKey(k) {
-    return (k || '').toString()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove acentos
-      .replace(/\s+/g,' ')
-      .replace(/[:\-\/\\]+/g,' ')
-      .toLowerCase().trim();
+    function normalizeKey(k) {
+      return (k || '').toString()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove acentos
+        .replace(/\s+/g,' ')
+        .replace(/[:\-\/\\]+/g,' ')
+        .toLowerCase().trim();
+    }
+
+    var norm = {};
+    Object.keys(row).forEach(function (k) { norm[normalizeKey(k)] = row[k]; });
+
+    var t = {};
+    t.enderecoId = norm['end_id'] || norm['end id'] || norm['endereco'] || norm['endereco end_id'] || norm['endereco id'] || null;
+    t.siteId = norm['ne id'] || norm['neid'] || norm['ne'] || norm['site'] || norm['site id'] || null;
+    t.status = norm['status'] || norm['situacao'] || norm['estado'] || null;
+    t.cidade = norm['cidade'] || norm['cidade/uf'] || norm['cidade uf'] || null;
+    t.prioridade = norm['prioridade'] || norm['priorizacao'] || norm['priorizacao'] || norm['priorizaçao'] || null;
+
+    var possibleDateKeys = ['data de criacao','data criacao','criacao','data','data/hora','data hora','data de abertura','abertura'];
+    var possibleVencKeys = ['data de vencimento','vencimento','prazo','data vencimento'];
+    var findFirst = function (keys) { return keys.reduce(function (acc,k){ return acc || norm[k] || null; }, null); };
+    var dc = findFirst(possibleDateKeys);
+    var dv = findFirst(possibleVencKeys);
+    try { t.dataCriacao = dc ? (new Date(dc)).toISOString() : null; } catch(e){ t.dataCriacao = dc || null; }
+    try { t.dataVencimento = dv ? (new Date(dv)).toISOString() : null; } catch(e){ t.dataVencimento = dv || null; }
+
+    t.observacao = norm['observacao'] || norm['observacao / motivo'] || norm['motivo'] || norm['titulo'] || norm['descricao'] || null;
+    t._raw = row;
+    return t;
   }
 
-  const norm = {};
-  Object.keys(row).forEach(k => {
-    norm[normalizeKey(k)] = row[k];
-  });
-
-  const t = {};
-  t.enderecoId = norm['end_id'] || norm['end id'] || norm['endereco'] || norm['endereco end_id'] || norm['endereco id'] || null;
-  t.siteId = norm['ne id'] || norm['neid'] || norm['ne'] || norm['site'] || norm['site id'] || null;
-  t.status = norm['status'] || norm['situacao'] || norm['estado'] || null;
-  t.cidade = norm['cidade'] || norm['cidade/uf'] || norm['cidade uf'] || null;
-  t.prioridade = norm['prioridade'] || norm['priorizacao'] || norm['priorizacao'] || norm['priorizaçao'] || null;
-  // datas: tenta detectar algumas variações
-  const possibleDateKeys = ['data de criacao','data criacao','criacao','data','data/hora','data hora','data de abertura','abertura'];
-  const possibleVencKeys = ['data de vencimento','vencimento','prazo','data vencimento'];
-  const findFirst = (keys) => keys.reduce((acc,k)=> acc || norm[k] || null, null);
-  const dc = findFirst(possibleDateKeys);
-  const dv = findFirst(possibleVencKeys);
-  try { t.dataCriacao = dc ? (new Date(dc)).toISOString() : null; } catch(e){ t.dataCriacao = dc || null; }
-  try { t.dataVencimento = dv ? (new Date(dv)).toISOString() : null; } catch(e){ t.dataVencimento = dv || null; }
-
-  t.observacao = norm['observacao'] || norm['observacao / motivo'] || norm['motivo'] || norm['titulo'] || norm['descricao'] || null;
-  t._raw = row;
-  return t;
-}
   // Convert parsed items => tasks array (generic)
   function convertParsedItemsToTasks(parsedItems) {
     var tasks = [];
@@ -70,32 +85,29 @@ function mapRowToTask(row) {
       var rows = it.rows || [];
       rows.forEach(function (r) {
         // If genesis HTML parser exists and item looks like genesis html, use it
-        if (typeof r === 'string' && G && typeof G.parseGenesisHtml === 'function' && G.ehGenesisHtml && G.ehGenesisHtml(r)) {
-          try {
+        try {
+          if (typeof r === 'string' && G && typeof G.parseGenesisHtml === 'function' && G.ehGenesisHtml && G.ehGenesisHtml(r)) {
             var parsed = G.parseGenesisHtml(r);
-            // parsed.rows? merge
             if (parsed && parsed.rows) {
               parsed.rows.forEach(function (rr) { tasks.push(mapRowToTask(rr)); });
               return;
             }
-          } catch (e) { /* ignore and fallback */ }
-        }
+          }
+        } catch (ex) { /* ignore and fallback */ }
+
         if (typeof r === 'object') {
           tasks.push(mapRowToTask(r));
         } else if (typeof r === 'string') {
           // if line looks like CSV with semicolon or comma, try splitting
           if (/[;,\t]/.test(r)) {
             var cols = r.split(/[;,\t]/).map(function (c) { return c.trim(); }).filter(Boolean);
-            // if single token likely NE id
             if (cols.length === 1) tasks.push({ enderecoId: cols[0], _raw: r });
             else {
-              // create row object with numeric keys
               var obj = {};
               cols.forEach(function (c, i) { obj['c' + i] = c; });
               tasks.push(mapRowToTask(obj));
             }
           } else {
-            // single line text -> treat as raw
             tasks.push({ descricao: r, _raw: r });
           }
         }
@@ -118,58 +130,104 @@ function mapRowToTask(row) {
     var btnConnect = el('button', { class: 'trj-btn trj-btn-primary', text: state.connected ? 'Re-conectar pasta' : 'Conectar pasta' });
     btnConnect.addEventListener('click', async function () {
       try {
-        await FS.connectFolder();
+        // prefere FS.connectFolder se existir (encapsula showDirectoryPicker), senão tenta fallback global
+        if (FS && typeof FS.connectFolder === 'function') {
+          await FS.connectFolder();
+        } else if (window.TRJ && TRJ.importModule && typeof TRJ.importModule.connectFolderByUserGesture === 'function') {
+          await TRJ.importModule.connectFolderByUserGesture();
+        } else if (typeof window.showDirectoryPicker === 'function') {
+          // minimal fallback: showDirectoryPicker diretamente (exige user gesture)
+          var handle = await window.showDirectoryPicker();
+          if (handle) {
+            // algumas implementações podem permitir persistência, chamar requestPermission se disponível
+            try { if (handle.requestPermission) await handle.requestPermission({ mode: 'read' }); } catch (e) { /* ignore */ }
+            // tentar atribuir ao FS
+            if (!FS) FS = TRJ.files = TRJ.files || {};
+            FS._folderHandle = handle;
+            if (typeof FS.persistFolderHandle === 'function') await FS.persistFolderHandle(handle);
+          }
+        } else {
+          throw new Error('API de conexão de pasta não disponível. Atualize o navegador ou conecte a pasta manualmente.');
+        }
         toast('Pasta conectada: ' + (FS._folderHandle && FS._folderHandle.name ? FS._folderHandle.name : 'Pasta'));
         renderImportPage(containerEl);
       } catch (e) {
         toast(e && e.message ? e.message : 'Erro ao conectar pasta', 'err');
+        console.warn(e);
       }
     });
+
     var btnVerify = el('button', { class: 'trj-btn', text: 'Verificar agora' });
     btnVerify.addEventListener('click', async function () {
       try {
-        const items = await FS.scanFolderOnce();
+        var scanResult;
+        if (FS && typeof FS.scanFolderOnce === 'function') {
+          scanResult = await FS.scanFolderOnce();
+        } else if (TRJ.importModule && typeof TRJ.importModule.scanFolderOnce === 'function') {
+          scanResult = await TRJ.importModule.scanFolderOnce();
+        } else {
+          throw new Error('scanFolderOnce não disponível (implementação de arquivos ausente).');
+        }
+        // scanResult pode ser um array (compat) ou { results, signature }
+        var items = Array.isArray(scanResult) ? scanResult : (scanResult && scanResult.results ? scanResult.results : []);
         // convert and set tasks
-        const tasks = convertParsedItemsToTasks(items);
-        FS.setTasks(tasks);
+        var tasks = convertParsedItemsToTasks(items);
+        if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
+        else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(tasks);
         toast('Pasta verificada. Itens lidos: ' + (items.length || 0) + '. Tasks: ' + tasks.length, 'ok');
         if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh();
       } catch (e) {
         toast(e && e.message ? e.message : 'Erro ao escanear pasta', 'err');
+        console.warn(e);
       }
     });
 
-    var btnToggleMonitor = el('button', { class: 'trj-btn', text: FS._monitorTimer ? 'Parar monitor' : 'Iniciar monitor' });
+    var btnToggleMonitor = el('button', { class: 'trj-btn', text: FS && FS._monitorTimer ? 'Parar monitor' : 'Iniciar monitor' });
     btnToggleMonitor.addEventListener('click', function () {
-      if (FS._monitorTimer) {
-        FS.stopAutoMonitor();
-        btnToggleMonitor.textContent = 'Iniciar monitor';
-        toast('Monitor pausado', 'info');
-      } else {
-        FS.startAutoMonitor(function (items) {
-          try {
-            var tasks = convertParsedItemsToTasks(items);
-            FS.setTasks(tasks);
-            toast('Monitor: arquivos processados. Tasks: ' + tasks.length, 'ok');
-            if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh();
-          } catch (e) { console.warn(e); }
-        });
-        btnToggleMonitor.textContent = 'Parar monitor';
-        toast('Monitor iniciado', 'ok');
+      try {
+        if (FS && FS._monitorTimer) {
+          if (typeof FS.stopAutoMonitor === 'function') FS.stopAutoMonitor();
+          else if (typeof FS._stopAutoMonitor === 'function') FS._stopAutoMonitor();
+          btnToggleMonitor.textContent = 'Iniciar monitor';
+          toast('Monitor pausado', 'info');
+        } else {
+          // start monitor with callback
+          var cb = function (items) {
+            try {
+              var tasks = convertParsedItemsToTasks(items);
+              if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
+              toast('Monitor: arquivos processados. Tasks: ' + tasks.length, 'ok');
+              if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh();
+            } catch (e) { console.warn(e); }
+          };
+          if (FS && typeof FS.startAutoMonitor === 'function') FS.startAutoMonitor(cb);
+          else if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function') TRJ.files.startAutoMonitor(cb);
+          else throw new Error('startAutoMonitor não implementado.');
+          btnToggleMonitor.textContent = 'Parar monitor';
+          toast('Monitor iniciado', 'ok');
+        }
+      } catch (e) {
+        toast('Erro ao alternar monitor: ' + (e && e.message ? e.message : e), 'err');
+        console.warn(e);
       }
     });
 
     var disconnect = el('button', { class: 'trj-btn trj-btn-ghost', text: 'Desconectar' });
     disconnect.addEventListener('click', async function () {
       try {
-        await FS.disconnectFolder();
+        if (FS && typeof FS.disconnectFolder === 'function') await FS.disconnectFolder();
+        else {
+          // fallback: remove handle if persisted
+          if (FS && typeof FS.removeSavedFolderHandle === 'function') await FS.removeSavedFolderHandle();
+          FS._folderHandle = null;
+        }
         toast('Pasta desconectada', 'ok');
         renderImportPage(containerEl);
-      } catch (e) { toast('Erro ao desconectar', 'err'); }
+      } catch (e) { toast('Erro ao desconectar', 'err'); console.warn(e); }
     });
 
     var nameEl = el('div', { class: 'mt-3' }, [
-      el('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: state.connected ? ('Conectada: ' + (FS._folderHandle && FS._folderHandle.name ? FS._folderHandle.name : 'Pasta')) : 'Nenhuma pasta conectada' })
+      el('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: state.connected ? ('Conectada: ' + (FS._folderHandle && (FS._folderHandle.name || FS._folderHandle.handleName) ? (FS._folderHandle.name || FS._folderHandle.handleName) : 'Pasta')) : 'Nenhuma pasta conectada' })
     ]);
 
     var actions = el('div', { class: 'flex items-center gap-2' }, [btnConnect, btnVerify, btnToggleMonitor, disconnect]);
@@ -241,7 +299,13 @@ function mapRowToTask(row) {
     var importBtn = el('button', { class: 'trj-btn trj-btn-primary mt-3', text: 'Importar incidentes detectados' });
     importBtn.addEventListener('click', function () {
       var incs = arr.map(function (id) { return { site: id, enderecoId: null, statusTrat: 'FORA', fila: null, inicio: null, observacao: 'Importado via texto' }; });
-      FS.setIncidents(incs);
+      if (FS && typeof FS.setIncidents === 'function') FS.setIncidents(incs);
+      else if (TRJ && TRJ.api && typeof TRJ.api.importIncidentes === 'function') TRJ.api.importIncidentes(incs);
+      else {
+        // fallback: localStorage
+        var key = 'trj_import_incidentes_' + Date.now();
+        localStorage.setItem(key, JSON.stringify({ ts: Date.now(), rows: incs }));
+      }
       toast('Incidentes importados: ' + incs.length, 'ok');
       if (TRJ.app && typeof TRJ.app.reloadIncidents === 'function') TRJ.app.reloadIncidents();
     });
@@ -256,11 +320,12 @@ function mapRowToTask(row) {
     container.innerHTML = '';
     container.appendChild(buildHeader());
 
-    var connected = !!(FS && FS._folderHandle);
+    var connected = !!(FS && (FS._folderHandle || FS.folderHandle));
     container.appendChild(buildFolderCard({ connected: connected }));
 
-    // show previously scanned items if any (from FS._tasks placeholder)
-    var filesBox = buildDetectedFilesBox(F._lastScannedItems || []);
+    // show previously scanned items if any (from FS._lastScannedItems or F._lastScannedItems)
+    var prev = (FS && FS._lastScannedItems) || (F && F._lastScannedItems) || [];
+    var filesBox = buildDetectedFilesBox(prev);
     container.appendChild(filesBox);
 
     container.appendChild(buildIncidentsBox());
@@ -277,13 +342,23 @@ function mapRowToTask(row) {
   };
 
   async function onFolderChanged(e) {
-    var items = (e && e.detail && e.detail.items) || [];
+    var items = [];
+    try {
+      if (e && e.detail) {
+        // support both array detail and {items}
+        items = Array.isArray(e.detail) ? e.detail : (Array.isArray(e.detail.items) ? e.detail.items : (e.detail.results || []));
+      }
+    } catch (err) { items = []; }
+
     // save last scanned items for UI
-    FS._lastScannedItems = items;
+    if (FS) FS._lastScannedItems = items;
+    if (F) F._lastScannedItems = items;
+
     // convert and set tasks automatically
     try {
       var tasks = convertParsedItemsToTasks(items);
-      FS.setTasks(tasks);
+      if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
+      else if (TRJ && TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(tasks);
       toast('Arquivos processados automaticamente. Tasks: ' + tasks.length, 'ok');
       if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh();
     } catch (err) {
@@ -304,7 +379,6 @@ function mapRowToTask(row) {
   // helper to re-render file list quickly
   function renderImportPage(container) {
     if (!container) return;
-    // rebuild page by re-invoking page function
     TRJ.pages.importar(container, {});
   }
 
@@ -316,7 +390,17 @@ function mapRowToTask(row) {
 
   // Try to load saved folder handle so UI shows state quickly
   (async function initTryLoad() {
-    try { if (FS && typeof FS.loadSavedFolder === 'function') await FS.loadSavedFolder(); } catch (e) { /* ignore */ }
+    try {
+      if (FS && typeof FS.loadSavedFolderSafe === 'function') {
+        await FS.loadSavedFolderSafe();
+      } else if (FS && typeof FS.loadSavedFolder === 'function') {
+        await FS.loadSavedFolder();
+      } else if (TRJ.importModule && typeof TRJ.importModule.loadSavedFolderSafe === 'function') {
+        await TRJ.importModule.loadSavedFolderSafe();
+      }
+    } catch (e) { console.warn('initTryLoad fail', e); }
+    // render if this page is active
+    if (containerEl) renderImportPage(containerEl);
   })();
 
 })(window.TRJ = window.TRJ || {});
