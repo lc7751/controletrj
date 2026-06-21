@@ -22,7 +22,7 @@
     
     LINKS.forEach(link => {
       if (link.requiresTasks && !hasTasks) return; // Esconde se não houver dados
-      const iconHtml = TRJ.app.icon ? TRJ.app.icon(link.ico) : '';
+      const iconHtml = TRJ.app && TRJ.app.icon ? TRJ.app.icon(link.ico) : '';
       const a = U.h('a', { 
         href: link.hash, 
         class: 'nav-item ' + (window.location.hash === link.hash ? 'active' : ''),
@@ -39,13 +39,13 @@
     // garantir estado consistente da UI enquanto tentamos carregar
     try {
       // buildShell aqui prepara a estrutura do painel, mas não oculta o login até o sucesso
-      buildShell();
+      if (typeof buildShell === 'function') buildShell();
 
       // carrega todos os dados (config do Apps Script + tarefas/incidentes locais)
       await App.loadAll();
 
       // reconstruir shell com dados e renderizar
-      buildShell();
+      if (typeof buildShell === 'function') buildShell();
       render();
 
       // iniciar monitor automático (se disponível) de forma defensiva
@@ -77,7 +77,7 @@
     } catch (e) {
       // erro no carregamento inicial -> mostrar login (evita tela preta)
       console.error('Erro no startApp:', e);
-      U.toast(e.message || 'Erro ao carregar dados.', 'err');
+      try { U.toast(e.message || 'Erro ao carregar dados.', 'err'); } catch(_) {}
 
       // restaurar a tela de login e esconder o shell
       var ls = document.getElementById('login-screen');
@@ -88,7 +88,7 @@
       // se o erro aparentar ser token inválido, forçar logout
       try {
         if (/token/i.test(e && e.message || '')) {
-          doLogout();
+          if (typeof doLogout === 'function') doLogout();
           showLogin(e.message);
           return;
         }
@@ -102,11 +102,11 @@
   }
 
   function boot() {
-    wireLogin();
+    if (typeof wireLogin === 'function') wireLogin();
     window.addEventListener('hashchange', render);
 
     // Se usuário já estiver logado, tentamos iniciar; caso falhe, mostramos login.
-    if (TRJ.auth.isLogged()) {
+    if (TRJ.auth && typeof TRJ.auth.isLogged === 'function' && TRJ.auth.isLogged()) {
       // chamar startApp() mas não bloquear o thread do boot
       startApp().catch(function(e){
         console.error('Boot: startApp falhou', e);
@@ -117,35 +117,51 @@
     }
   }
 
-  // inicialização quando DOM estiver pronto (mantemos igual)
+  // registra atualização quando tasks são carregadas
+  document.addEventListener('trj:tasksLoaded', render);
+
+  // inicialização quando DOM estiver pronto (mantemos o boot seguro)
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 
+  // render robusto: aceita página como função OU objeto com método rebuild
   function render() {
-    const container = document.getElementById('main-content');
+    const container = document.getElementById('main-content') || document.getElementById('page') || document.getElementById('app-root');
     if (!container) return;
     buildSidebar();
 
-    const route = window.location.hash.replace('#/', '') || 'dashboard';
+    const rawHash = window.location.hash || '#/dashboard';
+    const route = (rawHash.replace('#/', '') || 'dashboard');
     const hasTasks = !!localStorage.getItem('trj_tasks');
 
     // Redirecionamento se tentar acessar aba protegida sem dados
     if (!hasTasks && ['dashboard', 'sla', 'regional', 'sites-fora'].includes(route)) {
-        window.location.hash = '#/importar';
-        return;
+      if (window.location.hash !== '#/importar') window.location.hash = '#/importar';
+      return;
     }
 
     container.innerHTML = '';
-    const page = TRJ.pages[route];
-    if (page && page.rebuild) {
-      page.rebuild(container, App.data);
-    } else {
+    const page = TRJ.pages && TRJ.pages[route];
+
+    if (!page) {
       container.innerHTML = `<div class="p-8 text-muted">Aba ${route} em construção.</div>`;
+      return;
+    }
+
+    // page pode ser função (page(container, opts)) ou objeto { rebuild(container, data) }
+    try {
+      if (typeof page === 'function') {
+        page(container, { data: App.data, app: App });
+      } else if (page && typeof page.rebuild === 'function') {
+        page.rebuild(container, App.data);
+      } else {
+        container.innerHTML = `<div class="p-8 text-muted">Aba ${route} em construção.</div>`;
+      }
+    } catch (e) {
+      container.innerHTML = `<div class="p-6 trj-card" style="color:var(--trj-red)">Erro ao renderizar a página: ${e && e.message || e}</div>`;
+      console.error('Erro ao renderizar página', route, e);
     }
   }
-
-  document.addEventListener('DOMContentLoaded', startApp);
-  document.addEventListener('trj:tasksLoaded', render);
 
   TRJ.app = App;
 })(window.TRJ = window.TRJ || {});
