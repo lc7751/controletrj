@@ -6,25 +6,25 @@
   <title>Controle TRJ — Operacional</title>
   <link rel="icon" href="assets/logo-trj.png" />
 
-<!-- Tailwind (CDN) - carregue o CDN primeiro (não defer), depois defina tailwind.config -->
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-  /* Agora que o CDN já foi executado, podemos ajustar a config */
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: {
-          bg: '#0a0a0f', card: '#13131a', popover: '#1a1a24',
-          primary: '#ff8c00', fg: '#f0f0f0', muted: '#8a8a93'
+  <!-- Tailwind (CDN) - carregue o CDN primeiro (não defer), depois defina tailwind.config -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    /* Agora que o CDN já foi executado, podemos ajustar a config */
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: '#0a0a0f', card: '#13131a', popover: '#1a1a24',
+            primary: '#ff8c00', fg: '#f0f0f0', muted: '#8a8a93'
+          }
         }
       }
-    }
-  };
-</script>
+    };
+  </script>
 
-<!-- Chart.js / XLSX (defer ok) -->
-<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Chart.js / XLSX (defer ok) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <!-- Estilos do projeto -->
   <link rel="stylesheet" href="css/styles.css" />
@@ -52,7 +52,10 @@
   </div>
 
   <!-- ==== PAINEL (SPA) ==== -->
-  <div id="app-shell" style="display:none; min-height:100vh;"></div>
+  <div id="app-shell" style="display:none; min-height:100vh;">
+    <!-- Importar tab container (será preenchido pelo módulo de import) -->
+    <div id="importar-root" class="import-container" style="display:none;"></div>
+  </div>
 
   <!-- ==== SCRIPTS (ordem importa) - usando defer ==== -->
   <script defer src="js/constants.js"></script>
