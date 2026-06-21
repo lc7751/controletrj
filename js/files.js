@@ -157,77 +157,138 @@
     return parts.sort().join('||');
   }
 
-  // scanFolderOnce -> retorna array de parsed items (cada item: {_source, rows})
-  async function scanFolderOnce(opts) {
-    opts = opts || {};
-    if (!F._folderHandle) throw new Error('Nenhuma pasta conectada. Use connectFolder().');
-    const allowedExt = opts.extensions || ['.xlsx', '.xls', '.csv', '.json', '.txt'];
-    const results = [];
+ // scanFolderOnce: percorre a pasta conectada, pega os N arquivos mais recentes e retorna rows processadas + signature
+// Uso:
+//   const { results, signature } = await scanFolderOnce({ folderHandle: TRJ.files.folderHandle, keepMostRecent: 1 });
+// Retorno: results = [{ _source, rows: [...], _lastModified, _blob? }], signature = "nome1|lm1;nome2|lm2;..."
+async function scanFolderOnce(opts = {}) {
+  const folderHandle = opts.folderHandle || (window.TRJ && TRJ.files && TRJ.files.folderHandle) || null;
+  const KEEP_MOST_RECENT = Number(opts.keepMostRecent || 1);
+  if (!folderHandle) throw new Error('Nenhuma pasta conectada. Conecte a pasta antes de verificar.');
 
-    async function walk(dir) {
-      for await (const entry of dir.values()) {
-        try {
-          if (entry.kind === 'file') {
-            const name = entry.name || '';
-            const lower = name.toLowerCase();
-            if (!allowedExt.some(e => lower.endsWith(e))) continue;
-            const file = await entry.getFile();
-            const ab = await file.arrayBuffer();
-            const ext = lower.split('.').pop();
-            if (ext === 'csv' || ext === 'txt' || ext === 'json') {
-              const txt = new TextDecoder().decode(ab);
-              if (ext === 'json') {
-                try {
-                  const obj = JSON.parse(txt);
-                  results.push({ _source: name, rows: Array.isArray(obj) ? obj : [obj] });
-                } catch (e) {
-                  results.push({ _source: name, rows: [txt] });
-                }
-              } else {
-                // csv/txt -> tentar via XLSX lib (se disponível) ou fallback por linhas
-                if (window.XLSX && typeof XLSX.read === 'function') {
-                  try {
-                    const wb = XLSX.read(txt, { type: 'string' });
-                    const sname = wb.SheetNames[0];
-                    const json = XLSX.utils.sheet_to_json(wb.Sheets[sname], { defval: null });
-                    results.push({ _source: name, rows: json });
-                  } catch (e) {
-                    const lines = txt.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-                    results.push({ _source: name, rows: lines });
-                  }
-                } else {
-                  const lines = txt.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-                  results.push({ _source: name, rows: lines });
-                }
-              }
-            } else {
-              // xlsx/xls
-              if (!window.XLSX || typeof XLSX.read !== 'function') {
-                // sem biblioteca, armazena o blob para processamento posterior
-                results.push({ _source: name, rows: [], _blob: ab });
-              } else {
-                try {
-                  const wb = XLSX.read(ab, { type: 'array' });
-                  const sname = wb.SheetNames[0];
-                  const json = XLSX.utils.sheet_to_json(wb.Sheets[sname], { defval: null });
-                  results.push({ _source: name, rows: json });
-                } catch (e) {
-                  results.push({ _source: name, rows: [], _blob: ab });
-                }
-              }
+  // extensões aceitáveis
+  const allowedExts = ['xlsx','xls','csv','txt','json'];
+
+  // caminha recursivamente e coleta entradas de arquivos com ext permitida
+  async function walkDirectory(dirHandle, relativePath = '') {
+    const list = [];
+    for await (const [name, entry] of dirHandle.entries()) {
+      try {
+        if (entry.kind === 'file') {
+          const ext = (name.split('.').pop() || '').toLowerCase();
+          if (allowedExts.includes(ext)) {
+            // obter lastModified para ordenar; getFile() pode lançar por permissão -> capturamos
+            try {
+              const file = await entry.getFile();
+              list.push({ entry, name, path: relativePath ? (relativePath + '/' + name) : name, lastModified: file.lastModified || 0 });
+            } catch (eFile) {
+              // se não conseguir abrir o arquivo, ainda registramos sem lastModified (0)
+              console.warn('Não foi possível ler metadata do arquivo', name, eFile);
+              list.push({ entry, name, path: relativePath ? (relativePath + '/' + name) : name, lastModified: 0 });
             }
-          } else if (entry.kind === 'directory') {
-            await walk(entry);
           }
-        } catch (e) {
-          console.warn('Erro lendo entry', entry && entry.name, e);
+        } else if (entry.kind === 'directory') {
+          const nested = await walkDirectory(entry, relativePath ? (relativePath + '/' + name) : name);
+          list.push(...nested);
         }
+      } catch (e) {
+        console.warn('Erro ao iterar entrada', name, e);
       }
     }
-
-    await walk(F._folderHandle);
-    return results;
+    return list;
   }
+
+  // ler o diretório e coletar arquivos
+  let tempFiles = [];
+  try {
+    tempFiles = await walkDirectory(folderHandle, '');
+  } catch (e) {
+    // erro de permissão ou outro
+    console.error('Erro ao acessar a pasta:', e);
+    throw new Error('Permissão negada ou erro ao acessar a pasta. Conecte a pasta novamente.');
+  }
+
+  if (!tempFiles.length) {
+    return { results: [], signature: null };
+  }
+
+  // ordenar por lastModified desc e pegar os N mais recentes
+  tempFiles.sort((a,b) => (b.lastModified || 0) - (a.lastModified || 0));
+  const chosen = tempFiles.slice(0, KEEP_MOST_RECENT);
+
+  const results = [];
+
+  for (const fmeta of chosen) {
+    const entry = fmeta.entry;
+    const name = fmeta.path || fmeta.name;
+    const lower = (name || '').toLowerCase();
+    const ext = lower.split('.').pop();
+
+    try {
+      const file = await entry.getFile();
+      const ab = await file.arrayBuffer();
+      const lastModified = file.lastModified || fmeta.lastModified || 0;
+
+      if (ext === 'csv' || ext === 'txt') {
+        // texto plano - tenta converter via XLSX se preferir, senão parse simples
+        const txt = new TextDecoder().decode(ab);
+        // tentativa de usar XLSX para CSV robusto se estiver disponível
+        if (window.XLSX && typeof XLSX.read === 'function') {
+          try {
+            const wb = XLSX.read(txt, { type: 'string' });
+            const sname = wb.SheetNames[0];
+            const json = XLSX.utils.sheet_to_json(wb.Sheets[sname], { defval: null });
+            results.push({ _source: name, rows: json, _lastModified: lastModified });
+          } catch (e) {
+            // fallback simples: linhas
+            const lines = txt.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            results.push({ _source: name, rows: lines, _lastModified: lastModified });
+          }
+        } else {
+          const txt = new TextDecoder().decode(ab);
+          const lines = txt.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+          results.push({ _source: name, rows: lines, _lastModified: lastModified });
+        }
+      } else if (ext === 'json') {
+        const txt = new TextDecoder().decode(ab);
+        try {
+          const obj = JSON.parse(txt);
+          results.push({ _source: name, rows: Array.isArray(obj) ? obj : [obj], _lastModified: lastModified });
+        } catch (eJson) {
+          results.push({ _source: name, rows: [txt], _lastModified: lastModified });
+        }
+      } else if (ext === 'xlsx' || ext === 'xls') {
+        if (window.XLSX && typeof XLSX.read === 'function') {
+          try {
+            const wb = XLSX.read(ab, { type: 'array' });
+            const sname = wb.SheetNames[0];
+            const json = XLSX.utils.sheet_to_json(wb.Sheets[sname], { defval: null });
+            results.push({ _source: name, rows: json, _lastModified: lastModified });
+          } catch (eX) {
+            console.warn('Erro parse XLSX', name, eX);
+            results.push({ _source: name, rows: [], _lastModified: lastModified, _blob: ab });
+          }
+        } else {
+          // sem XLSX disponível: retornar blob para possível processamento posterior
+          results.push({ _source: name, rows: [], _lastModified: lastModified, _blob: ab });
+        }
+      } else {
+        // extensão desconhecida: anexa blob para debug
+        results.push({ _source: name, rows: [], _lastModified: lastModified, _blob: ab });
+      }
+    } catch (eRead) {
+      console.warn('Erro lendo arquivo escolhido', name, eRead);
+      // empurra objeto com erro para diagnóstico
+      results.push({ _source: name, rows: [], _lastModified: fmeta.lastModified || 0, _error: String(eRead) });
+    }
+  }
+
+  // construir signature simples: concat name|lastModified; usado para detectar mudanças
+  const sigParts = chosen.map(c => `${c.path || c.name}|${c.lastModified || 0}`);
+  const signature = sigParts.join(';');
+
+  return { results, signature };
+}
 
   // ---------------- Monitor (start / stop / trigger)
   F.startAutoMonitor = function (onChangeCb, intervalMs) {
