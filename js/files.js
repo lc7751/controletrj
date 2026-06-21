@@ -1,4 +1,4 @@
-// files.js - monitor automático de diretório e funções de tasks
+// files.js - monitor automático de diretório e funções de tasks & incidents
 (function(){
   const MONITOR_INTERVAL_MS = 30000; // 30s
   let monitor = {
@@ -7,6 +7,49 @@
     lastSignature: localStorage.getItem('trj_lastSignature') || null,
     busy: false
   };
+
+  // memória local
+  let _tasks = [];
+  let _incidents = [];
+
+  // keys de storage
+  const KEY_TASKS = 'trj_tasks';
+  const KEY_INC = 'trj_incidentes';
+  const KEY_CONNECTED_NAME = 'trj_connectedFolderName';
+  const KEY_SIG = 'trj_lastSignature';
+
+  // tenta carregar dados persistidos do localStorage
+  function loadPersisted() {
+    try {
+      const ts = localStorage.getItem(KEY_TASKS);
+      _tasks = ts ? JSON.parse(ts) : [];
+    } catch(e){ _tasks = []; }
+    try {
+      const is = localStorage.getItem(KEY_INC);
+      _incidents = is ? JSON.parse(is) : [];
+    } catch(e){ _incidents = []; }
+  }
+
+  // salvar em localStorage (silencioso em erro)
+  function persist(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj || [])); } catch(e){}
+  }
+
+  // API pública para obter tarefas / incidentes
+  function getTasks(){ return Array.isArray(_tasks) ? _tasks.slice() : []; }
+  function getIncidents(){ return Array.isArray(_incidents) ? _incidents.slice() : []; }
+
+  // setters públicos — disparam eventos para aplicação reagir
+  function setTasks(data){
+    _tasks = Array.isArray(data) ? data.slice() : [];
+    persist(KEY_TASKS, _tasks);
+    document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: { tasks: getTasks() } }));
+  }
+  function setIncidents(data){
+    _incidents = Array.isArray(data) ? data.slice() : [];
+    persist(KEY_INC, _incidents);
+    document.dispatchEvent(new CustomEvent('trj:incidentsLoaded', { detail: { incidents: getIncidents() } }));
+  }
 
   // Tenta restaurar handle persistido (se você tiver lógica de IndexedDB para persistir handles,
   // coloque-a aqui). Por ora, deixamos monitor.handle nulo até o usuário conectar.
@@ -17,10 +60,9 @@
     const handle = await window.showDirectoryPicker();
     monitor.handle = handle;
     try {
-      // salva apenas o nome para UX; o handle não é serializável em localStorage
-      localStorage.setItem('trj_connectedFolderName', handle.name || 'folder');
-    } catch(e){ /* ignore localStorage failures */ }
-    // iniciar monitoramento (de forma tolerante)
+      localStorage.setItem(KEY_CONNECTED_NAME, handle.name || 'folder');
+    } catch(e){}
+    // iniciar monitoramento (tolerante)
     startAutoMonitor();
     return handle;
   }
@@ -34,10 +76,9 @@
 
   // Faz uma varredura segura na pasta conectada.
   // Retorna { entries: [...], signature: '...' }
-  // Se não houver pasta conectada, NÃO lança — retorna entries:[] e signature:null
+  // Se não houver pasta conectada, retorna entries:[] e signature:null
   async function scanFolderOnce(){
     if(!monitor.handle) {
-      // não lançar aqui para evitar que o caller quebre o bootstrap
       return { entries: [], signature: null };
     }
 
@@ -49,16 +90,14 @@
             const fh = await entry.getFile();
             entries.push({ name: fh.name, size: fh.size, lastModified: fh.lastModified || 0 });
           }catch(e){
-            // pode ocorrer por falta de permissão em um arquivo; ignorar só esse arquivo
             console.debug('Não pôde ler arquivo do diretório (ignorando):', name, e && e.message);
           }
         }
       }
     } catch(e) {
-      // erro ao iterar a pasta (ex.: revogação de permissão) -> desassociar handle e retornar vazio
       console.warn('Erro ao acessar a pasta conectada. Monitor será desconectado.', e && e.message);
       monitor.handle = null;
-      localStorage.removeItem('trj_connectedFolderName');
+      try { localStorage.removeItem(KEY_CONNECTED_NAME); } catch(_) {}
       return { entries: [], signature: null };
     }
 
@@ -68,7 +107,6 @@
 
   // Inicia monitor automático. Se não houver pasta conectada, retorna silenciosamente.
   async function startAutoMonitor(){
-    // limpa timer anterior se houver
     if(monitor.timer) {
       clearInterval(monitor.timer);
       monitor.timer = null;
@@ -79,9 +117,8 @@
       const res = await scanFolderOnce();
       if(res && res.signature) {
         monitor.lastSignature = res.signature;
-        try { localStorage.setItem('trj_lastSignature', res.signature); } catch(e){}
+        try { localStorage.setItem(KEY_SIG, res.signature); } catch(e){}
       } else {
-        // nenhuma pasta conectada ou sem assinatura — não iniciar o timer automaticamente
         console.info('AutoMonitor: nenhuma pasta conectada. Use connectFolder() para conectar.');
         return;
       }
@@ -90,13 +127,11 @@
       return;
     }
 
-    // montar timer que varre periodicamente — erros são capturados e não propagados
     monitor.timer = setInterval(async () => {
       if(monitor.busy) return;
       monitor.busy = true;
       try {
         const { signature, entries } = await scanFolderOnce();
-        // se não houver assinatura significa que a pasta foi desconectada
         if(!signature) {
           console.info('AutoMonitor: pasta desconectada ou inacessível. Parando monitor.');
           stopAutoMonitor();
@@ -107,13 +142,12 @@
         if(signature !== monitor.lastSignature){
           console.info('Novos/alterados arquivos detectados no diretório.');
           monitor.lastSignature = signature;
-          try { localStorage.setItem('trj_lastSignature', signature); } catch(e){}
+          try { localStorage.setItem(KEY_SIG, signature); } catch(e){}
+          // evento global para a aplicação processar os arquivos como quiser
+          document.dispatchEvent(new CustomEvent('trj:folderChanged', { detail: { entries } }));
+          // se a app implementou um hook específico, chamar também
           if(window.TRJ && TRJ.files && typeof TRJ.files.onFolderChange === 'function'){
-            try {
-              TRJ.files.onFolderChange(entries);
-            } catch(e){ console.error('Erro em onFolderChange:', e); }
-          } else {
-            document.dispatchEvent(new CustomEvent('trj:folderChanged', { detail: { entries } }));
+            try { TRJ.files.onFolderChange(entries); } catch(e){ console.error('Erro em onFolderChange:', e); }
           }
         }
       } catch(e){
@@ -143,11 +177,10 @@
       }
       if(signature !== monitor.lastSignature){
         monitor.lastSignature = signature;
-        try { localStorage.setItem('trj_lastSignature', signature); } catch(e){}
+        try { localStorage.setItem(KEY_SIG, signature); } catch(e){}
+        document.dispatchEvent(new CustomEvent('trj:folderChanged', { detail: { entries } }));
         if(window.TRJ && TRJ.files && typeof TRJ.files.onFolderChange === 'function'){
           TRJ.files.onFolderChange(entries);
-        } else {
-          document.dispatchEvent(new CustomEvent('trj:folderChanged', { detail: { entries } }));
         }
         return { changed: true, entries };
       }
@@ -158,24 +191,28 @@
     }
   }
 
-  // placeholder para setTasks (aplicação implementa lógica real)
-  function setTasks(data){
-    try {
-      localStorage.setItem('trj_tasks', JSON.stringify(data));
-    } catch(e){}
-    document.dispatchEvent(new CustomEvent('trj:tasksLoaded'));
-  }
-
-  // export público
+  // expose
   window.TRJ = window.TRJ || {};
   window.TRJ.files = window.TRJ.files || {};
+
+  // carregar persistidos agora
+  loadPersisted();
+
+  // Export API
   window.TRJ.files.connectFolder = connectFolder;
   window.TRJ.files.startAutoMonitor = startAutoMonitor;
   window.TRJ.files.stopAutoMonitor = stopAutoMonitor;
   window.TRJ.files.scanFolder = scanFolderOnce;
   window.TRJ.files.triggerScan = triggerScan;
+
+  // tasks/incidents API
+  window.TRJ.files.getTasks = getTasks;
+  window.TRJ.files.getIncidents = getIncidents;
   window.TRJ.files.setTasks = setTasks;
+  window.TRJ.files.setIncidents = setIncidents;
+
   // hook público que a aplicação pode sobrescrever para processar entradas
+  // (por padrão apenas dispara evento trj:folderChanged)
   window.TRJ.files.onFolderChange = window.TRJ.files.onFolderChange || function(entries){
     document.dispatchEvent(new CustomEvent('trj:folderChanged', { detail: { entries } }));
   };
