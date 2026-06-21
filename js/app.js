@@ -32,33 +32,94 @@
     });
   }
 
+ // ---------------- START (substituir por este trecho) ----------------
   async function startApp() {
-    // 1. Forçar exibição inicial correta para evitar tela preta
-    const loginEl = document.getElementById('login-screen');
-    const appEl = document.getElementById('app-shell');
+    // mostra loading (UI) mas não oculta a tela de login até o carregamento terminar com sucesso
+    U.loading(true);
+    // garantir estado consistente da UI enquanto tentamos carregar
+    try {
+      // buildShell aqui prepara a estrutura do painel, mas não oculta o login até o sucesso
+      buildShell();
 
-    if (!TRJ.auth.isLogged()) {
-      if (loginEl) loginEl.style.display = 'flex';
-      if (appEl) appEl.style.display = 'none';
+      // carrega todos os dados (config do Apps Script + tarefas/incidentes locais)
+      await App.loadAll();
+
+      // reconstruir shell com dados e renderizar
+      buildShell();
+      render();
+
+      // iniciar monitor automático (se disponível) de forma defensiva
+      try {
+        if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function') {
+          // a sua versão do startAutoMonitor não aceita callbacks; apenas chame-a
+          TRJ.files.startAutoMonitor();
+        }
+      } catch (e) {
+        console.warn('Falha ao iniciar auto-monitor (silenciado):', e && e.message);
+      }
+
+      // configurar auto-refresh (se habilitado na config)
+      try {
+        if (TRJ.config && Number(TRJ.config.AUTO_REFRESH_SEG) > 0) {
+          if (App._timer) clearInterval(App._timer);
+          App._timer = setInterval(function () { App.refresh(); }, Number(TRJ.config.AUTO_REFRESH_SEG) * 1000);
+        }
+      } catch (e) {
+        console.warn('Erro ao configurar auto-refresh:', e && e.message);
+      }
+
+      // esconder tela de login somente após sucesso total
+      var ls = document.getElementById('login-screen');
+      if (ls) ls.style.display = 'none';
+      var shell = document.getElementById('app-shell');
+      if (shell) shell.style.display = 'flex';
+
+    } catch (e) {
+      // erro no carregamento inicial -> mostrar login (evita tela preta)
+      console.error('Erro no startApp:', e);
+      U.toast(e.message || 'Erro ao carregar dados.', 'err');
+
+      // restaurar a tela de login e esconder o shell
+      var ls = document.getElementById('login-screen');
+      if (ls) ls.style.display = 'flex';
+      var shell = document.getElementById('app-shell');
+      if (shell) shell.style.display = 'none';
+
+      // se o erro aparentar ser token inválido, forçar logout
+      try {
+        if (/token/i.test(e && e.message || '')) {
+          doLogout();
+          showLogin(e.message);
+          return;
+        }
+      } catch(err){/*ignore*/}
+
+      showLogin(e && e.message ? e.message : '');
       return;
+    } finally {
+      U.loading(false);
     }
-
-    if (loginEl) loginEl.style.display = 'none';
-    if (appEl) appEl.style.display = 'block';
-
-    // 2. Carregar dados iniciais
-    try {
-        App.data = await TRJ.api.getConfig(); // ou carregar local
-    } catch(e) { console.warn('Falha config api'); }
-
-    // 3. Tentar monitoramento sem quebrar o app
-    try {
-      if (TRJ.files && TRJ.files.startAutoMonitor) TRJ.files.startAutoMonitor();
-    } catch(e) { console.info('Monitor não iniciado: ' + e.message); }
-
-    window.addEventListener('hashchange', render);
-    render();
   }
+
+  function boot() {
+    wireLogin();
+    window.addEventListener('hashchange', render);
+
+    // Se usuário já estiver logado, tentamos iniciar; caso falhe, mostramos login.
+    if (TRJ.auth.isLogged()) {
+      // chamar startApp() mas não bloquear o thread do boot
+      startApp().catch(function(e){
+        console.error('Boot: startApp falhou', e);
+        try { showLogin(e && e.message); } catch(_) {}
+      });
+    } else {
+      showLogin();
+    }
+  }
+
+  // inicialização quando DOM estiver pronto (mantemos igual)
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
 
   function render() {
     const container = document.getElementById('main-content');
