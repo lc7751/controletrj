@@ -7,8 +7,8 @@
   <link rel="icon" href="assets/logo-trj.png" />
 
   <!-- Tailwind (CDN) -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
+  <script src="https://cdn.tailwindcss.com" defer></script>
+  <script defer>
     tailwind.config = {
       theme: {
         extend: {
@@ -22,8 +22,8 @@
   </script>
 
   <!-- Chart.js (CDN) -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
 
   <!-- Estilos do projeto -->
   <link rel="stylesheet" href="css/styles.css" />
@@ -53,23 +53,27 @@
   <!-- ==== PAINEL (SPA) ==== -->
   <div id="app-shell" style="display:none; min-height:100vh;"></div>
 
-  <!-- ==== SCRIPTS (ordem importa) ==== -->
-  <script src="js/constants.js"></script>
-  <script src="js/domain.js"></script>
-  <script src="js/genesis.js"></script>
-  <script src="js/compute.js"></script>
-  <script src="js/files.js"></script>
-  <script src="js/config.js"></script>
-  <script src="js/api.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/ui.js"></script>
-  <script src="js/pages/dashboard.js"></script>
-  <script src="js/pages/sla.js"></script>
-  <script src="js/pages/regional.js"></script>
-  <script src="js/pages/sites-fora.js"></script>
-  <script src="js/pages/cadastro.js"></script>
-  <script src="js/pages/importar.js"></script>
-  <script src="js/pages/configuracoes.js"></script>
-  <script src="js/app.js"></script>
+  <!-- ==== SCRIPTS (ordem importa) - usando defer ==== -->
+  <script defer src="js/constants.js"></script>
+  <script defer src="js/domain.js"></script>
+  <script defer src="js/genesis.js"></script>
+  <script defer src="js/compute.js"></script>
+  <script defer src="js/files.js"></script>
+  <script defer src="js/config.js"></script>
+  <script defer src="js/api.js"></script>
+  <script defer src="js/auth.js"></script>
+  <script defer src="js/ui.js"></script>
+
+  <!-- páginas -->
+  <script defer src="js/pages/dashboard.js"></script>
+  <script defer src="js/pages/sla.js"></script>
+  <script defer src="js/pages/regional.js"></script>
+  <script defer src="js/pages/sites-fora.js"></script>
+  <script defer src="js/pages/cadastro.js"></script>
+  <script defer src="js/pages/importar.js"></script>
+  <script defer src="js/pages/configuracoes.js"></script>
+
+  <!-- bootstrap -->
+  <script defer src="js/app.js"></script>
 </body>
 </html>

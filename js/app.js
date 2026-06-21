@@ -38,9 +38,10 @@
 
   // ---------------- LOGIN ----------------
   function showLogin(msg) {
-    document.getElementById('app-shell').style.display = 'none';
+    var shell = document.getElementById('app-shell');
+    if (shell) shell.style.display = 'none';
     var ls = document.getElementById('login-screen');
-    ls.style.display = 'flex';
+    if (ls) ls.style.display = 'flex';
     var err = document.getElementById('login-error');
     if (err) err.textContent = msg || '';
   }
@@ -49,31 +50,31 @@
     if (!form) return;
     form.addEventListener('submit', async function (ev) {
       ev.preventDefault();
-      var email = document.getElementById('login-email').value.trim();
-      var pwd = document.getElementById('login-pwd').value;
+      var email = (document.getElementById('login-email') || {}).value || '';
+      var pwd = (document.getElementById('login-pwd') || {}).value || '';
       var btn = document.getElementById('login-btn');
       var err = document.getElementById('login-error');
-      err.textContent = '';
-      btn.disabled = true; btn.textContent = 'Entrando...';
+      if (err) err.textContent = '';
+      if (btn) { btn.disabled = true; btn.textContent = 'Entrando...'; }
       try {
-        await TRJ.auth.login(email, pwd);
+        await TRJ.auth.login(email.trim(), pwd);
         await startApp();
       } catch (e) {
-        err.textContent = e.message || 'Falha no login.';
+        if (err) err.textContent = e.message || 'Falha no login.';
       } finally {
-        btn.disabled = false; btn.textContent = 'Entrar';
+        if (btn) { btn.disabled = false; btn.textContent = 'Entrar'; }
       }
     });
   }
 
   // ---------------- SHELL ----------------
   function buildSidebar() {
-    var user = TRJ.auth.getUser() || {};
+    var user = (TRJ.auth && TRJ.auth.getUser && TRJ.auth.getUser()) || {};
     var brand = U.h('div', { class: 'flex items-center gap-3 px-4 py-4' }, [
       U.h('img', { src: 'assets/logo-trj.png', alt: 'TRJ', style: { width: '38px', height: '38px', objectFit: 'contain' } }),
       U.h('div', null, [
-        U.h('div', { class: 'font-extrabold text-sm', style: { color: 'var(--trj-primary)', letterSpacing: '.5px' }, text: TRJ.config.APP_NAME || 'CONTROLE TRJ' }),
-        U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: TRJ.config.APP_SUB || 'Operacional' })
+        U.h('div', { class: 'font-extrabold text-sm', style: { color: (TRJ.config && TRJ.config.APP_NAME) ? 'var(--trj-primary)' : 'var(--trj-primary)', letterSpacing: '.5px' }, text: (TRJ.config && TRJ.config.APP_NAME) || 'CONTROLE TRJ' }),
+        U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: (TRJ.config && TRJ.config.APP_SUB) || 'Operacional' })
       ])
     ]);
     var hasTasks = App.data && App.data.rawTasks && App.data.rawTasks.length > 0;
@@ -93,7 +94,13 @@
     return U.h('aside', { id: 'sidebar', class: 'trj-card flex flex-col', style: { width: '256px', minWidth: '256px', borderRadius: '0', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', height: '100vh', position: 'sticky', top: '0' } }, [brand, nav, footer]);
   }
 
-  function doLogout() { if (TRJ.files && TRJ.files.stopAutoMonitor) TRJ.files.stopAutoMonitor(); if (App._timer) { clearInterval(App._timer); App._timer = null; } TRJ.auth.logout(); location.hash = '#/dashboard'; showLogin(); }
+  function doLogout() {
+    try { if (TRJ.files && TRJ.files.stopAutoMonitor) TRJ.files.stopAutoMonitor(); } catch(_) {}
+    if (App._timer) { clearInterval(App._timer); App._timer = null; }
+    try { TRJ.auth.logout(); } catch(_) {}
+    location.hash = '#/dashboard';
+    showLogin();
+  }
 
   function setActiveLink() {
     var cur = location.hash || '#/dashboard';
@@ -104,6 +111,7 @@
 
   function buildShell() {
     var shell = document.getElementById('app-shell');
+    if (!shell) return;
     shell.innerHTML = '';
     shell.style.display = 'flex';
     var sidebar = buildSidebar();
@@ -131,7 +139,9 @@
   // ---------------- DADOS ----------------
   function prazoOverride(config) {
     var o = {};
-    C.PRIORIDADES.forEach(function (p) { if (config['sla_' + p] != null && config['sla_' + p] !== '') o[p] = config['sla_' + p]; });
+    if (C && Array.isArray(C.PRIORIDADES)) {
+      C.PRIORIDADES.forEach(function (p) { if (config && config['sla_' + p] != null && config['sla_' + p] !== '') o[p] = config['sla_' + p]; });
+    }
     return o;
   }
 
@@ -147,7 +157,7 @@
 
       // Config (prazos de SLA) continua vindo da planilha via Apps Script.
       var cfgRes = await TRJ.api.getConfig();
-      var config = cfgRes.config || {};
+      var config = cfgRes && cfgRes.config ? cfgRes.config : {};
 
       // Tarefas e incidentes vêm dos arquivos lidos no navegador (TRJ.files).
       var rawTasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() : [];
@@ -165,7 +175,7 @@
       if (ids && ids.length) {
         try {
           var lk = await TRJ.api.lookupCities(ids);
-          validMap = lk.map || {};
+          validMap = (lk && lk.map) ? lk.map : {};
         } catch (e) {
           console.warn('lookupCities falhou:', e);
           validMap = {};
@@ -189,6 +199,7 @@
         tasksEnriched: tasksEnriched, incidentsEnriched: incidentsEnriched,
         loadedAt: new Date()
       };
+
     } finally {
       U.loading(false);
     }
@@ -202,20 +213,20 @@
       // startAutoMonitor pode aceitar diferentes assinaturas — chame de forma defensiva
       try {
         if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function') {
-          // se a função aceitar um callback, ela deve lidar com isso; se não, chame sem args
           try { TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000); }
           catch (e) { try { TRJ.files.startAutoMonitor(); } catch (e2) { console.warn('startAutoMonitor erro:', e2); } }
         }
       } catch (e) { console.warn('Erro ao (re)iniciar autoMonitor:', e); }
-      U.toast('Dados atualizados.', 'ok');
+      try { U.toast('Dados atualizados.', 'ok'); } catch(_) {}
     } catch (e) {
-      U.toast(e.message || 'Erro ao atualizar.', 'err');
+      try { U.toast(e.message || 'Erro ao atualizar.', 'err'); } catch(_) {}
     }
   };
 
   // recarrega só incidentes (após upload/alteração de status) — agora da memória/navegador
   App.reloadIncidents = async function () {
     var rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() : [];
+    App.data = App.data || {};
     App.data.rawInc = rawInc;
     // garantir Comp disponível antes de enriquecer
     Comp = TRJ.compute || Comp || null;
@@ -230,12 +241,16 @@
   // ---------------- DRILL ----------------
   App.openDrillTasks = function (spec, filtros, title) {
     if (!App.data) return;
-    var rows = Comp.drillTasks(App.data.tasksEnriched, spec, filtros || {});
+    Comp = TRJ.compute || Comp || null;
+    var drillFn = (Comp && typeof Comp.drillTasks === 'function') ? Comp.drillTasks : null;
+    var rows = drillFn ? drillFn(App.data.tasksEnriched, spec, filtros || {}) : [];
     U.openModal(title || 'Detalhamento', U.taskTable(rows));
   };
   App.openDrillIncidents = function (spec, title) {
     if (!App.data) return;
-    var rows = Comp.drillIncidents(App.data.incidentsEnriched, spec);
+    Comp = TRJ.compute || Comp || null;
+    var drillInc = (Comp && typeof Comp.drillIncidents === 'function') ? Comp.drillIncidents : null;
+    var rows = drillInc ? drillInc(App.data.incidentsEnriched, spec) : [];
     U.openModal(title || 'Detalhamento', U.incidentTable(rows));
   };
 
@@ -251,17 +266,21 @@
   };
 
   function render() {
-    if (!TRJ.auth.isLogged()) { showLogin(); return; }
+    try {
+      if (!TRJ.auth || !TRJ.auth.isLogged || !TRJ.auth.isLogged()) { showLogin(); return; }
+    } catch (e) {
+      showLogin(); return;
+    }
     var page = document.getElementById('page');
     if (!page) return;
-    U.destroyCharts();
-    U.closeModal();
+    try { U.destroyCharts(); } catch(_) {}
+    try { U.closeModal(); } catch(_) {}
     var hash = location.hash || '#/dashboard';
     if (!ROUTES[hash]) { location.hash = '#/dashboard'; return; }
     var hasTasks = App.data && App.data.rawTasks && App.data.rawTasks.length > 0;
     if (!hasTasks && hash !== '#/importar' && hash !== '#/configuracoes') { location.hash = '#/importar'; return; }
     setActiveLink();
-    var fn = TRJ.pages[ROUTES[hash]];
+    var fn = TRJ.pages && TRJ.pages[ROUTES[hash]];
     page.innerHTML = '';
     if (typeof fn === 'function') {
       try { fn(page, { data: App.data, app: App }); }
@@ -275,31 +294,78 @@
 
   // ---------------- START ----------------
   async function startApp() {
-    document.getElementById('login-screen').style.display = 'none';
+    var ls = document.getElementById('login-screen');
+    if (ls) ls.style.display = 'none';
     buildShell();
     try {
       await App.loadAll();
       buildShell();
       render();
-      if (TRJ.files && TRJ.files.startAutoMonitor) TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000);
+      if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function') {
+        try { TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000); }
+        catch (e) { try { TRJ.files.startAutoMonitor(); } catch(_) { console.warn('startAutoMonitor erro'); } }
+      }
     } catch (e) {
       // token expirado -> volta pro login
-      if (/token/i.test(e.message || '')) { doLogout(); showLogin(e.message); return; }
-      U.toast(e.message || 'Erro ao carregar dados.', 'err');
+      if (/token/i.test((e && e.message) || '')) { doLogout(); showLogin(e.message); return; }
+      try { U.toast(e.message || 'Erro ao carregar dados.', 'err'); } catch(_) {}
     }
-    if (TRJ.config.AUTO_REFRESH_SEG > 0) {
+    if (TRJ.config && TRJ.config.AUTO_REFRESH_SEG > 0) {
       if (App._timer) clearInterval(App._timer);
       App._timer = setInterval(function () { App.refresh(); }, TRJ.config.AUTO_REFRESH_SEG * 1000);
     }
   }
 
-  function boot() {
-    wireLogin();
-    window.addEventListener('hashchange', render);
-    if (TRJ.auth.isLogged()) startApp();
-    else showLogin();
+  // substitua a função boot existente por esta versão defensiva:
+  function waitFor(conditionFn, interval, timeout) {
+    interval = interval || 100;
+    timeout = timeout || 5000;
+    var start = Date.now();
+    return new Promise(function (resolve) {
+      (function check() {
+        try {
+          if (conditionFn()) return resolve(true);
+        } catch (e) { /* ignore */ }
+        if (Date.now() - start > timeout) return resolve(false);
+        setTimeout(check, interval);
+      })();
+    });
   }
 
+  async function boot() {
+    wireLogin();
+    window.addEventListener('hashchange', render);
+
+    // Se não tiver auth disponível, mostra login e retorna
+    if (!TRJ.auth || !TRJ.auth.isLogged) { showLogin(); return; }
+
+    // se usuário já estiver logado, aguarda módulos (compute/pages) e inicia
+    if (TRJ.auth.isLogged()) {
+      var ready = await waitFor(function () {
+        return window.TRJ && TRJ.compute && typeof TRJ.compute.collectIds === 'function'
+          && TRJ.pages && Object.keys(TRJ.pages).length > 0;
+      }, 100, 5000);
+
+      if (!ready) {
+        console.warn('Boot: módulos compute/pages não carregaram dentro do timeout. Tentando iniciar mesmo assim.');
+      }
+
+      try {
+        await startApp();
+      } catch (e) {
+        console.error('Boot: startApp falhou', e);
+        try { showLogin(e && e.message); } catch (_) {}
+      }
+    } else {
+      // usuário não logado
+      showLogin();
+    }
+  }
+
+  // expõe listener útil para re-render quando tasks forem carregadas externamente
+  document.addEventListener('trj:tasksLoaded', render);
+
+  // iniciar quando DOM estiver pronto
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 
