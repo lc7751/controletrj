@@ -143,3 +143,22 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
 
 /* Ajustes visuais para botões/links que já existem */
 .trj-link.clickable, .trj-btn.clickable { display:inline-flex; align-items:center; }
+
+/* Import container specifics */
+.import-container { padding: 18px; max-width: 1100px; margin: 18px auto; box-sizing: border-box; }
+.import-container .trj-card { margin-bottom: 14px; }
+
+/* tags / badges used in import page */
+.tag {
+  display:inline-block; padding:6px 10px; border-radius:999px; background: rgba(255,255,255,0.03);
+  border:1px solid rgba(255,255,255,0.03); color:var(--trj-fg); font-weight:700; font-size:12px;
+}
+
+/* tornar labels e legendas de gráfico não interativos por padrão */
+.chart-legend, .chart-label { pointer-events: none; }
+
+/* melhorias responsivas pequenas */
+@media (max-width: 720px) {
+  .import-container { padding: 12px; margin: 12px; }
+  .trj-btn { padding: 7px 10px; font-size: 13px; }
+}
