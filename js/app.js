@@ -135,28 +135,58 @@
     return o;
   }
 
+ // ---------------- DADOS (versão defensiva) ----------------
   App.loadAll = async function () {
     U.loading(true);
     try {
+      // garantir que Comp aponte para TRJ.compute atual (defensivo contra ordem de carregamento)
+      Comp = TRJ.compute || Comp || null;
+      if (!Comp || typeof Comp.collectIds !== 'function') {
+        console.warn('TRJ.compute não disponível ou incompleto. Pulando lookupCities e enriquecimento dependente de compute.');
+      }
+
       // Config (prazos de SLA) continua vindo da planilha via Apps Script.
       var cfgRes = await TRJ.api.getConfig();
       var config = cfgRes.config || {};
+
       // Tarefas e incidentes vêm dos arquivos lidos no navegador (TRJ.files).
-      var rawTasks = (TRJ.files && TRJ.files.getTasks()) || [];
-      var rawInc = (TRJ.files && TRJ.files.getIncidents()) || [];
-      var prazoMap = D.montarPrazoMap(prazoOverride(config));
-      var ids = Comp.collectIds(rawTasks, rawInc);
-      var validMap = {};
-      if (ids.length) {
-        var lk = await TRJ.api.lookupCities(ids);
-        validMap = lk.map || {};
+      var rawTasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() : [];
+      var rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() : [];
+
+      var prazoMap = {};
+      try { prazoMap = D.montarPrazoMap(prazoOverride(config)); } catch (e) { console.warn('Erro ao montar prazoMap:', e); prazoMap = {}; }
+
+      var ids = [];
+      if (Comp && typeof Comp.collectIds === 'function') {
+        try { ids = Comp.collectIds(rawTasks, rawInc); } catch (e) { console.warn('Comp.collectIds falhou:', e); ids = []; }
       }
+
+      var validMap = {};
+      if (ids && ids.length) {
+        try {
+          var lk = await TRJ.api.lookupCities(ids);
+          validMap = lk.map || {};
+        } catch (e) {
+          console.warn('lookupCities falhou:', e);
+          validMap = {};
+        }
+      }
+
       var now = new Date();
+      // Se Comp estiver disponível, use enrichTasks/enrichIncidents; senão, apenas passe os raw arrays
+      var tasksEnriched = rawTasks;
+      var incidentsEnriched = rawInc;
+      if (Comp && typeof Comp.enrichTasks === 'function') {
+        try { tasksEnriched = Comp.enrichTasks(rawTasks, validMap, prazoMap, now); } catch (e) { console.warn('Comp.enrichTasks erro:', e); tasksEnriched = rawTasks; }
+      }
+      if (Comp && typeof Comp.enrichIncidents === 'function') {
+        try { incidentsEnriched = Comp.enrichIncidents(rawInc, validMap); } catch (e) { console.warn('Comp.enrichIncidents erro:', e); incidentsEnriched = rawInc; }
+      }
+
       App.data = {
         config: config, prazoMap: prazoMap, validMap: validMap,
         rawTasks: rawTasks, rawInc: rawInc,
-        tasksEnriched: Comp.enrichTasks(rawTasks, validMap, prazoMap, now),
-        incidentsEnriched: Comp.enrichIncidents(rawInc, validMap),
+        tasksEnriched: tasksEnriched, incidentsEnriched: incidentsEnriched,
         loadedAt: new Date()
       };
     } finally {
@@ -165,17 +195,38 @@
   };
 
   App.refresh = async function () {
-    try { await App.loadAll(); buildShell(); render(); if (TRJ.files && TRJ.files.startAutoMonitor) TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000); U.toast('Dados atualizados.', 'ok'); }
-    catch (e) { U.toast(e.message || 'Erro ao atualizar.', 'err'); }
+    try {
+      await App.loadAll();
+      buildShell();
+      render();
+      // startAutoMonitor pode aceitar diferentes assinaturas — chame de forma defensiva
+      try {
+        if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function') {
+          // se a função aceitar um callback, ela deve lidar com isso; se não, chame sem args
+          try { TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000); }
+          catch (e) { try { TRJ.files.startAutoMonitor(); } catch (e2) { console.warn('startAutoMonitor erro:', e2); } }
+        }
+      } catch (e) { console.warn('Erro ao (re)iniciar autoMonitor:', e); }
+      U.toast('Dados atualizados.', 'ok');
+    } catch (e) {
+      U.toast(e.message || 'Erro ao atualizar.', 'err');
+    }
   };
 
   // recarrega só incidentes (após upload/alteração de status) — agora da memória/navegador
   App.reloadIncidents = async function () {
-    var rawInc = (TRJ.files && TRJ.files.getIncidents()) || [];
+    var rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() : [];
     App.data.rawInc = rawInc;
-    App.data.incidentsEnriched = Comp.enrichIncidents(rawInc, App.data.validMap);
+    // garantir Comp disponível antes de enriquecer
+    Comp = TRJ.compute || Comp || null;
+    if (Comp && typeof Comp.enrichIncidents === 'function') {
+      try { App.data.incidentsEnriched = Comp.enrichIncidents(rawInc, App.data.validMap); }
+      catch (e) { console.warn('Erro ao enriquecer incidents no reload:', e); App.data.incidentsEnriched = rawInc; }
+    } else {
+      App.data.incidentsEnriched = rawInc;
+    }
   };
-
+  
   // ---------------- DRILL ----------------
   App.openDrillTasks = function (spec, filtros, title) {
     if (!App.data) return;
