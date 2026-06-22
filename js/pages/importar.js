@@ -1,4 +1,4 @@
-// importar.js - Importador e integração com TRJ.files (corrigido para evitar loop infinito)
+// js/pages/importar.js - Importador e integração com TRJ.files (corrigido para evitar loop infinito)
 (function () {
   'use strict';
 
@@ -15,6 +15,7 @@
   let _debounceTimer = null;
   let _processing = false;
   let _registered = false; // evitar registrar listeners múltiplas vezes
+  let containerEl = null;
 
   // Helpers de UI (assumem existência de funções TRJ.ui.* se houver)
   function log(...args) { console.info.apply(console, ['[importar]'].concat(args)); }
@@ -28,7 +29,8 @@
   // Detecta extensão do nome
   function extFromName(name) {
     if (!name) return '';
-    const p = name.split('.'); if (p.length < 2) return '';
+    const p = name.split('.');
+    if (p.length < 2) return '';
     return p[p.length - 1].toLowerCase();
   }
 
@@ -298,10 +300,147 @@
     }
   }
 
+  // --- Novas funções: importação de texto e UI render ---
+
+  // Importa incidents a partir de texto colado no textarea
+  function importIncidentsFromText() {
+    try {
+      const ta = containerEl && containerEl.querySelector('[data-action="incidentes-text"]');
+      if (!ta) { toast('Campo de incidentes não encontrado.', 'error'); return; }
+      const raw = ta.value;
+      if (!raw || !raw.trim()) { toast('Cole os dados dos incidentes antes de importar.', 'warning'); return; }
+
+      const parsed = parseTextToRows('incidentes_text', raw);
+      const objs = convertRowsToObjects(parsed);
+      const incidents = mapObjectsToIncidents(objs);
+
+      if (!incidents.length) {
+        toast('Nenhum incidente detectado no texto.', 'warning');
+        return;
+      }
+
+      if (TRJ && TRJ.files && typeof TRJ.files.setIncidents === 'function') {
+        TRJ.files.setIncidents(incidents);
+        toast('Incidentes importados: ' + incidents.length, 'success');
+        log('Importados incidents via TRJ.files.setIncidents', incidents.length);
+      } else if (TRJ && TRJ.api && typeof TRJ.api.importIncidentes === 'function') {
+        TRJ.api.importIncidentes(incidents).then(() => {
+          toast('Incidentes enviados via TRJ.api.importIncidentes', 'success');
+        }).catch(e => {
+          warn('Falha importIncidentes API', e);
+          localStorage.setItem('trj_incidentes', JSON.stringify(incidents));
+          toast('Incidentes salvos localmente (fallback).', 'info');
+        });
+      } else {
+        localStorage.setItem('trj_incidentes', JSON.stringify(incidents));
+        toast('Incidentes salvos localmente (fallback).', 'info');
+      }
+
+    } catch (e) {
+      err('importIncidentsFromText erro', e);
+      toast('Erro ao importar incidents do texto (veja console).', 'error');
+    }
+  }
+
+  // Render HTML da página (injetável)
+  function renderHtml() {
+    const statusText = (TRJ && TRJ.files && typeof TRJ.files.hasTasks === 'function' && TRJ.files.hasTasks()) || localStorage.getItem('trj_tasks') ? 'Dados carregados' : 'Sem dados';
+    return `
+      <section data-page="importar" id="importar" class="page page-importar" style="padding:20px; max-width:1100px; margin:0 auto;">
+        <div style="display:flex; gap:18px; align-items:center; justify-content:space-between; margin-bottom:12px;">
+          <div>
+            <h2 style="margin:0 0 6px 0;">Importar dados</h2>
+            <p style="margin:0; color:var(--trj-muted); font-size:13px;">Faça upload de arquivos, conecte uma pasta para monitoramento ou cole incidents no campo abaixo.</p>
+          </div>
+          <div style="text-align:right;">
+            <small style="color:var(--trj-muted);">Status: <span id="importar-status" style="font-weight:700;">${statusText}</span></small>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <div style="flex:1 1 420px; background:var(--trj-card, #111); padding:12px; border-radius:8px;">
+            <h3 style="margin:0 0 8px 0;">Arquivo / Pasta</h3>
+            <p style="margin:0 0 10px 0; color:var(--trj-muted); font-size:13px;">Você pode carregar XLSX/CSV ou conectar uma pasta para monitoramento automático.</p>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <button class="trj-btn" data-action="choose-file">Escolher arquivo</button>
+              <input type="file" accept=".csv,.xlsx,.xls" data-action="file-input" style="display:none;" />
+              <button class="trj-btn" data-action="connect-folder">Conectar pasta</button>
+              <button class="trj-btn" data-action="verify-now">Verificar agora</button>
+            </div>
+            <div style="margin-top:10px; font-size:13px; color:var(--trj-muted);">
+              <em>Arquivos detectados e processados serão mostrados nas abas após o carregamento.</em>
+            </div>
+          </div>
+
+          <div style="flex:1 1 420px; background:var(--trj-card, #111); padding:12px; border-radius:8px;">
+            <h3 style="margin:0 0 8px 0;">Incidentes (texto)</h3>
+            <p style="margin:0 0 8px 0; color:var(--trj-muted); font-size:13px;">Cole aqui os dados do painel G.E.N.E.S.I.S (CSV/colunas separadas por ; , ou tab). A primeira linha deve conter cabeçalhos.</p>
+            <textarea data-action="incidentes-text" rows="8" style="width:100%; background:transparent; border:1px dashed rgba(255,140,0,0.15); padding:8px; color:var(--trj-fg, #fff);"></textarea>
+            <div style="margin-top:8px; display:flex; gap:8px;">
+              <button class="trj-btn trj-btn-primary" data-action="import-incidentes-text">Importar Incidentes do Texto</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="importar-log" style="margin-top:14px; color:var(--trj-muted); font-size:13px;"></div>
+      </section>
+    `;
+  }
+
+  // --- Funções de UI / binding ---
+  function attachUiHandlers() {
+    if (!containerEl) return;
+    // Delegated click handler para actions
+    containerEl.removeEventListener('click', delegatedClickHandler);
+    containerEl.addEventListener('click', delegatedClickHandler);
+
+    // file input
+    const fileInput = containerEl.querySelector('input[type="file"][data-action="file-input"]');
+    if (fileInput) {
+      fileInput.removeEventListener('change', fileInputChangeHandler);
+      fileInput.addEventListener('change', fileInputChangeHandler);
+    }
+  }
+
+  function delegatedClickHandler(ev) {
+    const action = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-action');
+    if (!action) return;
+    ev.preventDefault();
+    if (action === 'connect-folder') {
+      handleConnectClick(ev);
+    } else if (action === 'verify-now') {
+      handleVerifyClick(ev);
+    } else if (action === 'choose-file') {
+      const input = containerEl.querySelector('input[type="file"][data-action="file-input"]');
+      if (input) input.click();
+    } else if (action === 'import-incidentes-text') {
+      importIncidentsFromText();
+    }
+  }
+
+  function fileInputChangeHandler(ev) {
+    const f = ev.target.files && ev.target.files[0];
+    if (f) {
+      // processa diretamente (processFolderItems aceita File)
+      processFolderItems([f]);
+    }
+    // permitir re-seleção do mesmo arquivo
+    try { ev.target.value = ''; } catch (e) { /* ignore */ }
+  }
+
   // Inicialização: registra listeners e conecta botões (caso existam no DOM)
   function initImportPage() {
     if (_registered) return;
     _registered = true;
+
+    // define containerEl se ainda não tiver sido definido (quando init for chamada isoladamente)
+    if (!containerEl) {
+      containerEl = document.querySelector('[data-page="importar"]') || document.querySelector('#importar') || document.querySelector('#app-shell') || document.body;
+    }
+    if (!containerEl) {
+      warn('container importar não encontrado no init');
+      return;
+    }
 
     // Registra listener global (evita duplicatas)
     document.removeEventListener('trj:folderChanged', onFolderChangedHandler);
@@ -311,20 +450,14 @@
     document.removeEventListener('trj:folderChanged.importar', onFolderChangedHandler);
     document.addEventListener('trj:folderChanged.importar', onFolderChangedHandler);
 
-    // Se existir botão 'Conectar pasta' e 'Verificar agora' no DOM, ligar ações
-    try {
-      const btnConnect = document.querySelector('[data-action="connect-folder"]');
-      const btnVerify = document.querySelector('[data-action="verify-now"]');
-      if (btnConnect) {
-        btnConnect.removeEventListener('click', handleConnectClick);
-        btnConnect.addEventListener('click', handleConnectClick);
-      }
-      if (btnVerify) {
-        btnVerify.removeEventListener('click', handleVerifyClick);
-        btnVerify.addEventListener('click', handleVerifyClick);
-      }
-    } catch (e) {
-      // ignorar ausência de botões — page pode gerenciar de outro jeito
+    // Attach UI handlers (buttons/input dentro do container)
+    attachUiHandlers();
+
+    // Atualiza status
+    const statusEl = containerEl.querySelector && containerEl.querySelector('#importar-status');
+    if (statusEl) {
+      const has = (TRJ && TRJ.files && typeof TRJ.files.hasTasks === 'function' && TRJ.files.hasTasks()) || !!localStorage.getItem('trj_tasks');
+      statusEl.textContent = has ? 'Dados carregados' : 'Sem dados';
     }
 
     log('Import page initialized. Listeners registered.');
@@ -342,7 +475,6 @@
       if (handle) {
         toast('Pasta conectada: ' + (handle.name || 'Pasta'), 'success');
         // opcional: disparar verificação inicial (não o evento que cria recursão)
-        // chamamos TRJ.files.triggerScan() aqui uma única vez (não dentro do handler) e processamos o retorno
         try {
           const res = await TRJ.files.triggerScan();
           if (res && Array.isArray(res.items) && res.items.length) {
@@ -386,10 +518,32 @@
   P.importar.parseFileHandle = parseFileHandle;
   P.importar.onFolderChangedHandler = onFolderChangedHandler;
 
+  // --- Render API que o roteador chama ---
+  P.importar.render = function (root) {
+    try {
+      const mount = root || document.querySelector('#app-shell') || document.body;
+      if (!mount) {
+        warn('mount não encontrado para render');
+        return;
+      }
+      // injetar HTML da página
+      mount.innerHTML = renderHtml();
+      // apontar containerEl para a seção injetada
+      containerEl = mount.querySelector('[data-page="importar"]') || mount;
+      // inicializar bindings
+      initImportPage();
+    } catch (e) {
+      err('render erro', e);
+    }
+  };
+
   // Auto-init (se a página for carregada e TRJ estiver pronto)
-  // Aguarda até que DOM esteja pronto
+  // Aguarda até que DOM esteja pronto e registra init (mas somente init; render é usado pelo roteador)
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initImportPage);
+    document.addEventListener('DOMContentLoaded', function () {
+      // tenta registrar handlers genéricos (sem injetar HTML) - safe no caso de router injetar depois
+      initImportPage();
+    });
   } else {
     setTimeout(initImportPage, 0);
   }
