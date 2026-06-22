@@ -1,616 +1,416 @@
-/* js/pages/importar.js
-   Página Importar: conecta pasta, verifica arquivos, importa tasks e incidents (genérico)
-*/
-(function (TRJ) {
-  TRJ.pages = TRJ.pages || {};
-  var U = TRJ.ui || (TRJ.ui = {});
-  var FS = TRJ.files || (TRJ.files = {});
-  // Garantir compatibilidade retroativa com F
-  if (!window.F) {
-    if (TRJ.files && Object.keys(TRJ.files).length) {
-      window.F = TRJ.files;
-    } else {
-      window.F = {};
-    }
-  }
-  var F = window.F; // alias seguro
-  // Sincroniza FS e F referências se possível
-  if (!FS || !Object.keys(FS).length) {
-    FS = TRJ.files = TRJ.files || F || {};
-  } else {
-    // se FS existe, garantir que window.F aponte para ela
-    window.F = window.F || FS;
+// importar.js - Importador e integração com TRJ.files (corrigido para evitar loop infinito)
+(function () {
+  'use strict';
+
+  window.TRJ = window.TRJ || {};
+  window.TRJ.pages = window.TRJ.pages || {};
+  const P = window.TRJ.pages;
+  P.importar = P.importar || {};
+
+  // Configurações locais
+  const DEBOUNCE_MS = 600; // agrupa eventos próximos
+  const MAX_ROWS_PREVIEW = 5000;
+
+  // Estado local da página
+  let _debounceTimer = null;
+  let _processing = false;
+  let _registered = false; // evitar registrar listeners múltiplas vezes
+
+  // Helpers de UI (assumem existência de funções TRJ.ui.* se houver)
+  function log(...args) { console.info.apply(console, ['[importar]'].concat(args)); }
+  function warn(...args) { console.warn.apply(console, ['[importar]'].concat(args)); }
+  function err(...args) { console.error.apply(console, ['[importar]'].concat(args)); }
+  function toast(msg, type = 'info') {
+    if (window.TRJ && TRJ.ui && typeof TRJ.ui.toast === 'function') TRJ.ui.toast(msg, type);
+    else console.info('[toast]', msg);
   }
 
-  var G = TRJ.genesis || {};
-  var Comp = TRJ.compute || {};
-
-  // Util helpers
-  function el(tag, props, children) {
-    var e = document.createElement(tag);
-    props = props || {};
-    Object.keys(props).forEach(function (k) {
-      if (k === 'class') e.className = props[k];
-      else if (k === 'html') e.innerHTML = props[k];
-      else if (k === 'text') e.textContent = props[k];
-      else if (k.startsWith('on') && typeof props[k] === 'function') e.addEventListener(k.slice(2), props[k]);
-      else e.setAttribute(k, props[k]);
-    });
-    (children || []).forEach(function (c) { if (typeof c === 'string') e.appendChild(document.createTextNode(c)); else if (c) e.appendChild(c); });
-    return e;
+  // Detecta extensão do nome
+  function extFromName(name) {
+    if (!name) return '';
+    const p = name.split('.'); if (p.length < 2) return '';
+    return p[p.length - 1].toLowerCase();
   }
-  function toast(msg, type) { if (U && typeof U.toast === 'function') U.toast(msg, type || 'info'); else console.info('toast:', msg); }
-  function fmtName(h) { try { return h && (h.name || h.handleName || 'Pasta'); } catch (e) { return 'Pasta'; } }
 
-  // ---------- Helper: executar pipeline de compute e forçar refresh ----------
-  // Suporta enrichTasks síncrono ou async (Promise). Faz setTasks via FS.setTasks / TRJ.files.setTasks
-  function triggerComputeAndRefresh(tasks) {
+  // Parser de um FileSystemHandle ou File para { name, headers, rows }
+  async function parseFileHandle(handle) {
     try {
-      var resolved = tasks || [];
-      if (TRJ && TRJ.compute && typeof TRJ.compute.enrichTasks === 'function') {
-        try {
-          var r = TRJ.compute.enrichTasks(tasks);
-          if (r && typeof r.then === 'function') {
-            // async
-            r.then(function (enriched) {
-              resolved = enriched || tasks || [];
-              try {
-                if (FS && typeof FS.setTasks === 'function') FS.setTasks(resolved);
-                else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(resolved);
-                console.log('triggerComputeAndRefresh: enrichTasks resolved, tasks set:', (resolved && resolved.length) || 0);
-              } catch (setErr) { console.warn('triggerComputeAndRefresh setTasks failed', setErr); }
-              try { if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh(); } catch (refreshErr) { console.warn('triggerComputeAndRefresh refresh failed', refreshErr); }
-            }).catch(function (err) {
-              console.warn('triggerComputeAndRefresh: enrichTasks promise failed', err);
-              // fallback: still set original tasks and refresh
-              try {
-                if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
-                else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(tasks);
-              } catch (setErr) { console.warn('triggerComputeAndRefresh fallback setTasks failed', setErr); }
-              try { if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh(); } catch (refreshErr) { console.warn('triggerComputeAndRefresh fallback refresh failed', refreshErr); }
-            });
-            return;
-          } else {
-            // sync
-            resolved = r || tasks || [];
-          }
-        } catch (e) {
-          console.warn('triggerComputeAndRefresh: error running enrichTasks', e);
+      // Aceita tanto FileSystemFileHandle (com getFile) quanto File objetos
+      const file = (typeof handle.getFile === 'function') ? await handle.getFile() : (handle instanceof File ? handle : null);
+      const name = (file && file.name) ? file.name : (handle && handle.name) ? handle.name : ('untitled_' + Date.now());
+      const ext = extFromName(name);
+
+      // XLSX / XLS / XLSM usando XLSX global se disponível
+      if (window.XLSX && ['xlsx', 'xls', 'xlsm', 'csv'].includes(ext)) {
+        if (ext === 'csv') {
+          // parse CSV text
+          const text = await (file ? file.text() : '');
+          return parseTextToRows(name, text);
         }
+        const ab = await file.arrayBuffer();
+        const wb = XLSX.read(ab, { type: 'array' });
+        const sheetName = wb.SheetNames && wb.SheetNames[0];
+        const sheet = sheetName ? wb.Sheets[sheetName] : null;
+        const arr = sheet ? XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false }) : [];
+        const cleaned = (arr || []).slice(0, MAX_ROWS_PREVIEW).map(r => Array.isArray(r) ? r.map(c => (c === null || c === undefined) ? '' : ('' + c).trim()) : [r]);
+        const headers = (cleaned[0] && Array.isArray(cleaned[0])) ? cleaned[0].map(h => (h||'').toString().trim()) : [];
+        const rows = cleaned.slice(headers.length ? 1 : 0);
+        return { name: name, headers: headers, rows: rows, sheetName: sheetName || '' };
       }
-      // setar tasks (fallback normal) e refresh
+
+      // Text formats (csv, txt, tsv, html)
+      if (['csv', 'txt', 'tsv', 'html', 'htm'].includes(ext) || !ext) {
+        const text = await (file ? file.text() : '');
+        return parseTextToRows(name, text, ext);
+      }
+
+      // Fallback: tratar como texto
       try {
-        if (FS && typeof FS.setTasks === 'function') FS.setTasks(resolved);
-        else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(resolved);
-        console.log('triggerComputeAndRefresh: tasks set (sync):', (resolved && resolved.length) || 0);
-      } catch (setErr) { console.warn('triggerComputeAndRefresh setTasks failed', setErr); }
-      try { if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh(); } catch (refreshErr) { console.warn('triggerComputeAndRefresh refresh failed', refreshErr); }
+        const text = file ? await file.text() : '';
+        return parseTextToRows(name, text, ext);
+      } catch (e) {
+        warn('Não foi possível ler arquivo', name, e);
+        return { name: name, headers: [], rows: [] };
+      }
     } catch (e) {
-      console.warn('triggerComputeAndRefresh erro inesperado', e);
-      try { if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh(); } catch (_) {}
+      err('parseFileHandle falhou', e);
+      return { name: (handle && handle.name) || 'unknown', headers: [], rows: [] };
     }
   }
 
-  // ---------- Novos helpers: parse / enrich ----------
-  async function parseHandleToRows(handle) {
-    if (!handle || typeof handle.getFile !== 'function') {
-      throw new Error('Handle de arquivo inválido.');
-    }
-    const file = await handle.getFile();
-    const name = (file && file.name) || '';
-    const ext = name.split('.').pop().toLowerCase();
-
-    // XLSX / XLS / XLSM (SheetJS)
-    if (window.XLSX && ['xlsx', 'xls', 'xlsm'].includes(ext)) {
-      const ab = await file.arrayBuffer();
-      const wb = XLSX.read(ab, { type: 'array' });
-      const sheetName = wb.SheetNames && wb.SheetNames[0];
-      const sheet = sheetName ? wb.Sheets[sheetName] : null;
-      const rows = sheet ? XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false }) : [];
-      // normalize: remove trailing empty rows
-      const rowsFiltered = (rows || []).filter(function(r){ return Array.isArray(r) ? r.some(function(c){ return c !== null && c !== undefined && (''+c).trim() !== ''; }) : !!r; });
-      return {
-        name,
-        sheetName: sheetName || '',
-        rows: rowsFiltered || [],
-        rowCount: Math.max((rowsFiltered || []).length - 1, 0)
-      };
-    }
-
-    // CSV / TXT fallback
-    const text = await file.text();
-    const lines = text.split(/\r?\n/).filter(function(l){ return l && l.trim() !== ''; });
-    const rows = lines.map(function (line) {
-      // try semicolon, then comma, then tab
-      if (line.indexOf(';') >= 0) return line.split(';').map(function(c){ return c.trim(); });
-      if (line.indexOf(',') >= 0) return line.split(',').map(function(c){ return c.trim(); });
-      return line.split(/\t/).map(function(c){ return c.trim(); });
-    });
-    return {
-      name,
-      sheetName: '',
-      rows,
-      rowCount: Math.max(rows.length - 1, 0)
-    };
-  }
-
-  async function enrichScannedItems(items) {
-    var out = [];
-    for (var i = 0; i < (items || []).length; i++) {
-      var item = items[i];
-      var handle = item && (item.handle || item.file || item);
+  function parseTextToRows(name, text, ext) {
+    ext = (ext || '').toLowerCase();
+    text = text || '';
+    // Remover BOM
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    // HTML: extrair tabela se existir
+    if (ext === 'html' || ext === 'htm' || text.trim().startsWith('<')) {
+      // tenta extrair primeira <table>
       try {
-        var parsed = await parseHandleToRows(handle);
-        out.push({
-          name: parsed.name,
-          handle: handle,
-          rows: parsed.rows,
-          rowCount: parsed.rowCount,
-          sheetName: parsed.sheetName,
-          _source: item.name || parsed.name || 'arquivo'
-        });
-      } catch (e) {
-        console.warn('Falha parseando arquivo:', item && item.name, e);
-        // fallback: manter o item original sem rows
-        out.push(Object.assign({}, item, { rows: item.rows || [], rowCount: (item.rows && item.rows.length) || 0, _source: item.name || 'arquivo' }));
-      }
-    }
-    return out;
-  }
-
-  // Generic row -> task mapper (heurística)
-  function mapRowToTask(row) {
-    if (!row) return {};
-    if (typeof row === 'string') return { descricao: row, _raw: row };
-
-    function normalizeKey(k) {
-      return (k || '').toString()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove acentos
-        .replace(/\s+/g,' ')
-        .replace(/[:\-\/\\]+/g,' ')
-        .toLowerCase().trim();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/html');
+        const table = doc.querySelector('table');
+        if (table) {
+          const rows = Array.from(table.rows).map(r => Array.from(r.cells).map(c => (c.textContent || '').trim()));
+          const headers = rows.length && rows[0].length ? rows[0] : [];
+          const data = headers.length ? rows.slice(1) : rows;
+          return { name: name, headers: headers, rows: data.slice(0, MAX_ROWS_PREVIEW) };
+        }
+      } catch (e) { /* ignore html parse errors */ }
     }
 
-    var norm = {};
-    Object.keys(row).forEach(function (k) { norm[normalizeKey(k)] = row[k]; });
+    // Detectar delimitador: ; , \t
+    const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+    if (!lines.length) return { name: name, headers: [], rows: [] };
+    const sample = lines.slice(0, 5).join('\n');
+    let delimiter = null;
+    if ((sample.match(/;/g) || []).length > (sample.match(/,/g) || []).length) delimiter = ';';
+    else if ((sample.match(/\t/g) || []).length > 0) delimiter = '\t';
+    else delimiter = ',';
 
-    var t = {};
-    t.enderecoId = norm['end_id'] || norm['end id'] || norm['endereco'] || norm['endereco end_id'] || norm['endereco id'] || null;
-    t.siteId = norm['ne id'] || norm['neid'] || norm['ne'] || norm['site'] || norm['site id'] || null;
-    t.status = norm['status'] || norm['situacao'] || norm['estado'] || null;
-    t.cidade = norm['cidade'] || norm['cidade/uf'] || norm['cidade uf'] || null;
-    t.prioridade = norm['prioridade'] || norm['priorizacao'] || norm['priorizacao'] || norm['priorizaçao'] || null;
-
-    var possibleDateKeys = ['data de criacao','data criacao','criacao','data','data/hora','data hora','data de abertura','abertura'];
-    var possibleVencKeys = ['data de vencimento','vencimento','prazo','data vencimento'];
-    var findFirst = function (keys) { return keys.reduce(function (acc,k){ return acc || norm[k] || null; }, null); };
-    var dc = findFirst(possibleDateKeys);
-    var dv = findFirst(possibleVencKeys);
-    try { t.dataCriacao = dc ? (new Date(dc)).toISOString() : null; } catch(e){ t.dataCriacao = dc || null; }
-    try { t.dataVencimento = dv ? (new Date(dv)).toISOString() : null; } catch(e){ t.dataVencimento = dv || null; }
-
-    t.observacao = norm['observacao'] || norm['observacao / motivo'] || norm['motivo'] || norm['titulo'] || norm['descricao'] || null;
-    t._raw = row;
-    return t;
+    const parsed = lines.map(l => l.split(delimiter).map(c => (c || '').trim()));
+    const headers = parsed[0] && parsed[0].length ? parsed[0] : [];
+    const rows = parsed.slice(headers.length ? 1 : 0).slice(0, MAX_ROWS_PREVIEW);
+    return { name: name, headers: headers, rows: rows };
   }
 
-  // Convert parsed items => tasks array (generic)
-  function convertParsedItemsToTasks(parsedItems) {
-    var tasks = [];
-    (parsedItems || []).forEach(function (it) {
-      var rows = it.rows || [];
-      // rows may be arrays (sheet_to_json header:1) or objects (if parser returned objects)
-      rows.forEach(function (r, ri) {
-        // If genesis HTML parser exists and item looks like genesis html, use it
-        try {
-          if (typeof r === 'string' && G && typeof G.parseGenesisHtml === 'function' && G.ehGenesisHtml && G.ehGenesisHtml(r)) {
-            var parsed = G.parseGenesisHtml(r);
-            if (parsed && parsed.rows) {
-              parsed.rows.forEach(function (rr) { tasks.push(mapRowToTask(rr)); });
-              return;
-            }
-          }
-        } catch (ex) { /* ignore and fallback */ }
+  // Heurística para classificar entre tasks e incidents
+  function classifyParsed(parsed) {
+    // parsed: { name, headers, rows }
+    const name = (parsed.name || '').toLowerCase();
+    const headers = (parsed.headers || []).map(h => ('' + (h || '')).toLowerCase());
+    const headerStr = headers.join('|');
 
-        // If row is an array (header row present), try map array to header object
-        if (Array.isArray(r)) {
-          // attempt to use the header if available (first row)
-          var header = (it.rows && it.rows[0] && Array.isArray(it.rows[0])) ? it.rows[0] : null;
-          if (header && ri > 0) {
-            var obj = {};
-            header.forEach(function (h, hi) { obj[h || ('c' + hi)] = r[hi]; });
-            tasks.push(mapRowToTask(obj));
-            return;
-          } else if (!header) {
-            // no header: map c0..cN
-            var obj2 = {};
-            r.forEach(function (c, ci) { obj2['c' + ci] = c; });
-            tasks.push(mapRowToTask(obj2));
-            return;
-          } else {
-            // header exists but this is header row -> skip
-            return;
-          }
-        }
+    // Palavras-chave que indicam incidentes/sites fora
+    const incidentKeywords = ['fora', 'incident', 'incidente', 'site fora', 'sites fora', 'outage', 'fora de', 'down', 'fora'];
+    const taskKeywords = ['prazo','prioridade','sla','duração','endereço','end_id','site','ne','cidade','estado'];
 
-        if (typeof r === 'object' && r !== null) {
-          tasks.push(mapRowToTask(r));
-        } else if (typeof r === 'string') {
-          // if line looks like CSV with semicolon or comma, try splitting
-          if (/[;,\t]/.test(r)) {
-            var cols = r.split(/[;,\t]/).map(function (c) { return c.trim(); }).filter(Boolean);
-            if (cols.length === 1) tasks.push({ enderecoId: cols[0], _raw: r });
-            else {
-              var obj = {};
-              cols.forEach(function (c, i) { obj['c' + i] = c; });
-              tasks.push(mapRowToTask(obj));
-            }
-          } else {
-            tasks.push({ descricao: r, _raw: r });
-          }
-        }
-      });
-    });
-    return tasks;
+    let scoreInc = incidentKeywords.reduce((s, k) => s + (name.indexOf(k) >= 0 ? 2 : 0) + (headerStr.indexOf(k) >= 0 ? 2 : 0), 0);
+    let scoreTask = taskKeywords.reduce((s, k) => s + (name.indexOf(k) >= 0 ? 1 : 0) + (headerStr.indexOf(k) >= 0 ? 1 : 0), 0);
+
+    // if ambiguous, use header presence
+    if (scoreInc === 0 && scoreTask === 0) {
+      // se header contém 'incidente' ou 'motivo' ou 'inicio' => incident
+      if (headerStr.match(/incid|motivo|motivos|ocorrido|ocorreu|inicio|fim|horario|hora/)) scoreInc += 2;
+      if (headerStr.match(/priorid|sla|prazo|durac|dur.|enderec|end_id|cidade|estado/)) scoreTask += 2;
+    }
+
+    return (scoreInc > scoreTask) ? 'incident' : 'task';
   }
 
-  // Render helpers for the page
-  function buildHeader() {
-    return el('div', { class: 'page-header' }, [
-      el('h2', { text: 'Importar dados' }),
-      el('p', { class: 'muted', text: 'Conecte a pasta de arquivos para o monitor automático e cole os Sites Fora abaixo.' })
-    ]);
-  }
-
-  function buildFolderCard(state) {
-    var card = el('div', { class: 'trj-card p-4 mb-4' });
-    var title = el('div', { html: '<b>Pasta de verificação</b><div class="text-xs" style="color:var(--trj-muted)">Conecte a pasta que contém os arquivos a serem processados.</div>' });
-    var btnConnect = el('button', { class: 'trj-btn trj-btn-primary', text: state.connected ? 'Re-conectar pasta' : 'Conectar pasta' });
-    btnConnect.addEventListener('click', async function () {
-      try {
-        // prefere FS.connectFolder se existir (encapsula showDirectoryPicker), senão tenta fallback global
-        if (FS && typeof FS.connectFolder === 'function') {
-          await FS.connectFolder();
-        } else if (window.TRJ && TRJ.importModule && typeof TRJ.importModule.connectFolderByUserGesture === 'function') {
-          await TRJ.importModule.connectFolderByUserGesture();
-        } else if (typeof window.showDirectoryPicker === 'function') {
-          // minimal fallback: showDirectoryPicker diretamente (exige user gesture)
-          var handle = await window.showDirectoryPicker();
-          if (handle) {
-            // algumas implementações podem permitir persistência, chamar requestPermission se disponível
-            try { if (handle.requestPermission) await handle.requestPermission({ mode: 'read' }); } catch (e) { /* ignore */ }
-            // tentar atribuir ao FS
-            if (!FS) FS = TRJ.files = TRJ.files || {};
-            FS._folderHandle = handle;
-            FS.folderHandle = handle; // manter ambos
-            if (typeof FS.persistFolderHandle === 'function') await FS.persistFolderHandle(handle);
-          }
-        } else {
-          throw new Error('API de conexão de pasta não disponível. Atualize o navegador ou conecte a pasta manualmente.');
+  // Converte linhas em objetos simples para tasks/incidents (heurístico)
+  function convertRowsToObjects(parsed) {
+    const headers = parsed.headers || [];
+    const rows = parsed.rows || [];
+    const objs = rows.map(r => {
+      if (Array.isArray(r)) {
+        const obj = {};
+        for (let i = 0; i < r.length; i++) {
+          const key = (headers[i] || ('c' + i)).toString().trim();
+          obj[key] = r[i];
         }
-        toast('Pasta conectada: ' + (FS._folderHandle && FS._folderHandle.name ? FS._folderHandle.name : 'Pasta'));
-        // notificar globalmente que pasta foi conectada
-        document.dispatchEvent(new CustomEvent('trj:folderConnected.importar', { detail: { handle: FS._folderHandle } }));
-        // re-render page
-        renderImportPage(containerEl);
-      } catch (e) {
-        toast(e && e.message ? e.message : 'Erro ao conectar pasta', 'err');
-        console.warn(e);
+        return obj;
+      } else if (typeof r === 'object' && r !== null) {
+        return r;
+      } else {
+        return { raw: r };
       }
     });
-
-    var btnVerify = el('button', { class: 'trj-btn', text: 'Verificar agora' });
-    btnVerify.addEventListener('click', async function () {
-      try {
-        var scanResult;
-        if (FS && typeof FS.scanFolderOnce === 'function') {
-          scanResult = await FS.scanFolderOnce();
-        } else if (TRJ.importModule && typeof TRJ.importModule.scanFolderOnce === 'function') {
-          scanResult = await TRJ.importModule.scanFolderOnce();
-        } else {
-          throw new Error('scanFolderOnce não disponível (implementação de arquivos ausente).');
-        }
-        // scanResult pode ser um array (compat) ou { results, signature }
-        var itemsRaw = Array.isArray(scanResult) ? scanResult : (scanResult && scanResult.results ? scanResult.results : []);
-        // enriquecer (ler conteúdo dos arquivos)
-        var items = await enrichScannedItems(itemsRaw);
-
-        // save last scanned items for UI
-        if (FS) FS._lastScannedItems = items;
-        if (F) F._lastScannedItems = items;
-
-        // atualizar visual da lista detectada
-        renderImportPage(containerEl);
-
-        // convert and set tasks (já com rows)
-        var tasks = convertParsedItemsToTasks(items);
-
-        // notify raw items first (compat)
-        document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
-
-        // executa pipeline de compute / normalização e força refresh da app
-        triggerComputeAndRefresh(tasks);
-
-        // e disparamos também o evento tasksLoaded com as tasks originais (ouvidas por páginas que só escutam eventos)
-        document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
-        document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
-
-        toast('Pasta verificada. Itens lidos: ' + (items.length || 0) + '. Tasks: ' + tasks.length, 'ok');
-        // prefer TRJ.app, fallback para window.App
-        var appRef = (TRJ && TRJ.app) || window.App || null;
-        if (appRef && typeof appRef.refresh === 'function') appRef.refresh();
-      } catch (e) {
-        toast(e && e.message ? e.message : 'Erro ao escanear pasta', 'err');
-        console.warn(e);
-      }
-    });
-
-    var btnToggleMonitor = el('button', { class: 'trj-btn', text: FS && FS._monitorTimer ? 'Parar monitor' : 'Iniciar monitor' });
-    btnToggleMonitor.addEventListener('click', function () {
-      try {
-        if (FS && FS._monitorTimer) {
-          if (typeof FS.stopAutoMonitor === 'function') FS.stopAutoMonitor();
-          else if (typeof FS._stopAutoMonitor === 'function') FS._stopAutoMonitor();
-          else if (FS._monitorTimer) { clearInterval(FS._monitorTimer); FS._monitorTimer = null; }
-          btnToggleMonitor.textContent = 'Iniciar monitor';
-          // notify
-          document.dispatchEvent(new CustomEvent('trj:monitorStopped.importar', { detail: {} }));
-          toast('Monitor pausado', 'info');
-        } else {
-          // start monitor with callback
-          var cb = async function (itemsRaw) {
-            try {
-              var items = await enrichScannedItems(itemsRaw);
-              // persist last scanned
-              if (FS) FS._lastScannedItems = items;
-              if (F) F._lastScannedItems = items;
-
-              var tasks = convertParsedItemsToTasks(items);
-
-              // notificar raw items primeiro
-              document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
-
-              // executar pipeline e refresh
-              triggerComputeAndRefresh(tasks);
-
-              // eventos adicionais (mantendo compatibilidade)
-              document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
-              document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
-              toast('Monitor: arquivos processados. Tasks: ' + tasks.length, 'ok');
-              var appRef = (TRJ && TRJ.app) || window.App || null;
-              if (appRef && typeof appRef.refresh === 'function') appRef.refresh();
-            } catch (e) { console.warn(e); }
-          };
-          if (FS && typeof FS.startAutoMonitor === 'function') FS.startAutoMonitor(cb);
-          else if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function') TRJ.files.startAutoMonitor(cb);
-          else throw new Error('startAutoMonitor não implementado.');
-          btnToggleMonitor.textContent = 'Parar monitor';
-          document.dispatchEvent(new CustomEvent('trj:monitorStarted.importar', { detail: {} }));
-          toast('Monitor iniciado', 'ok');
-        }
-      } catch (e) {
-        toast('Erro ao alternar monitor: ' + (e && e.message ? e.message : e), 'err');
-        console.warn(e);
-      }
-    });
-
-    var disconnect = el('button', { class: 'trj-btn trj-btn-ghost', text: 'Desconectar' });
-    disconnect.addEventListener('click', async function () {
-      try {
-        if (FS && typeof FS.disconnectFolder === 'function') await FS.disconnectFolder();
-        else {
-          // fallback: remove handle if persisted
-          if (FS && typeof FS.removeSavedFolderHandle === 'function') await FS.removeSavedFolderHandle();
-          FS._folderHandle = null;
-          FS.folderHandle = null;
-        }
-        toast('Pasta desconectada', 'ok');
-        document.dispatchEvent(new CustomEvent('trj:folderDisconnected.importar', { detail: {} }));
-        renderImportPage(containerEl);
-      } catch (e) { toast('Erro ao desconectar', 'err'); console.warn(e); }
-    });
-
-    var nameEl = el('div', { class: 'mt-3' }, [
-      el('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: state.connected ? ('Conectada: ' + (FS._folderHandle && (FS._folderHandle.name || FS._folderHandle.handleName) ? (FS._folderHandle.name || FS._folderHandle.handleName) : 'Pasta')) : 'Nenhuma pasta conectada' })
-    ]);
-
-    var actions = el('div', { class: 'flex items-center gap-2' }, [btnConnect, btnVerify, btnToggleMonitor, disconnect]);
-
-    card.appendChild(title);
-    card.appendChild(actions);
-    card.appendChild(nameEl);
-    return card;
+    return objs;
   }
 
-  function buildDetectedFilesBox(files) {
-    var box = el('div', { class: 'trj-card p-4 mb-4' });
-    box.appendChild(el('h3', { class: 'font-semibold mb-2', text: 'Arquivos detectados' }));
-    if (!files || files.length === 0) {
-      box.appendChild(el('div', { class: 'text-sm', style: { color: 'var(--trj-muted)' }, text: 'Nenhum arquivo lido ainda.' }));
-      return box;
-    }
-    var list = el('ul', {});
-    files.forEach(function (f) {
-      list.appendChild(el('li', { text: (f._source || f.name || 'arquivo') + ' — rows: ' + (Array.isArray(f.rows) ? f.rows.length : 0) }));
+  // Normaliza e cria estrutura de task mínima (ajuste conforme schema real)
+  function mapObjectsToTasks(objs) {
+    return objs.map(o => {
+      // heurística: procurar campos conhecidos
+      const norm = {};
+      norm._raw = o;
+      norm.site = o.site || o.SITE || o['Site'] || o['END_ID'] || o.end_id || o['END_ID'] || o.endereco || o.endereço || o['ENDERECO'] || null;
+      norm.prioridade = o.prioridade || o.PRIORIDADE || o.PRI || null;
+      norm.prazo_h = o.prazo || o.prazo_h || o['Prazo (h)'] || null;
+      norm.status = o.status || o.Status || o.STATUS || null;
+      norm.cidade = o.cidade || o.CIDADE || null;
+      // adiciona timestamp de importação
+      norm.importedAt = new Date().toISOString();
+      return norm;
     });
-    box.appendChild(list);
-    return box;
   }
 
-  // Incidents area
-  function buildIncidentsBox() {
-    var card = el('div', { class: 'trj-card p-4' });
-    card.appendChild(el('h3', { class: 'font-semibold mb-2', text: 'Sites Fora — NE IDs' }));
-    card.appendChild(el('p', { class: 'text-sm mb-2', style: { color: 'var(--trj-muted)' }, text: 'Cole o texto do painel ou a lista de NE IDs. Clique em Detectar NE IDs.' }));
-    var ta = el('textarea', { id: 'trj-inc-text', style: { width: '100%', height: '160px', fontFamily: 'monospace' } });
-    card.appendChild(ta);
-    var btnDetect = el('button', { class: 'trj-btn trj-btn-primary', text: 'Detectar NE IDs' });
-    var btnClear = el('button', { class: 'trj-btn', text: 'Limpar' });
-    var containerIds = el('div', { id: 'trj-detected-ids', class: 'mt-4' });
-    btnDetect.addEventListener('click', function () {
-      var txt = ta.value || '';
-      var ids = detectNeIdsFromText(txt);
-      renderDetectedIds(ids, containerIds);
+  // Normaliza para incidents
+  function mapObjectsToIncidents(objs) {
+    return objs.map(o => {
+      const norm = {};
+      norm._raw = o;
+      norm.site = o.site || o.SITE || o['Site'] || o['END_ID'] || o.end_id || o.endereco || o.endereço || null;
+      norm.motivo = o.motivo || o.MOTIVO || o.reason || null;
+      norm.inicio = o.inicio || o.INICIO || o.data || o.DATA || null;
+      norm.fim = o.fim || o.FIM || o['end time'] || null;
+      norm.importedAt = new Date().toISOString();
+      return norm;
     });
-    btnClear.addEventListener('click', function () { ta.value = ''; renderDetectedIds([], containerIds); });
-    card.appendChild(el('div', { class: 'flex items-center gap-2 mt-3' }, [btnDetect, btnClear]));
-    card.appendChild(containerIds);
-    return card;
   }
 
-  function detectNeIdsFromText(text) {
-    if (!text) return [];
-    var tokens = text.split(/[^A-Za-z0-9_\-]+/).map(function (s) { return s.trim(); }).filter(Boolean);
-    var set = {};
-    tokens.forEach(function (t) {
-      var v = t.toUpperCase();
-      if (v.length >= 3) set[v] = true;
-    });
-    return Object.keys(set);
-  }
-
-  function renderDetectedIds(arr, host) {
-    host.innerHTML = '';
-    if (!arr || !arr.length) {
-      host.appendChild(el('div', { class: 'text-sm', style: { color: 'var(--trj-muted)' }, text: 'NE IDs detectados: (nenhum)' }));
+  // Função principal: processa array de handles (items) retornados por scanFolderOnce / triggerScan
+  async function processFolderItems(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+      toast('Nenhum arquivo encontrado para importação.', 'warning');
       return;
     }
-    var wrap = el('div', { class: 'flex flex-wrap gap-2' });
-    arr.forEach(function (id) {
-      var badge = el('span', { class: 'tag', text: id });
-      wrap.appendChild(badge);
-    });
-    var importBtn = el('button', { class: 'trj-btn trj-btn-primary mt-3', text: 'Importar incidentes detectados' });
-    importBtn.addEventListener('click', function () {
-      var incs = arr.map(function (id) { return { site: id, enderecoId: null, statusTrat: 'FORA', fila: null, inicio: null, observacao: 'Importado via texto' }; });
-      if (FS && typeof FS.setIncidents === 'function') FS.setIncidents(incs);
-      else if (TRJ && TRJ.api && typeof TRJ.api.importIncidentes === 'function') TRJ.api.importIncidentes(incs);
-      else {
-        // fallback: localStorage
-        var key = 'trj_import_incidentes_' + Date.now();
-        localStorage.setItem(key, JSON.stringify({ ts: Date.now(), rows: incs }));
-      }
-      // dispatch events so app/pages know incidents updated
-      document.dispatchEvent(new CustomEvent('trj:incidentsLoaded.importar', { detail: incs }));
-      document.dispatchEvent(new CustomEvent('trj:incidentsLoaded', { detail: incs }));
-      toast('Incidentes importados: ' + incs.length, 'ok');
-      var appRef = (TRJ && TRJ.app) || window.App || null;
-      if (appRef && typeof appRef.reloadIncidents === 'function') appRef.reloadIncidents();
-      else if (appRef && typeof appRef.refresh === 'function') appRef.refresh();
-    });
-    host.appendChild(wrap);
-    host.appendChild(importBtn);
-  }
-
-  // main render
-  var containerEl = null;
-  TRJ.pages.importar = function (container, ctx) {
-    containerEl = container;
-    container.innerHTML = '';
-    container.appendChild(buildHeader());
-
-    var connected = !!(FS && (FS._folderHandle || FS.folderHandle));
-    container.appendChild(buildFolderCard({ connected: connected }));
-
-    // show previously scanned items if any (from FS._lastScannedItems or F._lastScannedItems)
-    var prev = (FS && FS._lastScannedItems) || (F && F._lastScannedItems) || [];
-    var filesBox = buildDetectedFilesBox(prev);
-    container.appendChild(filesBox);
-
-    container.appendChild(buildIncidentsBox());
-
-    // Listen to folderChanged to update UI and process automatically
-    document.removeEventListener('trj:folderChanged.importar', onFolderChanged);
-    document.addEventListener('trj:folderChanged.importar', onFolderChanged);
-
-    // Also update when tasks/incidents loaded
-    document.removeEventListener('trj:tasksLoaded.importar', onTasksLoaded);
-    document.addEventListener('trj:tasksLoaded.importar', onTasksLoaded);
-    document.removeEventListener('trj:incidentsLoaded.importar', onIncidentsLoaded);
-    document.addEventListener('trj:incidentsLoaded.importar', onIncidentsLoaded);
-  };
-
-  async function onFolderChanged(e) {
-    var items = [];
-    try {
-      if (e && e.detail) {
-        // support both array detail and {items}
-        items = Array.isArray(e.detail) ? e.detail : (Array.isArray(e.detail.items) ? e.detail.items : (e.detail.results || []));
-      }
-    } catch (err) { items = []; }
-
-    // If items exist but have no rows, enrich them (read file contents)
-    try {
-      var needsEnrich = items && items.length && !items[0].rows;
-      if (needsEnrich) {
-        items = await enrichScannedItems(items);
-      }
-    } catch (err) { console.warn('Erro enriquecendo items no onFolderChanged', err); }
-
-    // save last scanned items for UI
-    if (FS) FS._lastScannedItems = items;
-    if (F) F._lastScannedItems = items;
-
-    // convert and set tasks automatically
-    try {
-      var tasks = convertParsedItemsToTasks(items);
-
-      // notificar raw items
-      document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
-
-      // processa via compute e atualiza UI
-      triggerComputeAndRefresh(tasks);
-
-      // eventos compatíveis
-      document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
-      document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
-
-      toast('Arquivos processados automaticamente. Tasks: ' + tasks.length, 'ok');
-      var appRef = (TRJ && TRJ.app) || window.App || null;
-      if (appRef && typeof appRef.refresh === 'function') appRef.refresh();
-    } catch (err) {
-      console.warn('Erro processando items:', err);
+    if (_processing) {
+      log('Já processando — ignorando nova requisição');
+      return;
     }
-    // re-render page to show files list
-    if (containerEl) renderImportPage(containerEl);
-  }
-
-  function onTasksLoaded(e) {
-    // optional: reflect counts or enable navigation if app expects tasks
-    // re-render to reflect persisted tasks if needed
-    try { if (containerEl) renderImportPage(containerEl); } catch (_) {}
-  }
-  function onIncidentsLoaded(e) {
-    try { if (containerEl) renderImportPage(containerEl); } catch (_) {}
-  }
-
-  // helper to re-render file list quickly
-  function renderImportPage(container) {
-    if (!container) return;
-    TRJ.pages.importar(container, {});
-  }
-
-  // Expose helper for debug / manual scan
-  TRJ.pages.importar_helpers = {
-    convertParsedItemsToTasks: convertParsedItemsToTasks,
-    mapRowToTask: mapRowToTask,
-    enrichScannedItems: enrichScannedItems,
-    parseHandleToRows: parseHandleToRows
-  };
-
-  // Try to load saved folder handle so UI shows state quickly
-  (async function initTryLoad() {
+    _processing = true;
     try {
-      if (FS && typeof FS.loadSavedFolderSafe === 'function') {
-        await FS.loadSavedFolderSafe();
-      } else if (FS && typeof FS.loadSavedFolder === 'function') {
-        await FS.loadSavedFolder();
-      } else if (TRJ.importModule && typeof TRJ.importModule.loadSavedFolderSafe === 'function') {
-        await TRJ.importModule.loadSavedFolderSafe();
+      log('processFolderItems: arquivos detectados:', items.length);
+      const allTasks = [];
+      const allIncidents = [];
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        // it pode ser { name, handle } ou um FileSystemHandle/ File
+        const handle = it.handle || it;
+        const parsed = await parseFileHandle(handle);
+        if (!parsed || !parsed.rows || parsed.rows.length === 0) {
+          log('arquivo vazio ou não legível:', parsed.name);
+          continue;
+        }
+        // classificar
+        const kind = classifyParsed(parsed);
+        const objs = convertRowsToObjects(parsed);
+        if (kind === 'incident') {
+          const incs = mapObjectsToIncidents(objs);
+          allIncidents.push.apply(allIncidents, incs);
+          log('classificado como incidentes:', parsed.name, incs.length);
+        } else {
+          const tasks = mapObjectsToTasks(objs);
+          allTasks.push.apply(allTasks, tasks);
+          log('classificado como tasks:', parsed.name, tasks.length);
+        }
       }
-    } catch (e) { console.warn('initTryLoad fail', e); }
-    // render if this page is active
-    if (containerEl) renderImportPage(containerEl);
+
+      // Persistir via TRJ.files API (essas funções disparam eventos de tasks/incidents)
+      if (allTasks.length) {
+        try {
+          if (TRJ && TRJ.files && typeof TRJ.files.setTasks === 'function') {
+            TRJ.files.setTasks(allTasks);
+            log('TRJ.files.setTasks chamado com', allTasks.length, 'itens');
+            toast('Tasks importadas: ' + allTasks.length, 'success');
+          } else {
+            // fallback local
+            localStorage.setItem('trj_tasks', JSON.stringify(allTasks));
+            log('Persistido localmente tasks', allTasks.length);
+            toast('Tasks importadas (local): ' + allTasks.length, 'success');
+          }
+        } catch (e) { warn('Falha ao persistir tasks', e); toast('Erro ao salvar tasks (ver console)', 'error'); }
+      }
+
+      if (allIncidents.length) {
+        try {
+          if (TRJ && TRJ.files && typeof TRJ.files.setIncidents === 'function') {
+            TRJ.files.setIncidents(allIncidents);
+            log('TRJ.files.setIncidents chamado com', allIncidents.length, 'itens');
+            toast('Incidentes importados: ' + allIncidents.length, 'success');
+          } else {
+            localStorage.setItem('trj_incidentes', JSON.stringify(allIncidents));
+            log('Persistido localmente incidents', allIncidents.length);
+            toast('Incidentes importados (local): ' + allIncidents.length, 'success');
+          }
+        } catch (e) { warn('Falha ao persistir incidents', e); toast('Erro ao salvar incidents (ver console)', 'error'); }
+      }
+
+      // Se não houve nada, avisar
+      if (!allTasks.length && !allIncidents.length) {
+        toast('Nenhum dado reconhecido nos arquivos.', 'warning');
+      }
+
+    } catch (e) {
+      err('processFolderItems erro inesperado', e);
+      toast('Erro ao processar arquivos (ver console)', 'error');
+    } finally {
+      _processing = false;
+    }
+  }
+
+  // Handler para evento global trj:folderChanged — usa debounce e NÃO re-dispara triggerScan
+  function onFolderChangedHandler(ev) {
+    try {
+      // ev.detail pode ser { items: [...] } ou array diretamente dependendo de quem disparou
+      const payload = ev && ev.detail ? ev.detail : ev;
+      let items = [];
+      if (Array.isArray(payload)) items = payload;
+      else if (payload && Array.isArray(payload.items)) items = payload.items;
+      else if (payload && payload.items && Array.isArray(payload.items)) items = payload.items;
+      else {
+        // fallback: tentar ler TRJ.files.triggerScan() uma vez, mas NÃO dentro do handler (para evitar loop)
+        warn('onFolderChanged: payload inesperado', payload);
+      }
+
+      // Debounce group
+      if (_debounceTimer) clearTimeout(_debounceTimer);
+      _debounceTimer = setTimeout(function () {
+        _debounceTimer = null;
+        // Processa sem causar recursão — processFolderItems não chama TRJ.files.triggerScan
+        processFolderItems(items).catch(e => { err('processFolderItems falhou', e); });
+      }, DEBOUNCE_MS);
+
+    } catch (e) {
+      err('onFolderChangedHandler erro', e);
+    }
+  }
+
+  // Inicialização: registra listeners e conecta botões (caso existam no DOM)
+  function initImportPage() {
+    if (_registered) return;
+    _registered = true;
+
+    // Registra listener global (evita duplicatas)
+    document.removeEventListener('trj:folderChanged', onFolderChangedHandler);
+    document.addEventListener('trj:folderChanged', onFolderChangedHandler);
+
+    // Se quiser um hook de compatibilidade adicional
+    document.removeEventListener('trj:folderChanged.importar', onFolderChangedHandler);
+    document.addEventListener('trj:folderChanged.importar', onFolderChangedHandler);
+
+    // Se existir botão 'Conectar pasta' e 'Verificar agora' no DOM, ligar ações
+    try {
+      const btnConnect = document.querySelector('[data-action="connect-folder"]');
+      const btnVerify = document.querySelector('[data-action="verify-now"]');
+      if (btnConnect) {
+        btnConnect.removeEventListener('click', handleConnectClick);
+        btnConnect.addEventListener('click', handleConnectClick);
+      }
+      if (btnVerify) {
+        btnVerify.removeEventListener('click', handleVerifyClick);
+        btnVerify.addEventListener('click', handleVerifyClick);
+      }
+    } catch (e) {
+      // ignorar ausência de botões — page pode gerenciar de outro jeito
+    }
+
+    log('Import page initialized. Listeners registered.');
+  }
+
+  // Botão: conectar pasta
+  async function handleConnectClick(e) {
+    e && e.preventDefault && e.preventDefault();
+    try {
+      if (!TRJ || !TRJ.files || typeof TRJ.files.connectFolder !== 'function') {
+        toast('Funcionalidade de conectar pasta não disponível neste browser.', 'error');
+        return;
+      }
+      const handle = await TRJ.files.connectFolder();
+      if (handle) {
+        toast('Pasta conectada: ' + (handle.name || 'Pasta'), 'success');
+        // opcional: disparar verificação inicial (não o evento que cria recursão)
+        // chamamos TRJ.files.triggerScan() aqui uma única vez (não dentro do handler) e processamos o retorno
+        try {
+          const res = await TRJ.files.triggerScan();
+          if (res && Array.isArray(res.items) && res.items.length) {
+            // processar retornos diretamente (sem re-disparar eventos)
+            processFolderItems(res.items);
+          }
+        } catch (scanErr) {
+          warn('triggerScan após connectFolder falhou', scanErr);
+        }
+      }
+    } catch (e) {
+      err('handleConnectClick erro', e);
+      toast('Erro ao conectar pasta (ver console)', 'error');
+    }
+  }
+
+  // Botão: verificar agora (força triggerScan)
+  async function handleVerifyClick(e) {
+    e && e.preventDefault && e.preventDefault();
+    try {
+      if (!TRJ || !TRJ.files || typeof TRJ.files.triggerScan !== 'function') {
+        toast('triggerScan não disponível.', 'error');
+        return;
+      }
+      const res = await TRJ.files.triggerScan();
+      if (res && res.items) {
+        // se triggerScan retornou changed=false mas items preenchidos, também processa (não causa loop)
+        await processFolderItems(res.items);
+      } else {
+        toast('Nenhum arquivo encontrado na verificação.', 'info');
+      }
+    } catch (e) {
+      err('handleVerifyClick erro', e);
+      toast('Erro ao verificar pasta (ver console)', 'error');
+    }
+  }
+
+  // Expor algumas funções para debug / chamadas manuais
+  P.importar.init = initImportPage;
+  P.importar.processFolderItems = processFolderItems;
+  P.importar.parseFileHandle = parseFileHandle;
+  P.importar.onFolderChangedHandler = onFolderChangedHandler;
+
+  // Auto-init (se a página for carregada e TRJ estiver pronto)
+  // Aguarda até que DOM esteja pronto
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initImportPage);
+  } else {
+    setTimeout(initImportPage, 0);
+  }
+
+  // Se TRJ.files já tem eventos pendentes (carregados antes), podemos também tentar carregar saved folder
+  (async function tryLoadSavedFolderAndScan() {
+    try {
+      if (TRJ && TRJ.files && typeof TRJ.files.loadSavedFolder === 'function') {
+        await TRJ.files.loadSavedFolder();
+        // optional: trigger initial scan (but not mandatory)
+        if (typeof TRJ.files.triggerScan === 'function') {
+          try {
+            const res = await TRJ.files.triggerScan();
+            if (res && res.items && res.items.length) {
+              // process once at startup
+              processFolderItems(res.items);
+            }
+          } catch (e) { /* ignore */ }
+        }
+      }
+    } catch (e) { /* ignore */ }
   })();
 
-})(window.TRJ = window.TRJ || {});
+})();
