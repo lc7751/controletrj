@@ -24,18 +24,29 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
   border-radius: 14px;
 }
 
+/* Links na sidebar:
+   NÃO aplicar hover global - apenas quando o elemento for explicitamente clicável
+*/
 .trj-link {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 12px; border-radius: 10px;
   color: #cfcfd6; font-size: 14px; font-weight: 500;
-  cursor: pointer; transition: all .15s ease; text-decoration: none;
+  transition: all .15s ease; text-decoration: none;
 }
-.trj-link:hover { background: rgba(255,140,0,0.10); color: #fff; }
-.trj-link.active { background: rgba(255,140,0,0.16); color: var(--trj-primary); }
 .trj-link .ico { width: 18px; text-align: center; }
 
-.trj-kpi { cursor: pointer; transition: transform .12s ease, box-shadow .12s ease; }
-.trj-kpi:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+/* Hover apenas quando marcado como clicável */
+.trj-link.clickable:hover {
+  background: rgba(255,140,0,0.10);
+  color: #fff;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.trj-link.active { background: rgba(255,140,0,0.16); color: var(--trj-primary); }
+
+.trj-kpi { transition: transform .12s ease, box-shadow .12s ease; }
+/* aplicar efeito de elevação somente a KPIs interativos */
+.trj-kpi.clickable:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.45); cursor: pointer; }
 
 .trj-btn {
   display: inline-flex; align-items: center; gap: 8px; justify-content: center;
@@ -45,7 +56,8 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
 .trj-btn-primary { background: var(--trj-primary); color: #111; }
 .trj-btn-primary:hover { background: #ffa733; }
 .trj-btn-ghost { background: transparent; color: var(--trj-fg); border-color: var(--trj-border); }
-.trj-btn-ghost:hover { background: rgba(255,140,0,0.10); }
+/* para botões ghost que também forem "clickable", dar destaque extra */
+.trj-btn-ghost.clickable:hover { background: rgba(255,140,0,0.10); border-color: rgba(255,255,255,0.06); }
 
 .trj-input, .trj-select {
   background: var(--trj-popover); color: var(--trj-fg);
@@ -62,6 +74,7 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
   position: sticky; top: 0; background: var(--trj-card);
 }
 .trj-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.05); }
+/* hover em linhas de tabela (mantido) */
 .trj-table tr:hover td { background: rgba(255,140,0,0.05); }
 
 .trj-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
