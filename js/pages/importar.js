@@ -42,6 +42,73 @@
   function toast(msg, type) { if (U && typeof U.toast === 'function') U.toast(msg, type || 'info'); else console.info('toast:', msg); }
   function fmtName(h) { try { return h && (h.name || h.handleName || 'Pasta'); } catch (e) { return 'Pasta'; } }
 
+  // ---------- Novos helpers: parse / enrich ----------
+  async function parseHandleToRows(handle) {
+    if (!handle || typeof handle.getFile !== 'function') {
+      throw new Error('Handle de arquivo inválido.');
+    }
+    const file = await handle.getFile();
+    const name = (file && file.name) || '';
+    const ext = name.split('.').pop().toLowerCase();
+
+    // XLSX / XLS / XLSM (SheetJS)
+    if (window.XLSX && ['xlsx', 'xls', 'xlsm'].includes(ext)) {
+      const ab = await file.arrayBuffer();
+      const wb = XLSX.read(ab, { type: 'array' });
+      const sheetName = wb.SheetNames && wb.SheetNames[0];
+      const sheet = sheetName ? wb.Sheets[sheetName] : null;
+      const rows = sheet ? XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false }) : [];
+      // normalize: remove trailing empty rows
+      const rowsFiltered = (rows || []).filter(function(r){ return Array.isArray(r) ? r.some(function(c){ return c !== null && c !== undefined && (''+c).trim() !== ''; }) : !!r; });
+      return {
+        name,
+        sheetName: sheetName || '',
+        rows: rowsFiltered || [],
+        rowCount: Math.max((rowsFiltered || []).length - 1, 0)
+      };
+    }
+
+    // CSV / TXT fallback
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(function(l){ return l && l.trim() !== ''; });
+    const rows = lines.map(function (line) {
+      // try semicolon, then comma, then tab
+      if (line.indexOf(';') >= 0) return line.split(';').map(function(c){ return c.trim(); });
+      if (line.indexOf(',') >= 0) return line.split(',').map(function(c){ return c.trim(); });
+      return line.split(/\t/).map(function(c){ return c.trim(); });
+    });
+    return {
+      name,
+      sheetName: '',
+      rows,
+      rowCount: Math.max(rows.length - 1, 0)
+    };
+  }
+
+  async function enrichScannedItems(items) {
+    var out = [];
+    for (var i = 0; i < (items || []).length; i++) {
+      var item = items[i];
+      var handle = item && (item.handle || item.file || item);
+      try {
+        var parsed = await parseHandleToRows(handle);
+        out.push({
+          name: parsed.name,
+          handle: handle,
+          rows: parsed.rows,
+          rowCount: parsed.rowCount,
+          sheetName: parsed.sheetName,
+          _source: item.name || parsed.name || 'arquivo'
+        });
+      } catch (e) {
+        console.warn('Falha parseando arquivo:', item && item.name, e);
+        // fallback: manter o item original sem rows
+        out.push(Object.assign({}, item, { rows: item.rows || [], rowCount: (item.rows && item.rows.length) || 0, _source: item.name || 'arquivo' }));
+      }
+    }
+    return out;
+  }
+
   // Generic row -> task mapper (heurística)
   function mapRowToTask(row) {
     if (!row) return {};
@@ -83,7 +150,8 @@
     var tasks = [];
     (parsedItems || []).forEach(function (it) {
       var rows = it.rows || [];
-      rows.forEach(function (r) {
+      // rows may be arrays (sheet_to_json header:1) or objects (if parser returned objects)
+      rows.forEach(function (r, ri) {
         // If genesis HTML parser exists and item looks like genesis html, use it
         try {
           if (typeof r === 'string' && G && typeof G.parseGenesisHtml === 'function' && G.ehGenesisHtml && G.ehGenesisHtml(r)) {
@@ -95,7 +163,28 @@
           }
         } catch (ex) { /* ignore and fallback */ }
 
-        if (typeof r === 'object') {
+        // If row is an array (header row present), try map array to header object
+        if (Array.isArray(r)) {
+          // attempt to use the header if available (first row)
+          var header = (it.rows && it.rows[0] && Array.isArray(it.rows[0])) ? it.rows[0] : null;
+          if (header && ri > 0) {
+            var obj = {};
+            header.forEach(function (h, hi) { obj[h || ('c' + hi)] = r[hi]; });
+            tasks.push(mapRowToTask(obj));
+            return;
+          } else if (!header) {
+            // no header: map c0..cN
+            var obj2 = {};
+            r.forEach(function (c, ci) { obj2['c' + ci] = c; });
+            tasks.push(mapRowToTask(obj2));
+            return;
+          } else {
+            // header exists but this is header row -> skip
+            return;
+          }
+        }
+
+        if (typeof r === 'object' && r !== null) {
           tasks.push(mapRowToTask(r));
         } else if (typeof r === 'string') {
           // if line looks like CSV with semicolon or comma, try splitting
@@ -144,6 +233,7 @@
             // tentar atribuir ao FS
             if (!FS) FS = TRJ.files = TRJ.files || {};
             FS._folderHandle = handle;
+            FS.folderHandle = handle; // manter ambos
             if (typeof FS.persistFolderHandle === 'function') await FS.persistFolderHandle(handle);
           }
         } else {
@@ -172,15 +262,27 @@
           throw new Error('scanFolderOnce não disponível (implementação de arquivos ausente).');
         }
         // scanResult pode ser um array (compat) ou { results, signature }
-        var items = Array.isArray(scanResult) ? scanResult : (scanResult && scanResult.results ? scanResult.results : []);
-        // convert and set tasks
+        var itemsRaw = Array.isArray(scanResult) ? scanResult : (scanResult && scanResult.results ? scanResult.results : []);
+        // enriquecer (ler conteúdo dos arquivos)
+        var items = await enrichScannedItems(itemsRaw);
+
+        // save last scanned items for UI
+        if (FS) FS._lastScannedItems = items;
+        if (F) F._lastScannedItems = items;
+
+        // atualizar visual da lista detectada
+        renderImportPage(containerEl);
+
+        // convert and set tasks (já com rows)
         var tasks = convertParsedItemsToTasks(items);
         if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
         else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(tasks);
+
         // dispatch events to notify app/UI
         document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
         document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
         document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
+
         toast('Pasta verificada. Itens lidos: ' + (items.length || 0) + '. Tasks: ' + tasks.length, 'ok');
         // prefer TRJ.app, fallback para window.App
         var appRef = (TRJ && TRJ.app) || window.App || null;
@@ -197,14 +299,20 @@
         if (FS && FS._monitorTimer) {
           if (typeof FS.stopAutoMonitor === 'function') FS.stopAutoMonitor();
           else if (typeof FS._stopAutoMonitor === 'function') FS._stopAutoMonitor();
+          else if (FS._monitorTimer) { clearInterval(FS._monitorTimer); FS._monitorTimer = null; }
           btnToggleMonitor.textContent = 'Iniciar monitor';
           // notify
           document.dispatchEvent(new CustomEvent('trj:monitorStopped.importar', { detail: {} }));
           toast('Monitor pausado', 'info');
         } else {
           // start monitor with callback
-          var cb = function (items) {
+          var cb = async function (itemsRaw) {
             try {
+              var items = await enrichScannedItems(itemsRaw);
+              // persist last scanned
+              if (FS) FS._lastScannedItems = items;
+              if (F) F._lastScannedItems = items;
+
               var tasks = convertParsedItemsToTasks(items);
               if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
               // dispatch events
@@ -237,6 +345,7 @@
           // fallback: remove handle if persisted
           if (FS && typeof FS.removeSavedFolderHandle === 'function') await FS.removeSavedFolderHandle();
           FS._folderHandle = null;
+          FS.folderHandle = null;
         }
         toast('Pasta desconectada', 'ok');
         document.dispatchEvent(new CustomEvent('trj:folderDisconnected.importar', { detail: {} }));
@@ -373,6 +482,14 @@
       }
     } catch (err) { items = []; }
 
+    // If items exist but have no rows, enrich them (read file contents)
+    try {
+      var needsEnrich = items && items.length && !items[0].rows;
+      if (needsEnrich) {
+        items = await enrichScannedItems(items);
+      }
+    } catch (err) { console.warn('Erro enriquecendo items no onFolderChanged', err); }
+
     // save last scanned items for UI
     if (FS) FS._lastScannedItems = items;
     if (F) F._lastScannedItems = items;
@@ -415,7 +532,9 @@
   // Expose helper for debug / manual scan
   TRJ.pages.importar_helpers = {
     convertParsedItemsToTasks: convertParsedItemsToTasks,
-    mapRowToTask: mapRowToTask
+    mapRowToTask: mapRowToTask,
+    enrichScannedItems: enrichScannedItems,
+    parseHandleToRows: parseHandleToRows
   };
 
   // Try to load saved folder handle so UI shows state quickly
