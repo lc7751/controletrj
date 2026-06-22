@@ -6,8 +6,12 @@
  * - Carrega tarefas + incidentes + cidades + config UMA vez e reaproveita.
  * ===================================================================== */
 (function (TRJ) {
-  var U = TRJ.ui, D = TRJ.domain, Comp = TRJ.compute, C = TRJ.constants;
-  var App = { data: null };
+  // defensivo: usar objetos vazios se módulos ainda não estiverem carregados
+  var U = TRJ.ui || {};
+  var D = TRJ.domain || {};
+  var Comp = TRJ.compute || {};
+  var C = TRJ.constants || {};
+  var App = { data: null, _timer: null };
 
   // ícones SVG simples (stroke currentColor)
   var ICONS = {
@@ -70,34 +74,54 @@
   // ---------------- SHELL ----------------
   function buildSidebar() {
     var user = (TRJ.auth && TRJ.auth.getUser && TRJ.auth.getUser()) || {};
-    var brand = U.h('div', { class: 'flex items-center gap-3 px-4 py-4' }, [
-      U.h('img', { src: 'assets/logo-trj.png', alt: 'TRJ', style: { width: '38px', height: '38px', objectFit: 'contain' } }),
-      U.h('div', null, [
-        U.h('div', { class: 'font-extrabold text-sm', style: { color: (TRJ.config && TRJ.config.APP_NAME) ? 'var(--trj-primary)' : 'var(--trj-primary)', letterSpacing: '.5px' }, text: (TRJ.config && TRJ.config.APP_NAME) || 'CONTROLE TRJ' }),
-        U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: (TRJ.config && TRJ.config.APP_SUB) || 'Operacional' })
+    // assegurar que U.h exista (se não existir, usar fallback simples)
+    var h = (U && typeof U.h === 'function') ? U.h : function (tag, props, children) {
+      var el = document.createElement(tag);
+      props = props || {};
+      if (props.class) el.className = props.class;
+      if (props.text) el.textContent = props.text;
+      if (props.html) el.innerHTML = props.html;
+      if (props.onclick && typeof props.onclick === 'function') el.addEventListener('click', props.onclick);
+      (children || []).forEach(function (c) { if (typeof c === 'string') el.appendChild(document.createTextNode(c)); else if (c) el.appendChild(c); });
+      return el;
+    };
+
+    var brand = h('div', { class: 'flex items-center gap-3 px-4 py-4' }, [
+      h('img', { src: 'assets/logo-trj.png', alt: 'TRJ', style: { width: '38px', height: '38px', objectFit: 'contain' } }),
+      h('div', null, [
+        h('div', { class: 'font-extrabold text-sm', style: { color: (TRJ.config && TRJ.config.APP_NAME) ? 'var(--trj-primary)' : 'var(--trj-primary)', letterSpacing: '.5px' }, text: (TRJ.config && TRJ.config.APP_NAME) || 'CONTROLE TRJ' }),
+        h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: (TRJ.config && TRJ.config.APP_SUB) || 'Operacional' })
       ])
     ]);
     var hasTasks = App.data && App.data.rawTasks && App.data.rawTasks.length > 0;
     var visibleLinks = hasTasks ? LINKS : LINKS.filter(function (l) { return l.hash === '#/importar' || l.hash === '#/configuracoes'; });
-    var nav = U.h('nav', { class: 'flex flex-col gap-1 px-3 mt-2', style: { flex: '1' } }, visibleLinks.map(function (l) {
-      return U.h('a', { class: 'trj-link', href: l.hash, dataset: { hash: l.hash } }, [
-        U.h('span', { class: 'ico', html: icon(l.ico) }), U.h('span', { text: l.label })
-      ]);
+    var nav = h('nav', { class: 'flex flex-col gap-1 px-3 mt-2', style: { flex: '1' } }, visibleLinks.map(function (l) {
+      // construir link com data-hash (dataset pode não existir no fallback)
+      var a = h('a', { class: 'trj-link', href: l.hash }, [ h('span', { class: 'ico', html: icon(l.ico) }), h('span', { text: l.label }) ]);
+      try { a.setAttribute('data-hash', l.hash); } catch (_) {}
+      return a;
     }));
     if (!hasTasks) {
-      nav.appendChild(U.h('div', { class: 'text-xs px-2 pt-2', style: { color: 'var(--trj-muted)', lineHeight: '1.4' }, text: 'Faça o upload dos arquivos para liberar as abas de visualização.' }));
+      nav.appendChild(h('div', { class: 'text-xs px-2 pt-2', style: { color: 'var(--trj-muted)', lineHeight: '1.4' }, text: 'Faça o upload dos arquivos para liberar as abas de visualização.' }));
     }
-    var footer = U.h('div', { class: 'px-3 py-3', style: { borderTop: '1px solid var(--trj-border)' } }, [
-      U.h('div', { class: 'text-xs px-2 mb-2 truncate', style: { color: 'var(--trj-muted)' }, text: user.email || '' }),
-      U.h('button', { class: 'trj-link w-full', onclick: doLogout }, [U.h('span', { class: 'ico', html: icon('logout') }), U.h('span', { text: 'Sair' })])
+    var footer = h('div', { class: 'px-3 py-3', style: { borderTop: '1px solid var(--trj-border)' } }, [
+      h('div', { class: 'text-xs px-2 mb-2 truncate', style: { color: 'var(--trj-muted)' }, text: user.email || '' }),
+      h('button', { class: 'trj-link w-full', onclick: doLogout }, [h('span', { class: 'ico', html: icon('logout') }), h('span', { text: 'Sair' })])
     ]);
-    return U.h('aside', { id: 'sidebar', class: 'trj-card flex flex-col', style: { width: '256px', minWidth: '256px', borderRadius: '0', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', height: '100vh', position: 'sticky', top: '0' } }, [brand, nav, footer]);
+    var aside = h('aside', { id: 'sidebar', class: 'trj-card flex flex-col', style: { width: '256px', minWidth: '256px', borderRadius: '0', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', height: '100vh', position: 'sticky', top: '0' } }, [brand, nav, footer]);
+    return aside;
   }
 
   function doLogout() {
-    try { if (TRJ.files && TRJ.files.stopAutoMonitor) TRJ.files.stopAutoMonitor(); } catch(_) {}
+    try {
+      if (TRJ.files) {
+        if (typeof TRJ.files.stopAutoMonitor === 'function') TRJ.files.stopAutoMonitor();
+        else if (typeof TRJ.files._stopAutoMonitor === 'function') TRJ.files._stopAutoMonitor();
+        else if (TRJ.files._monitorTimer) { clearInterval(TRJ.files._monitorTimer); TRJ.files._monitorTimer = null; }
+      }
+    } catch(_) {}
     if (App._timer) { clearInterval(App._timer); App._timer = null; }
-    try { TRJ.auth.logout(); } catch(_) {}
+    try { TRJ.auth && TRJ.auth.logout && TRJ.auth.logout(); } catch(_) {}
     location.hash = '#/dashboard';
     showLogin();
   }
@@ -105,7 +129,7 @@
   function setActiveLink() {
     var cur = location.hash || '#/dashboard';
     document.querySelectorAll('#sidebar .trj-link[data-hash]').forEach(function (a) {
-      a.classList.toggle('active', a.dataset.hash === cur);
+      a.classList.toggle('active', a.getAttribute('data-hash') === cur);
     });
   }
 
@@ -116,15 +140,22 @@
     shell.style.display = 'flex';
     var sidebar = buildSidebar();
     // topbar mobile
-    var topbar = U.h('div', { class: 'flex items-center justify-between px-4 py-3 lg:hidden trj-card', style: { borderRadius: '0', borderLeft: 'none', borderRight: 'none', borderTop: 'none' } }, [
+    var topbar = (U && typeof U.h === 'function') ? U.h('div', { class: 'flex items-center justify-between px-4 py-3 lg:hidden trj-card', style: { borderRadius: '0', borderLeft: 'none', borderRight: 'none', borderTop: 'none' } }, [
       U.h('div', { class: 'flex items-center gap-2' }, [
         U.h('img', { src: 'assets/logo-trj.png', alt: 'TRJ', style: { width: '28px', height: '28px' } }),
         U.h('span', { class: 'font-bold', style: { color: 'var(--trj-primary)' }, text: 'CONTROLE TRJ' })
       ]),
       U.h('button', { class: 'trj-btn trj-btn-ghost', text: '☰', onclick: toggleSidebar })
-    ]);
-    var page = U.h('div', { id: 'page', class: 'p-4 lg:p-6', style: { flex: '1' } });
-    var main = U.h('div', { style: { flex: '1', minWidth: '0' } }, [topbar, page]);
+    ]) : (function () {
+      var el = document.createElement('div'); el.className = 'topbar'; return el;
+    })();
+
+    var page = document.getElementById('page');
+    // se não existe, criar container
+    if (!page) page = (function () { var p = document.createElement('div'); p.id = 'page'; p.className = 'p-4 lg:p-6'; return p; })();
+    var main = document.createElement('div'); main.style.flex = '1'; main.style.minWidth = '0';
+    main.appendChild(topbar); main.appendChild(page);
+
     shell.appendChild(sidebar);
     shell.appendChild(main);
     setActiveLink();
@@ -145,68 +176,89 @@
     return o;
   }
 
- // ---------------- DADOS (versão defensiva) ----------------
- App.loadAll = async function () {
-  U.loading(true);
-  try {
-    var rawTasks = (TRJ.files && TRJ.files.getTasks()) || [];
-    var rawInc = (TRJ.files && TRJ.files.getIncidents()) || [];
-
-    var config = {};
+  // ---------------- DADOS (versão defensiva) ----------------
+  App.loadAll = async function () {
     try {
-      var cfgRes = await TRJ.api.getConfig();
-      config = cfgRes.config || {};
-    } catch (e) {
-      console.warn('Falha ao carregar config externa:', e);
-    }
+      if (U && typeof U.loading === 'function') U.loading(true);
+    } catch(_) {}
 
-    var prazoMap = D.montarPrazoMap(prazoOverride(config));
+    try {
+      var rawTasks = [];
+      var rawInc = [];
+      try { rawTasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() : (TRJ.files && TRJ.files.rawTasks) || []; }
+      catch(e) { console.warn('getTasks falhou', e); rawTasks = []; }
+      try { rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() : (TRJ.files && TRJ.files.rawInc) || []; }
+      catch(e) { console.warn('getIncidents falhou', e); rawInc = []; }
 
-    var validMap = {};
-    var ids = Comp.collectIds(rawTasks, rawInc);
-    if (ids.length) {
-      try {
-        var lk = await TRJ.api.lookupCities(ids);
-        validMap = lk.map || {};
-      } catch (e) {
-        console.warn('Falha ao consultar cidades:', e);
+      var config = {};
+      if (TRJ.api && typeof TRJ.api.getConfig === 'function') {
+        try { var cfgRes = await TRJ.api.getConfig(); config = cfgRes && (cfgRes.config || cfgRes) || {}; }
+        catch (e) { console.warn('Falha ao carregar config externa:', e); config = {}; }
       }
-    }
 
-    var now = new Date();
-    App.data = {
-      config: config,
-      prazoMap: prazoMap,
-      validMap: validMap,
-      rawTasks: rawTasks,
-      rawInc: rawInc,
-      tasksEnriched: Comp.enrichTasks(rawTasks, validMap, prazoMap, now),
-      incidentsEnriched: Comp.enrichIncidents(rawInc, validMap),
-      loadedAt: new Date()
-    };
-  } finally {
-    U.loading(false);
-  }
-};
+      var prazoMap = {};
+      try {
+        if (D && typeof D.montarPrazoMap === 'function') prazoMap = D.montarPrazoMap(prazoOverride(config));
+        else prazoMap = {};
+      } catch (e) { console.warn('Erro montarPrazoMap:', e); prazoMap = {}; }
+
+      var validMap = {};
+      try {
+        var ids = (Comp && typeof Comp.collectIds === 'function') ? Comp.collectIds(rawTasks || [], rawInc || []) : [];
+        if (ids && ids.length && TRJ.api && typeof TRJ.api.lookupCities === 'function') {
+          try {
+            var lk = await TRJ.api.lookupCities(ids);
+            validMap = lk && lk.map ? lk.map : {};
+          } catch (e) { console.warn('lookupCities falhou:', e); validMap = {}; }
+        }
+      } catch (e) { console.warn('Erro collectIds/lookupCities:', e); validMap = {}; }
+
+      var now = new Date();
+      var tasksEnriched = rawTasks;
+      try {
+        if (Comp && typeof Comp.enrichTasks === 'function') tasksEnriched = Comp.enrichTasks(rawTasks || [], validMap, prazoMap, now);
+      } catch (e) { console.warn('enrichTasks falhou:', e); tasksEnriched = rawTasks; }
+
+      var incidentsEnriched = rawInc;
+      try {
+        if (Comp && typeof Comp.enrichIncidents === 'function') incidentsEnriched = Comp.enrichIncidents(rawInc || [], validMap);
+      } catch (e) { console.warn('enrichIncidents falhou:', e); incidentsEnriched = rawInc; }
+
+      App.data = {
+        config: config,
+        prazoMap: prazoMap,
+        validMap: validMap,
+        rawTasks: rawTasks || [],
+        rawInc: rawInc || [],
+        tasksEnriched: tasksEnriched || [],
+        incidentsEnriched: incidentsEnriched || [],
+        loadedAt: new Date()
+      };
+      return App.data;
+    } finally {
+      try { if (U && typeof U.loading === 'function') U.loading(false); } catch(_) {}
+    }
+  };
 
   App.refresh = async function () {
-  try {
-    await App.loadAll();
-    buildShell();
-    render();
-    if (TRJ.files && TRJ.files.startAutoMonitor) {
-      TRJ.files.startAutoMonitor(function () {
-        App.refresh();
-      }, 45000);
+    try {
+      await App.loadAll();
+      buildShell();
+      render();
+      // iniciar monitor só se não estiver rodando
+      try {
+        if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function' && !TRJ.files._monitorTimer) {
+          TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000);
+        }
+      } catch (e) { console.warn('Erro ao iniciar monitor no refresh:', e); }
+      try { U.toast('Dados atualizados.', 'ok'); } catch(_) {}
+    } catch (e) {
+      console.error('Erro em App.refresh:', e);
+      try { buildShell(); render(); } catch(_) {}
+      try { U.toast('Os arquivos foram lidos, mas houve falha ao atualizar alguns dados externos.', 'err'); } catch(_) {}
     }
-    U.toast('Dados atualizados.', 'ok');
-  } catch (e) {
-    console.error('Erro em App.refresh:', e);
-    buildShell();
-    render();
-    U.toast('Os arquivos foram lidos, mas houve falha ao atualizar alguns dados externos.', 'err');
-  }
-};
+  };
+
   // recarrega só incidentes (após upload/alteração de status) — agora da memória/navegador
   App.reloadIncidents = async function () {
     var rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() : [];
@@ -221,21 +273,21 @@
       App.data.incidentsEnriched = rawInc;
     }
   };
-  
+
   // ---------------- DRILL ----------------
   App.openDrillTasks = function (spec, filtros, title) {
     if (!App.data) return;
     Comp = TRJ.compute || Comp || null;
     var drillFn = (Comp && typeof Comp.drillTasks === 'function') ? Comp.drillTasks : null;
     var rows = drillFn ? drillFn(App.data.tasksEnriched, spec, filtros || {}) : [];
-    U.openModal(title || 'Detalhamento', U.taskTable(rows));
+    try { U.openModal(title || 'Detalhamento', U.taskTable(rows)); } catch (e) { console.warn('openDrillTasks fallback', e); }
   };
   App.openDrillIncidents = function (spec, title) {
     if (!App.data) return;
     Comp = TRJ.compute || Comp || null;
     var drillInc = (Comp && typeof Comp.drillIncidents === 'function') ? Comp.drillIncidents : null;
     var rows = drillInc ? drillInc(App.data.incidentsEnriched, spec) : [];
-    U.openModal(title || 'Detalhamento', U.incidentTable(rows));
+    try { U.openModal(title || 'Detalhamento', U.incidentTable(rows)); } catch (e) { console.warn('openDrillIncidents fallback', e); }
   };
 
   // ---------------- ROTAS ----------------
@@ -257,8 +309,8 @@
     }
     var page = document.getElementById('page');
     if (!page) return;
-    try { U.destroyCharts(); } catch(_) {}
-    try { U.closeModal(); } catch(_) {}
+    try { U.destroyCharts && U.destroyCharts(); } catch(_) {}
+    try { U.closeModal && U.closeModal(); } catch(_) {}
     var hash = location.hash || '#/dashboard';
     if (!ROUTES[hash]) { location.hash = '#/dashboard'; return; }
     var hasTasks = App.data && App.data.rawTasks && App.data.rawTasks.length > 0;
@@ -268,9 +320,9 @@
     page.innerHTML = '';
     if (typeof fn === 'function') {
       try { fn(page, { data: App.data, app: App }); }
-      catch (e) { page.appendChild(U.h('div', { class: 'trj-card p-6', style: { color: 'var(--trj-red)' }, text: 'Erro ao renderizar a página: ' + (e.message || e) })); }
+      catch (e) { page.appendChild((U && U.h) ? U.h('div', { class: 'trj-card p-6', style: { color: 'var(--trj-red)' }, text: 'Erro ao renderizar a página: ' + (e.message || e) }) : (function(){ var d=document.createElement('div'); d.className='trj-card p-6'; d.style.color='var(--trj-red)'; d.textContent='Erro ao renderizar a página: '+(e.message||e); return d; })()); }
     } else {
-      page.appendChild(U.h('div', { class: 'trj-card p-6', text: 'Página não encontrada.' }));
+      page.appendChild((U && U.h) ? U.h('div', { class: 'trj-card p-6', text: 'Página não encontrada.' }) : (function(){ var d=document.createElement('div'); d.className='trj-card p-6'; d.textContent='Página não encontrada.'; return d; })());
     }
   }
   App.render = render;
@@ -285,14 +337,17 @@
       await App.loadAll();
       buildShell();
       render();
-      if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function') {
-        try { TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000); }
-        catch (e) { try { TRJ.files.startAutoMonitor(); } catch(_) { console.warn('startAutoMonitor erro'); } }
-      }
+      // start monitor only if available and not already started
+      try {
+        if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function' && !TRJ.files._monitorTimer) {
+          try { TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000); }
+          catch (e) { try { TRJ.files.startAutoMonitor(); } catch(_) { console.warn('startAutoMonitor erro'); } }
+        }
+      } catch (e) { console.warn('Erro ao iniciar monitor no startApp:', e); }
     } catch (e) {
       // token expirado -> volta pro login
       if (/token/i.test((e && e.message) || '')) { doLogout(); showLogin(e.message); return; }
-      try { U.toast(e.message || 'Erro ao carregar dados.', 'err'); } catch(_) {}
+      try { U.toast && U.toast(e.message || 'Erro ao carregar dados.', 'err'); } catch(_) {}
     }
     if (TRJ.config && TRJ.config.AUTO_REFRESH_SEG > 0) {
       if (App._timer) clearInterval(App._timer);
@@ -327,7 +382,8 @@
     if (TRJ.auth.isLogged()) {
       var ready = await waitFor(function () {
         return window.TRJ && TRJ.compute && typeof TRJ.compute.collectIds === 'function'
-          && TRJ.pages && Object.keys(TRJ.pages).length > 0;
+          && TRJ.pages && Object.keys(TRJ.pages).length > 0
+          && TRJ.ui && typeof TRJ.ui.h === 'function';
       }, 100, 5000);
 
       if (!ready) {
@@ -346,8 +402,25 @@
     }
   }
 
-  // expõe listener útil para re-render quando tasks forem carregadas externamente
-  document.addEventListener('trj:tasksLoaded', render);
+  // expõe listeners úteis para re-render quando tasks/incidents forem carregadas externamente
+  document.removeEventListener('trj:tasksLoaded', render);
+  document.addEventListener('trj:tasksLoaded', async function (e) {
+    try {
+      // Se houver payload com tasks, podemos otimizar, mas chamamos loadAll para manter consistência
+      await App.loadAll();
+    } catch (err) { console.warn('tasksLoaded handler erro', err); }
+    try { render(); } catch(_) {}
+  });
+
+  // incidents
+  try { document.removeEventListener('trj:incidentsLoaded', render); } catch(_) {}
+  document.addEventListener('trj:incidentsLoaded', async function (e) {
+    try {
+      // recarrega apenas incidents para ser mais leve
+      await App.reloadIncidents();
+    } catch (err) { console.warn('incidentsLoaded handler erro', err); }
+    try { render(); } catch(_) {}
+  });
 
   // iniciar quando DOM estiver pronto
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
