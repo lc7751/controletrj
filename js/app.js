@@ -178,56 +178,47 @@
 
   // ---------------- DADOS (versão defensiva) ----------------
   App.loadAll = async function () {
-    try {
-      if (U && typeof U.loading === 'function') U.loading(true);
-    } catch(_) {}
+    try { if (U && typeof U.loading === 'function') U.loading(true); } catch(_) {}
 
     try {
+      // buscar rawTasks / rawInc de forma defensiva
       var rawTasks = [];
       var rawInc = [];
-      try { rawTasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() : (TRJ.files && TRJ.files.rawTasks) || []; }
-      catch(e) { console.warn('getTasks falhou', e); rawTasks = []; }
-      try { rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() : (TRJ.files && TRJ.files.rawInc) || []; }
-      catch(e) { console.warn('getIncidents falhou', e); rawInc = []; }
+      try { rawTasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() : (TRJ.files && TRJ.files.rawTasks) || []; } catch (e) { console.warn('getTasks falhou', e); rawTasks = []; }
+      try { rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() : (TRJ.files && TRJ.files.rawInc) || []; } catch (e) { console.warn('getIncidents falhou', e); rawInc = []; }
 
+      // config externo (opcional)
       var config = {};
       if (TRJ.api && typeof TRJ.api.getConfig === 'function') {
-        try { var cfgRes = await TRJ.api.getConfig(); config = cfgRes && (cfgRes.config || cfgRes) || {}; }
-        catch (e) { console.warn('Falha ao carregar config externa:', e); config = {}; }
+        try { var cfgRes = await TRJ.api.getConfig(); config = cfgRes && (cfgRes.config || cfgRes) || {}; } catch (e) { console.warn('Falha ao carregar config externa:', e); config = {}; }
       }
 
+      // construir prazoMap de forma segura
       var prazoMap = {};
-      try {
-        if (D && typeof D.montarPrazoMap === 'function') prazoMap = D.montarPrazoMap(prazoOverride(config));
-        else prazoMap = {};
-      } catch (e) { console.warn('Erro montarPrazoMap:', e); prazoMap = {}; }
+      try { if (D && typeof D.montarPrazoMap === 'function') prazoMap = D.montarPrazoMap(prazoOverride(config)); else prazoMap = {}; } catch (e) { console.warn('Erro montarPrazoMap:', e); prazoMap = {}; }
 
+      // validMap via lookupCities (opcional)
       var validMap = {};
       try {
         var ids = (Comp && typeof Comp.collectIds === 'function') ? Comp.collectIds(rawTasks || [], rawInc || []) : [];
         if (ids && ids.length && TRJ.api && typeof TRJ.api.lookupCities === 'function') {
-          try {
-            var lk = await TRJ.api.lookupCities(ids);
-            validMap = lk && lk.map ? lk.map : {};
-          } catch (e) { console.warn('lookupCities falhou:', e); validMap = {}; }
+          try { var lk = await TRJ.api.lookupCities(ids); validMap = lk && lk.map ? lk.map : {}; } catch (e) { console.warn('lookupCities falhou:', e); validMap = {}; }
         }
       } catch (e) { console.warn('Erro collectIds/lookupCities:', e); validMap = {}; }
 
       var now = new Date();
-      var tasksEnriched = rawTasks;
-      try {
-        if (Comp && typeof Comp.enrichTasks === 'function') tasksEnriched = Comp.enrichTasks(rawTasks || [], validMap, prazoMap, now);
-      } catch (e) { console.warn('enrichTasks falhou:', e); tasksEnriched = rawTasks; }
 
-      var incidentsEnriched = rawInc;
-      try {
-        if (Comp && typeof Comp.enrichIncidents === 'function') incidentsEnriched = Comp.enrichIncidents(rawInc || [], validMap);
-      } catch (e) { console.warn('enrichIncidents falhou:', e); incidentsEnriched = rawInc; }
+      var tasksEnriched = rawTasks || [];
+      try { if (Comp && typeof Comp.enrichTasks === 'function') tasksEnriched = Comp.enrichTasks(rawTasks || [], validMap, prazoMap, now); } catch (e) { console.warn('enrichTasks falhou:', e); tasksEnriched = rawTasks || []; }
 
+      var incidentsEnriched = rawInc || [];
+      try { if (Comp && typeof Comp.enrichIncidents === 'function') incidentsEnriched = Comp.enrichIncidents(rawInc || [], validMap); } catch (e) { console.warn('enrichIncidents falhou:', e); incidentsEnriched = rawInc || []; }
+
+      // garantir estrutura mínima em App.data para evitar undefined nas páginas
       App.data = {
-        config: config,
-        prazoMap: prazoMap,
-        validMap: validMap,
+        config: config || {},
+        prazoMap: prazoMap || {},
+        validMap: validMap || {},
         rawTasks: rawTasks || [],
         rawInc: rawInc || [],
         tasksEnriched: tasksEnriched || [],
@@ -290,7 +281,7 @@
     try { U.openModal(title || 'Detalhamento', U.incidentTable(rows)); } catch (e) { console.warn('openDrillIncidents fallback', e); }
   };
 
-// ---------------- ROTAS ----------------
+  // ---------------- ROTAS ----------------
   var ROUTES = {
     '#/dashboard': 'dashboard',
     '#/sla': 'sla',
@@ -301,42 +292,39 @@
     '#/configuracoes': 'configuracoes'
   };
 
-  // helper: tenta encontrar o módulo da página em TRJ.pages com várias variações de nome
+  // helper (simples e resiliente) para localizar módulo na coleção TRJ.pages
   function findPageModuleByName(name) {
-    if (!name) return null;
-    if (!window.TRJ || !TRJ.pages) return null;
+    if (!name || !window.TRJ || !TRJ.pages) return null;
+    var keys = Object.keys(TRJ.pages || {});
+    var target = (name || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    // 1) tentativas diretas/variações previsíveis
-    var candidates = [
+    // 1) tentativas diretas / variações simples
+    var variants = [
       name,
       name.replace(/-/g, '_'),
-      name.replace(/-([a-z])/g, function (_, ch) { return ch.toUpperCase(); }), // camelCase
-      name.replace(/[^a-zA-Z0-9_]/g, '') // simples
+      name.replace(/-([a-z])/g, function (_, ch) { return ch.toUpperCase(); }),
+      name.replace(/[^a-zA-Z0-9_]/g, '')
     ];
-
-    for (var i = 0; i < candidates.length; i++) {
-      var c = candidates[i];
-      if (TRJ.pages[c]) return TRJ.pages[c];
+    for (var i = 0; i < variants.length; i++) {
+      if (variants[i] && TRJ.pages[variants[i]]) return TRJ.pages[variants[i]];
     }
 
-    // 2) case-insensitive match across todas as chaves
-    var lower = name.toLowerCase();
-    var keys = Object.keys(TRJ.pages || {});
+    // 2) igualdade case-insensitive
     for (var k = 0; k < keys.length; k++) {
-      if (keys[k].toLowerCase() === lower) return TRJ.pages[keys[k]];
+      if (keys[k].toLowerCase() === target) return TRJ.pages[keys[k]];
     }
 
-    // 3) partial match: chave que contém o slug (ex: 'sites' matches 'sitesFora')
-    for (var k2 = 0; k2 < keys.length; k2++) {
-      if (keys[k2].toLowerCase().indexOf(lower) >= 0) return TRJ.pages[keys[k2]];
+    // 3) containment parcial (ex: 'sites' encontra 'sitesFora')
+    for (var j = 0; j < keys.length; j++) {
+      if (keys[j].toLowerCase().indexOf(target) >= 0) return TRJ.pages[keys[j]];
     }
 
-    // 4) fallback: se algum módulo tiver propriedade 'render' ou 'page' cuja chave sugira a página
-    for (var k3 = 0; k3 < keys.length; k3++) {
-      var mod = TRJ.pages[keys[k3]];
+    // 4) fallback: procurar qualquer módulo object com render/page/default e chave parecida
+    for (var m = 0; m < keys.length; m++) {
+      var mod = TRJ.pages[keys[m]];
       if (mod && typeof mod === 'object') {
-        var kn = keys[k3].toLowerCase();
-        if (kn.indexOf(lower) >= 0 && (typeof mod.render === 'function' || typeof mod.page === 'function' || typeof mod.default === 'function')) {
+        var kn = keys[m].toLowerCase();
+        if (kn.indexOf(target) >= 0 && (typeof mod.render === 'function' || typeof mod.page === 'function' || typeof mod.default === 'function')) {
           return mod;
         }
       }
@@ -345,10 +333,7 @@
     return null;
   }
 
-  // render agora suporta:
-  // - páginas antigas exportando função: fn(pageElement, {data, app})
-  // - módulos modernos exportando render: module.render(root[, opts])
-  // - módulos com default/function/page/show/init
+  // render agora suporta formatos antigos (fn(page,opts)) e novos (module.render(root,opts))
   function render() {
     try {
       if (!TRJ.auth || !TRJ.auth.isLogged || !TRJ.auth.isLogged()) { showLogin(); return; }
