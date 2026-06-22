@@ -290,7 +290,7 @@
     try { U.openModal(title || 'Detalhamento', U.incidentTable(rows)); } catch (e) { console.warn('openDrillIncidents fallback', e); }
   };
 
-  // ---------------- ROTAS ----------------
+// ---------------- ROTAS ----------------
   var ROUTES = {
     '#/dashboard': 'dashboard',
     '#/sla': 'sla',
@@ -301,33 +301,102 @@
     '#/configuracoes': 'configuracoes'
   };
 
+  // helper: tenta encontrar o módulo da página em TRJ.pages com várias variações de nome
+  function findPageModuleByName(name) {
+    if (!name) return null;
+    if (!window.TRJ || !TRJ.pages) return null;
+    // tentativa direta
+    if (TRJ.pages[name]) return TRJ.pages[name];
+    // underline
+    var alt1 = name.replace(/-/g, '_');
+    if (TRJ.pages[alt1]) return TRJ.pages[alt1];
+    // camelCase (ex: sites-fora -> sitesFora)
+    var alt2 = name.replace(/-([a-z])/g, function (_, ch) { return ch.toUpperCase(); });
+    if (TRJ.pages[alt2]) return TRJ.pages[alt2];
+    // tentar remover caracteres estranhos
+    var simple = name.replace(/[^a-zA-Z0-9_]/g, '');
+    if (TRJ.pages[simple]) return TRJ.pages[simple];
+    return null;
+  }
+
+  // render agora suporta:
+  // - páginas antigas exportando função: fn(pageElement, {data, app})
+  // - módulos modernos exportando render: module.render(root[, opts])
+  // - módulos com init + render: chama init() e depois render()
   function render() {
     try {
       if (!TRJ.auth || !TRJ.auth.isLogged || !TRJ.auth.isLogged()) { showLogin(); return; }
     } catch (e) {
       showLogin(); return;
     }
+
     var page = document.getElementById('page');
     if (!page) return;
+
     try { U.destroyCharts && U.destroyCharts(); } catch(_) {}
     try { U.closeModal && U.closeModal(); } catch(_) {}
+
     var hash = location.hash || '#/dashboard';
+    // se rota não registrada, fallback para dashboard
     if (!ROUTES[hash]) { location.hash = '#/dashboard'; return; }
+
     var hasTasks = App.data && App.data.rawTasks && App.data.rawTasks.length > 0;
+    // bloquear acesso às abas até upload (comportamento existente)
     if (!hasTasks && hash !== '#/importar' && hash !== '#/configuracoes') { location.hash = '#/importar'; return; }
+
     setActiveLink();
-    var fn = TRJ.pages && TRJ.pages[ROUTES[hash]];
-    page.innerHTML = '';
-    if (typeof fn === 'function') {
-      try { fn(page, { data: App.data, app: App }); }
-      catch (e) { page.appendChild((U && U.h) ? U.h('div', { class: 'trj-card p-6', style: { color: 'var(--trj-red)' }, text: 'Erro ao renderizar a página: ' + (e.message || e) }) : (function(){ var d=document.createElement('div'); d.className='trj-card p-6'; d.style.color='var(--trj-red)'; d.textContent='Erro ao renderizar a página: '+(e.message||e); return d; })()); }
-    } else {
-      page.appendChild((U && U.h) ? U.h('div', { class: 'trj-card p-6', text: 'Página não encontrada.' }) : (function(){ var d=document.createElement('div'); d.className='trj-card p-6'; d.textContent='Página não encontrada.'; return d; })());
+
+    // Resolver nome do módulo a partir da rota
+    var moduleName = ROUTES[hash];
+    var module = findPageModuleByName(moduleName);
+
+    // fallback: se não encontrou, tentar usar o slug direto (ex: 'sites-fora')
+    if (!module) {
+      var slug = (hash || '').replace(/^#\/?/, '');
+      module = findPageModuleByName(slug);
     }
+
+    // limpar container
+    page.innerHTML = '';
+
+    // Se for uma função (assinatura antiga), chamamos diretamente
+    if (typeof module === 'function') {
+      try {
+        module(page, { data: App.data, app: App });
+        return;
+      } catch (e) {
+        page.appendChild((U && U.h) ? U.h('div', { class: 'trj-card p-6', style: { color: 'var(--trj-red)' }, text: 'Erro ao renderizar a página: ' + (e.message || e) }) : (function(){ var d=document.createElement('div'); d.className='trj-card p-6'; d.style.color='var(--trj-red)'; d.textContent='Erro ao renderizar a página: '+(e.message||e); return d; })());
+        return;
+      }
+    }
+
+    // Se for um objeto/módulo com render/init
+    if (module && typeof module === 'object') {
+      try {
+        // se existir init e for função, chamamos (opcional)
+        if (typeof module.init === 'function') {
+          try { module.init({ data: App.data, app: App }); } catch (ee) { console.warn('page.init falhou', ee); }
+        }
+        // Preferir render(root, opts)
+        if (typeof module.render === 'function') {
+          try {
+            module.render(page, { data: App.data, app: App });
+            return;
+          } catch (e) {
+            page.appendChild((U && U.h) ? U.h('div', { class: 'trj-card p-6', style: { color: 'var(--trj-red)' }, text: 'Erro ao renderizar a página: ' + (e.message || e) }) : (function(){ var d=document.createElement('div'); d.className='trj-card p-6'; d.style.color='var(--trj-red)'; d.textContent='Erro ao renderizar a página: '+(e.message||e); return d; })());
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('Erro ao invocar módulo de página', e);
+      }
+    }
+
+    // Se chegamos aqui, nenhuma implementação válida foi encontrada
+    page.appendChild((U && U.h) ? U.h('div', { class: 'trj-card p-6', text: 'Página não encontrada.' }) : (function(){ var d=document.createElement('div'); d.className='trj-card p-6'; d.textContent='Página não encontrada.'; return d; })());
   }
   App.render = render;
   App.navigate = function (hash) { if (location.hash === hash) render(); else location.hash = hash; };
-
   // ---------------- START ----------------
   async function startApp() {
     var ls = document.getElementById('login-screen');
