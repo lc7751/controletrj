@@ -10,7 +10,7 @@
 (function (TRJ) {
   TRJ.config = {
     // >>>>>>>>>>>>>>  COLE A URL DO SEU APPS SCRIPT AQUI  <<<<<<<<<<<<<<
-    APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbxhmEk8DA9KifK9rxPoYCezIPM6ZcyVK_A_maMNoei6Mm7jKVQYCxYxAeJRTWjqbtR-Lw/exec",
+    APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbxLDHmNX4L4dLzcX_GXs02J5enlq5ro8WcC89OVdeCncsyAi79blelbXxxpPhHusHgv0g/exec",
 
     // Token de API gerado por configurarTudo() no Apps Script.
     // Opcional: pode deixar vazio e usar o token retornado pelo login, que será salvo em localStorage.
