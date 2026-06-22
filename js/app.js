@@ -305,24 +305,50 @@
   function findPageModuleByName(name) {
     if (!name) return null;
     if (!window.TRJ || !TRJ.pages) return null;
-    // tentativa direta
-    if (TRJ.pages[name]) return TRJ.pages[name];
-    // underline
-    var alt1 = name.replace(/-/g, '_');
-    if (TRJ.pages[alt1]) return TRJ.pages[alt1];
-    // camelCase (ex: sites-fora -> sitesFora)
-    var alt2 = name.replace(/-([a-z])/g, function (_, ch) { return ch.toUpperCase(); });
-    if (TRJ.pages[alt2]) return TRJ.pages[alt2];
-    // tentar remover caracteres estranhos
-    var simple = name.replace(/[^a-zA-Z0-9_]/g, '');
-    if (TRJ.pages[simple]) return TRJ.pages[simple];
+
+    // 1) tentativas diretas/variações previsíveis
+    var candidates = [
+      name,
+      name.replace(/-/g, '_'),
+      name.replace(/-([a-z])/g, function (_, ch) { return ch.toUpperCase(); }), // camelCase
+      name.replace(/[^a-zA-Z0-9_]/g, '') // simples
+    ];
+
+    for (var i = 0; i < candidates.length; i++) {
+      var c = candidates[i];
+      if (TRJ.pages[c]) return TRJ.pages[c];
+    }
+
+    // 2) case-insensitive match across todas as chaves
+    var lower = name.toLowerCase();
+    var keys = Object.keys(TRJ.pages || {});
+    for (var k = 0; k < keys.length; k++) {
+      if (keys[k].toLowerCase() === lower) return TRJ.pages[keys[k]];
+    }
+
+    // 3) partial match: chave que contém o slug (ex: 'sites' matches 'sitesFora')
+    for (var k2 = 0; k2 < keys.length; k2++) {
+      if (keys[k2].toLowerCase().indexOf(lower) >= 0) return TRJ.pages[keys[k2]];
+    }
+
+    // 4) fallback: se algum módulo tiver propriedade 'render' ou 'page' cuja chave sugira a página
+    for (var k3 = 0; k3 < keys.length; k3++) {
+      var mod = TRJ.pages[keys[k3]];
+      if (mod && typeof mod === 'object') {
+        var kn = keys[k3].toLowerCase();
+        if (kn.indexOf(lower) >= 0 && (typeof mod.render === 'function' || typeof mod.page === 'function' || typeof mod.default === 'function')) {
+          return mod;
+        }
+      }
+    }
+
     return null;
   }
 
   // render agora suporta:
   // - páginas antigas exportando função: fn(pageElement, {data, app})
   // - módulos modernos exportando render: module.render(root[, opts])
-  // - módulos com init + render: chama init() e depois render()
+  // - módulos com default/function/page/show/init
   function render() {
     try {
       if (!TRJ.auth || !TRJ.auth.isLogged || !TRJ.auth.isLogged()) { showLogin(); return; }
@@ -359,7 +385,7 @@
     // limpar container
     page.innerHTML = '';
 
-    // Se for uma função (assinatura antiga), chamamos diretamente
+    // 1) se é uma função direta (old-style)
     if (typeof module === 'function') {
       try {
         module(page, { data: App.data, app: App });
@@ -370,23 +396,35 @@
       }
     }
 
-    // Se for um objeto/módulo com render/init
+    // 2) se é um objeto/módulo, testamos várias propriedades/assinaturas
     if (module && typeof module === 'object') {
       try {
-        // se existir init e for função, chamamos (opcional)
+        // preferencial: module.render(root, opts)
+        if (typeof module.render === 'function') {
+          try { module.render(page, { data: App.data, app: App }); return; } catch (e) { console.warn('module.render erro', e); }
+        }
+
+        // module.default é função? (bundlers/ESM)
+        if (typeof module.default === 'function') {
+          try { module.default(page, { data: App.data, app: App }); return; } catch (e) { console.warn('module.default erro', e); }
+        }
+
+        // module.page / module.show
+        if (typeof module.page === 'function') {
+          try { module.page(page, { data: App.data, app: App }); return; } catch (e) { console.warn('module.page erro', e); }
+        }
+        if (typeof module.show === 'function') {
+          try { module.show(page, { data: App.data, app: App }); return; } catch (e) { console.warn('module.show erro', e); }
+        }
+
+        // init + render fallback: chamar init({data,app}) se existir, depois tentar render again
         if (typeof module.init === 'function') {
           try { module.init({ data: App.data, app: App }); } catch (ee) { console.warn('page.init falhou', ee); }
-        }
-        // Preferir render(root, opts)
-        if (typeof module.render === 'function') {
-          try {
-            module.render(page, { data: App.data, app: App });
-            return;
-          } catch (e) {
-            page.appendChild((U && U.h) ? U.h('div', { class: 'trj-card p-6', style: { color: 'var(--trj-red)' }, text: 'Erro ao renderizar a página: ' + (e.message || e) }) : (function(){ var d=document.createElement('div'); d.className='trj-card p-6'; d.style.color='var(--trj-red)'; d.textContent='Erro ao renderizar a página: '+(e.message||e); return d; })());
-            return;
+          if (typeof module.render === 'function') {
+            try { module.render(page, { data: App.data, app: App }); return; } catch (e) { console.warn('module.render após init erro', e); }
           }
         }
+
       } catch (e) {
         console.warn('Erro ao invocar módulo de página', e);
       }
@@ -397,6 +435,7 @@
   }
   App.render = render;
   App.navigate = function (hash) { if (location.hash === hash) render(); else location.hash = hash; };
+  
   // ---------------- START ----------------
   async function startApp() {
     var ls = document.getElementById('login-screen');
