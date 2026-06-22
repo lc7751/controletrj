@@ -42,6 +42,55 @@
   function toast(msg, type) { if (U && typeof U.toast === 'function') U.toast(msg, type || 'info'); else console.info('toast:', msg); }
   function fmtName(h) { try { return h && (h.name || h.handleName || 'Pasta'); } catch (e) { return 'Pasta'; } }
 
+  // ---------- Helper: executar pipeline de compute e forçar refresh ----------
+  // Suporta enrichTasks síncrono ou async (Promise). Faz setTasks via FS.setTasks / TRJ.files.setTasks
+  function triggerComputeAndRefresh(tasks) {
+    try {
+      var resolved = tasks || [];
+      if (TRJ && TRJ.compute && typeof TRJ.compute.enrichTasks === 'function') {
+        try {
+          var r = TRJ.compute.enrichTasks(tasks);
+          if (r && typeof r.then === 'function') {
+            // async
+            r.then(function (enriched) {
+              resolved = enriched || tasks || [];
+              try {
+                if (FS && typeof FS.setTasks === 'function') FS.setTasks(resolved);
+                else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(resolved);
+                console.log('triggerComputeAndRefresh: enrichTasks resolved, tasks set:', (resolved && resolved.length) || 0);
+              } catch (setErr) { console.warn('triggerComputeAndRefresh setTasks failed', setErr); }
+              try { if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh(); } catch (refreshErr) { console.warn('triggerComputeAndRefresh refresh failed', refreshErr); }
+            }).catch(function (err) {
+              console.warn('triggerComputeAndRefresh: enrichTasks promise failed', err);
+              // fallback: still set original tasks and refresh
+              try {
+                if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
+                else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(tasks);
+              } catch (setErr) { console.warn('triggerComputeAndRefresh fallback setTasks failed', setErr); }
+              try { if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh(); } catch (refreshErr) { console.warn('triggerComputeAndRefresh fallback refresh failed', refreshErr); }
+            });
+            return;
+          } else {
+            // sync
+            resolved = r || tasks || [];
+          }
+        } catch (e) {
+          console.warn('triggerComputeAndRefresh: error running enrichTasks', e);
+        }
+      }
+      // setar tasks (fallback normal) e refresh
+      try {
+        if (FS && typeof FS.setTasks === 'function') FS.setTasks(resolved);
+        else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(resolved);
+        console.log('triggerComputeAndRefresh: tasks set (sync):', (resolved && resolved.length) || 0);
+      } catch (setErr) { console.warn('triggerComputeAndRefresh setTasks failed', setErr); }
+      try { if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh(); } catch (refreshErr) { console.warn('triggerComputeAndRefresh refresh failed', refreshErr); }
+    } catch (e) {
+      console.warn('triggerComputeAndRefresh erro inesperado', e);
+      try { if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh(); } catch (_) {}
+    }
+  }
+
   // ---------- Novos helpers: parse / enrich ----------
   async function parseHandleToRows(handle) {
     if (!handle || typeof handle.getFile !== 'function') {
@@ -275,13 +324,16 @@
 
         // convert and set tasks (já com rows)
         var tasks = convertParsedItemsToTasks(items);
-        if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
-        else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(tasks);
 
-        // dispatch events to notify app/UI
+        // notify raw items first (compat)
+        document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
+
+        // executa pipeline de compute / normalização e força refresh da app
+        triggerComputeAndRefresh(tasks);
+
+        // e disparamos também o evento tasksLoaded com as tasks originais (ouvidas por páginas que só escutam eventos)
         document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
         document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
-        document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
 
         toast('Pasta verificada. Itens lidos: ' + (items.length || 0) + '. Tasks: ' + tasks.length, 'ok');
         // prefer TRJ.app, fallback para window.App
@@ -314,11 +366,16 @@
               if (F) F._lastScannedItems = items;
 
               var tasks = convertParsedItemsToTasks(items);
-              if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
-              // dispatch events
+
+              // notificar raw items primeiro
+              document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
+
+              // executar pipeline e refresh
+              triggerComputeAndRefresh(tasks);
+
+              // eventos adicionais (mantendo compatibilidade)
               document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
               document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
-              document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
               toast('Monitor: arquivos processados. Tasks: ' + tasks.length, 'ok');
               var appRef = (TRJ && TRJ.app) || window.App || null;
               if (appRef && typeof appRef.refresh === 'function') appRef.refresh();
@@ -497,10 +554,14 @@
     // convert and set tasks automatically
     try {
       var tasks = convertParsedItemsToTasks(items);
-      if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
-      else if (TRJ && TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(tasks);
 
-      // dispatch tasksLoaded so other parts of app react
+      // notificar raw items
+      document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
+
+      // processa via compute e atualiza UI
+      triggerComputeAndRefresh(tasks);
+
+      // eventos compatíveis
       document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
       document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
 
