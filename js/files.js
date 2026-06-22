@@ -322,7 +322,7 @@
       }
       // still dispatch folderChanged so UI can inspect even if signature same
       document.dispatchEvent(new CustomEvent('trj:folderChanged', { detail: { items: items } }));
-      document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items });
+      document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: { items: items } }));
       return { changed: false, items: items };
     } catch (e) {
       console.warn('triggerScan falhou:', e && e.message);
