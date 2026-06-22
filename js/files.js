@@ -157,80 +157,78 @@
     return parts.sort().join('||');
   }
 
-// ---------- substitua/atualize scanFolderOnce por esta versão ----------
-async function ensureFolderPermission(handle) {
-  if (!handle) return false;
-  try {
-    // tenta query primeiro (não disponível em todos os navegadores)
-    if (typeof handle.queryPermission === 'function') {
-      var p = await handle.queryPermission({ mode: 'read' });
-      if (p === 'granted') return true;
-    }
-    // tenta requestPermission
-    if (typeof handle.requestPermission === 'function') {
-      var pr = await handle.requestPermission({ mode: 'read' });
-      return pr === 'granted';
-    }
-    // se nenhuma API, presumir disponível (fallback)
-    return true;
-  } catch (e) {
-    console.warn('Erro ao verificar permissão do handle:', e);
-    return false;
-  }
-}
-
-async function scanFolderOnce(options) {
-  options = options || {};
-  // aceitar tanto folderHandle quanto _folderHandle
-  var handle = (this && (this.folderHandle || this._folderHandle)) || (TRJ && TRJ.files && (TRJ.files.folderHandle || TRJ.files._folderHandle));
-  if (!handle) {
-    // em vez de lançar, retornar array vazio (UI pode notificar usuário)
-    console.warn('scanFolderOnce: nenhuma pasta conectada.');
-    return [];
-  }
-
-  // garantir permissão de leitura
-  var ok = await ensureFolderPermission(handle);
-  if (!ok) {
-    // tentar solicitar uma nova conexão (somente se gesto do usuário; aqui apenas erro)
-    throw new Error('Permissão de leitura negada para a pasta conectada.');
-  }
-
-  var results = [];
-  try {
-    // iterar entradas (DirectoryHandle.entries())
-    for await (const entry of handle.values ? handle.values() : handle.entries()) {
-      // entry pode ser FileSystemHandle ou [name, handle] dependendo do browser
-      var name, entryHandle;
-      if (Array.isArray(entry)) { name = entry[0]; entryHandle = entry[1]; }
-      else { entryHandle = entry; name = entry.name; }
-      try {
-        if (entryHandle.kind === 'file') {
-          // coleta metadados básicos; getFile() pode ser pesado — você pode apenas armazenar o handle
-          results.push({ name: name, handle: entryHandle });
-        } else if (entryHandle.kind === 'directory') {
-          // opcional: ignorar ou descer recursivamente, conforme necessidade
-          // results.push({ name: name, kind: 'dir', handle: entryHandle });
-        }
-      } catch (e) {
-        console.warn('erro lendo entry', name, e);
+  async function ensureFolderPermission(handle) {
+    if (!handle) return false;
+    try {
+      // tenta query primeiro (não disponível em todos os navegadores)
+      if (typeof handle.queryPermission === 'function') {
+        var p = await handle.queryPermission({ mode: 'read' });
+        if (p === 'granted') return true;
       }
+      // tenta requestPermission
+      if (typeof handle.requestPermission === 'function') {
+        var pr = await handle.requestPermission({ mode: 'read' });
+        return pr === 'granted';
+      }
+      // se nenhuma API, presumir disponível (fallback)
+      return true;
+    } catch (e) {
+      console.warn('Erro ao verificar permissão do handle:', e);
+      return false;
     }
-  } catch (e) {
-    console.error('scanFolderOnce: falha ao iterar pasta:', e);
-    throw e;
   }
 
-  // opcional: aplicar sua lógica de filtragem por extensão (xlsx, csv, etc.) aqui
-  // exemplo mínimo:
-  var filtered = results.filter(function (it) {
-    var n = (it && it.name) ? it.name.toLowerCase() : '';
-    return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv') || n.endsWith('.ods') || n.endsWith('.txt');
-  });
+  async function scanFolderOnce(options) {
+    options = options || {};
+    // aceitar tanto folderHandle quanto _folderHandle
+    var handle = (this && (this.folderHandle || this._folderHandle)) || (TRJ && TRJ.files && (TRJ.files.folderHandle || TRJ.files._folderHandle));
+    if (!handle) {
+      // em vez de lançar, retornar array vazio (UI pode notificar usuário)
+      console.warn('scanFolderOnce: nenhuma pasta conectada.');
+      return [];
+    }
 
-  // retornar os matches (a sua implementação anterior provavelmente espera um objeto mais rico — adapte conforme necessário)
-  return filtered;
-}
+    // garantir permissão de leitura
+    var ok = await ensureFolderPermission(handle);
+    if (!ok) {
+      // tentar solicitar uma nova conexão (somente se gesto do usuário; aqui apenas erro)
+      throw new Error('Permissão de leitura negada para a pasta conectada.');
+    }
+
+    var results = [];
+    try {
+      // iterar entradas (DirectoryHandle.entries())
+      for await (const entry of handle.values ? handle.values() : handle.entries()) {
+        // entry pode ser FileSystemHandle ou [name, handle] dependendo do browser
+        var name, entryHandle;
+        if (Array.isArray(entry)) { name = entry[0]; entryHandle = entry[1]; }
+        else { entryHandle = entry; name = entry.name; }
+        try {
+          if (entryHandle.kind === 'file') {
+            // coleta metadados básicos; getFile() pode ser pesado — você pode apenas armazenar o handle
+            results.push({ name: name, handle: entryHandle });
+          } else if (entryHandle.kind === 'directory') {
+            // opcional: ignorar ou descer recursivamente, conforme necessidade
+            // results.push({ name: name, kind: 'dir', handle: entryHandle });
+          }
+        } catch (e) {
+          console.warn('erro lendo entry', name, e);
+        }
+      }
+    } catch (e) {
+      console.error('scanFolderOnce: falha ao iterar pasta:', e);
+      throw e;
+    }
+
+    // opcional: aplicar sua lógica de filtragem por extensão (xlsx, csv, etc.) aqui
+    var filtered = results.filter(function (it) {
+      var n = (it && it.name) ? it.name.toLowerCase() : '';
+      return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv') || n.endsWith('.ods') || n.endsWith('.txt') || n.endsWith('.html') || n.endsWith('.htm');
+    });
+
+    // retornar os matches
+    return filtered;
+  }
 
   // ---------------- Monitor (start / stop / trigger)
   F.startAutoMonitor = function (onChangeCb, intervalMs) {
@@ -274,8 +272,10 @@ async function scanFolderOnce(options) {
             F._lastSignature = sig;
             try { localStorage.setItem(KEY_SIG, sig); } catch (_) {}
             const items = await scanFolderOnce();
-            // dispara evento global e callback opcional
+            // dispara eventos globais (compatibilidade com pages)
             document.dispatchEvent(new CustomEvent('trj:folderChanged', { detail: { items: items } }));
+            document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
+            try { if (typeof F.onFolderChange === 'function') F.onFolderChange(items); } catch (e) { console.warn('F.onFolderChange erro', e); }
             if (typeof onChangeCb === 'function') {
               try { onChangeCb(items); } catch (e) { console.warn('onChangeCb erro', e); }
             }
@@ -314,9 +314,15 @@ async function scanFolderOnce(options) {
       if (sig !== F._lastSignature) {
         F._lastSignature = sig;
         try { localStorage.setItem(KEY_SIG, sig); } catch (_) {}
+        // dispatch events (compat)
         document.dispatchEvent(new CustomEvent('trj:folderChanged', { detail: { items: items } }));
+        document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
+        try { if (typeof F.onFolderChange === 'function') F.onFolderChange(items); } catch (e) { console.warn('F.onFolderChange erro', e); }
         return { changed: true, items: items };
       }
+      // still dispatch folderChanged so UI can inspect even if signature same
+      document.dispatchEvent(new CustomEvent('trj:folderChanged', { detail: { items: items } }));
+      document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items });
       return { changed: false, items: items };
     } catch (e) {
       console.warn('triggerScan falhou:', e && e.message);
@@ -328,21 +334,21 @@ async function scanFolderOnce(options) {
   F.setTasks = function (data) {
     F._tasks = Array.isArray(data) ? data.slice() : [];
     persist(KEY_TASKS, F._tasks);
-    document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: { tasks: F._tasks.slice() } }));
+    // dispatch with array detail for compatibility (alguns listeners esperam array diretamente)
+    try { document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: F._tasks.slice() })); } catch (e) { console.warn('emit tasksLoaded failed', e); }
   };
   F.getTasks = function () { return F._tasks.slice(); };
 
   F.setIncidents = function (data) {
     F._incidents = Array.isArray(data) ? data.slice() : [];
     persist(KEY_INC, F._incidents);
-    document.dispatchEvent(new CustomEvent('trj:incidentsLoaded', { detail: { incidents: F._incidents.slice() } }));
+    try { document.dispatchEvent(new CustomEvent('trj:incidentsLoaded', { detail: F._incidents.slice() })); } catch (e) { console.warn('emit incidentsLoaded failed', e); }
   };
   F.getIncidents = function () { return F._incidents.slice(); };
 
   // pequeno hook público que a app pode sobrescrever (opcional)
   F.onFolderChange = F.onFolderChange || function (items) {
-    // default: dispara evento trj:folderChanged (já feito acima), aqui para compatibilidade
-    // app pode sobrescrever para processar imediatamente
+    // default: nada (eventos já são disparados)
   };
 
   // ---------------- Exports
