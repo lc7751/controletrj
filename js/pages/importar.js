@@ -150,6 +150,9 @@
           throw new Error('API de conexão de pasta não disponível. Atualize o navegador ou conecte a pasta manualmente.');
         }
         toast('Pasta conectada: ' + (FS._folderHandle && FS._folderHandle.name ? FS._folderHandle.name : 'Pasta'));
+        // notificar globalmente que pasta foi conectada
+        document.dispatchEvent(new CustomEvent('trj:folderConnected.importar', { detail: { handle: FS._folderHandle } }));
+        // re-render page
         renderImportPage(containerEl);
       } catch (e) {
         toast(e && e.message ? e.message : 'Erro ao conectar pasta', 'err');
@@ -174,8 +177,14 @@
         var tasks = convertParsedItemsToTasks(items);
         if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
         else if (TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(tasks);
+        // dispatch events to notify app/UI
+        document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
+        document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
+        document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
         toast('Pasta verificada. Itens lidos: ' + (items.length || 0) + '. Tasks: ' + tasks.length, 'ok');
-        if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh();
+        // prefer TRJ.app, fallback para window.App
+        var appRef = (TRJ && TRJ.app) || window.App || null;
+        if (appRef && typeof appRef.refresh === 'function') appRef.refresh();
       } catch (e) {
         toast(e && e.message ? e.message : 'Erro ao escanear pasta', 'err');
         console.warn(e);
@@ -189,6 +198,8 @@
           if (typeof FS.stopAutoMonitor === 'function') FS.stopAutoMonitor();
           else if (typeof FS._stopAutoMonitor === 'function') FS._stopAutoMonitor();
           btnToggleMonitor.textContent = 'Iniciar monitor';
+          // notify
+          document.dispatchEvent(new CustomEvent('trj:monitorStopped.importar', { detail: {} }));
           toast('Monitor pausado', 'info');
         } else {
           // start monitor with callback
@@ -196,14 +207,20 @@
             try {
               var tasks = convertParsedItemsToTasks(items);
               if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
+              // dispatch events
+              document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
+              document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
+              document.dispatchEvent(new CustomEvent('trj:folderChanged.importar', { detail: items }));
               toast('Monitor: arquivos processados. Tasks: ' + tasks.length, 'ok');
-              if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh();
+              var appRef = (TRJ && TRJ.app) || window.App || null;
+              if (appRef && typeof appRef.refresh === 'function') appRef.refresh();
             } catch (e) { console.warn(e); }
           };
           if (FS && typeof FS.startAutoMonitor === 'function') FS.startAutoMonitor(cb);
           else if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function') TRJ.files.startAutoMonitor(cb);
           else throw new Error('startAutoMonitor não implementado.');
           btnToggleMonitor.textContent = 'Parar monitor';
+          document.dispatchEvent(new CustomEvent('trj:monitorStarted.importar', { detail: {} }));
           toast('Monitor iniciado', 'ok');
         }
       } catch (e) {
@@ -222,6 +239,7 @@
           FS._folderHandle = null;
         }
         toast('Pasta desconectada', 'ok');
+        document.dispatchEvent(new CustomEvent('trj:folderDisconnected.importar', { detail: {} }));
         renderImportPage(containerEl);
       } catch (e) { toast('Erro ao desconectar', 'err'); console.warn(e); }
     });
@@ -306,8 +324,13 @@
         var key = 'trj_import_incidentes_' + Date.now();
         localStorage.setItem(key, JSON.stringify({ ts: Date.now(), rows: incs }));
       }
+      // dispatch events so app/pages know incidents updated
+      document.dispatchEvent(new CustomEvent('trj:incidentsLoaded.importar', { detail: incs }));
+      document.dispatchEvent(new CustomEvent('trj:incidentsLoaded', { detail: incs }));
       toast('Incidentes importados: ' + incs.length, 'ok');
-      if (TRJ.app && typeof TRJ.app.reloadIncidents === 'function') TRJ.app.reloadIncidents();
+      var appRef = (TRJ && TRJ.app) || window.App || null;
+      if (appRef && typeof appRef.reloadIncidents === 'function') appRef.reloadIncidents();
+      else if (appRef && typeof appRef.refresh === 'function') appRef.refresh();
     });
     host.appendChild(wrap);
     host.appendChild(importBtn);
@@ -359,8 +382,14 @@
       var tasks = convertParsedItemsToTasks(items);
       if (FS && typeof FS.setTasks === 'function') FS.setTasks(tasks);
       else if (TRJ && TRJ.files && typeof TRJ.files.setTasks === 'function') TRJ.files.setTasks(tasks);
+
+      // dispatch tasksLoaded so other parts of app react
+      document.dispatchEvent(new CustomEvent('trj:tasksLoaded.importar', { detail: tasks }));
+      document.dispatchEvent(new CustomEvent('trj:tasksLoaded', { detail: tasks }));
+
       toast('Arquivos processados automaticamente. Tasks: ' + tasks.length, 'ok');
-      if (TRJ.app && typeof TRJ.app.refresh === 'function') TRJ.app.refresh();
+      var appRef = (TRJ && TRJ.app) || window.App || null;
+      if (appRef && typeof appRef.refresh === 'function') appRef.refresh();
     } catch (err) {
       console.warn('Erro processando items:', err);
     }
@@ -371,9 +400,10 @@
   function onTasksLoaded(e) {
     // optional: reflect counts or enable navigation if app expects tasks
     // re-render to reflect persisted tasks if needed
+    try { if (containerEl) renderImportPage(containerEl); } catch (_) {}
   }
   function onIncidentsLoaded(e) {
-    // optional
+    try { if (containerEl) renderImportPage(containerEl); } catch (_) {}
   }
 
   // helper to re-render file list quickly
