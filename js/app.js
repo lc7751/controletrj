@@ -1,9 +1,7 @@
 /* =====================================================================
  * app.js  —  NÚCLEO DA APLICAÇÃO (bootstrap + rotas + cache de dados)
  * ---------------------------------------------------------------------
- * - Verifica login; mostra a tela de login ou o painel.
- * - Monta a barra lateral e troca de página pelo hash da URL (#/...).
- * - Carrega tarefas + incidentes + cidades + config UMA vez e reaproveita.
+ * Versão ajustada (async-safe para TRJ.files, monitor robusto, boot espera TRJ.files)
  * ===================================================================== */
 (function (TRJ) {
   // defensivo: usar objetos vazios se módulos ainda não estiverem carregados
@@ -122,6 +120,13 @@
     } catch(_) {}
     if (App._timer) { clearInterval(App._timer); App._timer = null; }
     try { TRJ.auth && TRJ.auth.logout && TRJ.auth.logout(); } catch(_) {}
+    try {
+      if (TRJ.files) {
+        TRJ.files._monitorTimer = null;
+        TRJ.files.isMonitoring = false;
+        TRJ.files.monitorRunning = false;
+      }
+    } catch(_) {}
     location.hash = '#/dashboard';
     showLogin();
   }
@@ -176,16 +181,56 @@
     return o;
   }
 
-  // ---------------- DADOS (versão defensiva) ----------------
+  // ---------------- Monitor helper (robusto) ----------------
+  function ensureStartAutoMonitor() {
+    try {
+      if (!TRJ.files || typeof TRJ.files.startAutoMonitor !== 'function') return;
+      // evitar iniciar múltiplas instâncias: checar flags variadas
+      if (TRJ.files._monitorTimer || TRJ.files.isMonitoring || TRJ.files.monitorRunning) return;
+      var res;
+      try {
+        // startAutoMonitor pode aceitar callback/interval e pode retornar timer id
+        res = TRJ.files.startAutoMonitor ? TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000) : null;
+      } catch (e) {
+        try { res = TRJ.files.startAutoMonitor(); } catch (e2) { console.warn('startAutoMonitor erro', e2); }
+      }
+      // se retornou algo (timer id), guardar
+      if (res) TRJ.files._monitorTimer = res;
+      // marcar flag alternativa para prevenir reinícios
+      TRJ.files.isMonitoring = TRJ.files.isMonitoring || !!res;
+      console.info('ensureStartAutoMonitor: started, timer=', TRJ.files._monitorTimer || '(no timer returned)');
+    } catch (e) { console.warn('ensureStartAutoMonitor erro', e); }
+  }
+
+  // ---------------- DADOS (versão defensiva e async-safe) ----------------
   App.loadAll = async function () {
     try { if (U && typeof U.loading === 'function') U.loading(true); } catch(_) {}
 
     try {
-      // buscar rawTasks / rawInc de forma defensiva
+      // buscar rawTasks / rawInc de forma defensiva e async-aware
       var rawTasks = [];
       var rawInc = [];
-      try { rawTasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() : (TRJ.files && TRJ.files.rawTasks) || []; } catch (e) { console.warn('getTasks falhou', e); rawTasks = []; }
-      try { rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() : (TRJ.files && TRJ.files.rawInc) || []; } catch (e) { console.warn('getIncidents falhou', e); rawInc = []; }
+
+      try {
+        if (TRJ.files) {
+          if (typeof TRJ.files.getTasks === 'function') {
+            // aceitar tanto sync quanto Promise
+            rawTasks = await Promise.resolve(TRJ.files.getTasks());
+          } else if (Array.isArray(TRJ.files.rawTasks)) {
+            rawTasks = TRJ.files.rawTasks;
+          }
+        }
+      } catch (e) { console.warn('getTasks falhou', e); rawTasks = []; }
+
+      try {
+        if (TRJ.files) {
+          if (typeof TRJ.files.getIncidents === 'function') {
+            rawInc = await Promise.resolve(TRJ.files.getIncidents());
+          } else if (Array.isArray(TRJ.files.rawInc)) {
+            rawInc = TRJ.files.rawInc;
+          }
+        }
+      } catch (e) { console.warn('getIncidents falhou', e); rawInc = []; }
 
       // config externo (opcional)
       var config = {};
@@ -197,7 +242,7 @@
       var prazoMap = {};
       try { if (D && typeof D.montarPrazoMap === 'function') prazoMap = D.montarPrazoMap(prazoOverride(config)); else prazoMap = {}; } catch (e) { console.warn('Erro montarPrazoMap:', e); prazoMap = {}; }
 
-      // validMap via lookupCities (opcional)
+      // validMap via lookupCities (opcional, async-aware)
       var validMap = {};
       try {
         var ids = (Comp && typeof Comp.collectIds === 'function') ? Comp.collectIds(rawTasks || [], rawInc || []) : [];
@@ -208,11 +253,12 @@
 
       var now = new Date();
 
+      // enriquecer tasks/incidents (defensivo)
       var tasksEnriched = rawTasks || [];
-      try { if (Comp && typeof Comp.enrichTasks === 'function') tasksEnriched = Comp.enrichTasks(rawTasks || [], validMap, prazoMap, now); } catch (e) { console.warn('enrichTasks falhou:', e); tasksEnriched = rawTasks || []; }
+      try { if (Comp && typeof Comp.enrichTasks === 'function') tasksEnriched = Comp.enrichTasks(rawTasks || [], validMap, prazoMap, now); } catch (e) { console.warn('enrichTasks falhou', e); tasksEnriched = rawTasks || []; }
 
       var incidentsEnriched = rawInc || [];
-      try { if (Comp && typeof Comp.enrichIncidents === 'function') incidentsEnriched = Comp.enrichIncidents(rawInc || [], validMap); } catch (e) { console.warn('enrichIncidents falhou:', e); incidentsEnriched = rawInc || []; }
+      try { if (Comp && typeof Comp.enrichIncidents === 'function') incidentsEnriched = Comp.enrichIncidents(rawInc || [], validMap); } catch (e) { console.warn('enrichIncidents falhou', e); incidentsEnriched = rawInc || []; }
 
       // garantir estrutura mínima em App.data para evitar undefined nas páginas
       App.data = {
@@ -225,6 +271,9 @@
         incidentsEnriched: incidentsEnriched || [],
         loadedAt: new Date()
       };
+
+      console.info('App.loadAll: rawTasks=', (App.data.rawTasks||[]).length, ' rawInc=', (App.data.rawInc||[]).length);
+
       return App.data;
     } finally {
       try { if (U && typeof U.loading === 'function') U.loading(false); } catch(_) {}
@@ -236,12 +285,7 @@
       await App.loadAll();
       buildShell();
       render();
-      // iniciar monitor só se não estiver rodando
-      try {
-        if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function' && !TRJ.files._monitorTimer) {
-          TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000);
-        }
-      } catch (e) { console.warn('Erro ao iniciar monitor no refresh:', e); }
+      ensureStartAutoMonitor();
       try { U.toast('Dados atualizados.', 'ok'); } catch(_) {}
     } catch (e) {
       console.error('Erro em App.refresh:', e);
@@ -252,7 +296,7 @@
 
   // recarrega só incidentes (após upload/alteração de status) — agora da memória/navegador
   App.reloadIncidents = async function () {
-    var rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() : [];
+    var rawInc = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? await Promise.resolve(TRJ.files.getIncidents()) : (TRJ.files && TRJ.files.rawInc) || [];
     App.data = App.data || {};
     App.data.rawInc = rawInc;
     // garantir Comp disponível antes de enriquecer
@@ -431,12 +475,7 @@
       buildShell();
       render();
       // start monitor only if available and not already started
-      try {
-        if (TRJ.files && typeof TRJ.files.startAutoMonitor === 'function' && !TRJ.files._monitorTimer) {
-          try { TRJ.files.startAutoMonitor(function () { App.refresh(); }, 45000); }
-          catch (e) { try { TRJ.files.startAutoMonitor(); } catch(_) { console.warn('startAutoMonitor erro'); } }
-        }
-      } catch (e) { console.warn('Erro ao iniciar monitor no startApp:', e); }
+      try { ensureStartAutoMonitor(); } catch (e) { console.warn('Erro ao iniciar monitor no startApp:', e); }
     } catch (e) {
       // token expirado -> volta pro login
       if (/token/i.test((e && e.message) || '')) { doLogout(); showLogin(e.message); return; }
@@ -471,16 +510,18 @@
     // Se não tiver auth disponível, mostra login e retorna
     if (!TRJ.auth || !TRJ.auth.isLogged) { showLogin(); return; }
 
-    // se usuário já estiver logado, aguarda módulos (compute/pages) e inicia
+    // se usuário já estiver logado, aguarda módulos (compute/pages/files/ui) e inicia
     if (TRJ.auth.isLogged()) {
       var ready = await waitFor(function () {
-        return window.TRJ && TRJ.compute && typeof TRJ.compute.collectIds === 'function'
+        return window.TRJ
+          && TRJ.compute && typeof TRJ.compute.collectIds === 'function'
           && TRJ.pages && Object.keys(TRJ.pages).length > 0
-          && TRJ.ui && typeof TRJ.ui.h === 'function';
-      }, 100, 5000);
+          && TRJ.ui && typeof TRJ.ui.h === 'function'
+          && TRJ.files && (typeof TRJ.files.getTasks === 'function' || Array.isArray(TRJ.files.rawTasks));
+      }, 100, 8000);
 
       if (!ready) {
-        console.warn('Boot: módulos compute/pages não carregaram dentro do timeout. Tentando iniciar mesmo assim.');
+        console.warn('Boot: módulos compute/pages/files/ui não carregaram dentro do timeout. Tentando iniciar mesmo assim.');
       }
 
       try {
