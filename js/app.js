@@ -536,6 +536,41 @@
     }
   }
 
+// Patch: Esconder abas se não houver dados carregados
+(function() {
+  function updateSidebarVisibility() {
+    var hasTasks = false;
+    try {
+      var tasks = (TRJ.files && TRJ.files.getTasks) ? TRJ.files.getTasks() : [];
+      hasTasks = (tasks && tasks.length > 0);
+    } catch(e) {}
+
+    // Seleciona os links do menu (ajuste o seletor se necessário)
+    var navLinks = document.querySelectorAll('aside nav a, .sidebar a');
+    navLinks.forEach(function(link) {
+      var href = link.getAttribute('href');
+      // Não esconde "Importar" nem "Configurações"
+      if (href === '#/importar' || href === '#/configuracoes') {
+        link.style.display = 'flex';
+      } else {
+        link.style.display = hasTasks ? 'flex' : 'none';
+      }
+    });
+
+    // Se estiver em uma página proibida sem dados, volta para importar
+    var route = location.hash;
+    if (!hasTasks && route !== '#/importar' && route !== '#/configuracoes' && route !== '') {
+      location.hash = '#/importar';
+    }
+  }
+
+  // Executa sempre que os dados mudarem
+  document.addEventListener('trj:tasksLoaded', updateSidebarVisibility);
+  window.addEventListener('hashchange', updateSidebarVisibility);
+  // Executa no início
+  setTimeout(updateSidebarVisibility, 500);
+})();
+  
   // expõe listeners úteis para re-render quando tasks/incidents forem carregadas externamente
   document.removeEventListener('trj:tasksLoaded', render);
   document.addEventListener('trj:tasksLoaded', async function (e) {
