@@ -1,39 +1,44 @@
-/* Página: Visão Regional */
-(function (TRJ) {
+// js/pages/regional.js
+(function(){
+  if (!window.TRJ) window.TRJ = {};
   TRJ.pages = TRJ.pages || {};
-  var U = TRJ.ui, C = TRJ.constants, Comp = TRJ.compute;
 
-  TRJ.pages.regional = function (container, ctx) {
-    var data = ctx.data, app = ctx.app;
-    if (!data) { container.appendChild(U.h('div', { class: 'trj-card p-6', text: 'Sem dados.' })); return; }
-    var d = Comp.regionalPage(data.tasksEnriched);
+  TRJ.pages.regional = {
+    render: function(root) {
+      try {
+        var mount = root || document.getElementById('page') || document.body;
+        mount.innerHTML = '';
 
-    container.appendChild(U.pageHeader('Visão Regional', 'Backlog e aderência por região'));
+        var header = document.createElement('h3'); header.textContent = 'Por Região'; header.className = 'mb-3';
+        var card = document.createElement('div'); card.className = 'trj-card p-4';
 
-    var grid = U.h('div', { class: 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4' }, d.resumo.map(function (r) {
-      var cor = r.aderencia >= 90 ? C.CORES_TRJ.green : r.aderencia >= 70 ? C.CORES_TRJ.orange : C.CORES_TRJ.red;
-      return U.h('div', { class: 'trj-card p-5' }, [
-        U.h('div', { class: 'flex items-center justify-between mb-3' }, [
-          U.h('h3', { class: 'font-bold', style: { color: 'var(--trj-primary)' }, text: r.label }),
-          U.h('span', { class: 'trj-badge', style: { color: cor, background: 'rgba(255,255,255,.06)' }, text: r.aderencia + '%' })
-        ]),
-        U.h('div', { class: 'grid grid-cols-2 gap-3 text-sm' }, [
-          metric('Total', U.fmtNum(r.total)),
-          metric('Backlog', U.fmtNum(r.backlog), C.CORES_TRJ.orange, function () { app.openDrillTasks({ tipo: 'regiaoBacklog', arg: r.regiao }, {}, 'Backlog: ' + r.label); }),
-          metric('Dentro SLA', U.fmtNum(r.dentroSla), C.CORES_TRJ.green),
-          metric('Fora SLA', U.fmtNum(r.foraSla), C.CORES_TRJ.red, function () { app.openDrillTasks({ tipo: 'regiaoSla', arg: r.regiao + '|fora' }, {}, 'Fora SLA: ' + r.label); })
-        ])
-      ]);
-    }));
-    container.appendChild(grid);
+        var tasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() || [] : JSON.parse(localStorage.getItem('trj_tasks')||'[]');
+
+        var summary = document.createElement('div');
+        var regions = {};
+        tasks.forEach(function(t){
+          var r = (t._raw && (t._raw.region || t._raw.REGION)) || t.region || 'N/D';
+          regions[r] = (regions[r] || 0) + 1;
+        });
+
+        var list = document.createElement('div'); list.style.marginTop='8px';
+        Object.keys(regions).slice(0,50).forEach(function(r){
+          var row = document.createElement('div'); row.className='trj-row';
+          row.textContent = r + ': ' + regions[r];
+          list.appendChild(row);
+        });
+
+        summary.innerHTML = '<strong>Regiões encontradas:</strong> ' + Object.keys(regions).length;
+        card.appendChild(summary);
+        card.appendChild(list);
+        mount.appendChild(header);
+        mount.appendChild(card);
+
+        if (!TRJ.pages.regional._bound) {
+          document.addEventListener('trj:tasksLoaded', function(){ setTimeout(function(){ TRJ.pages.regional.render(mount); }, 200); });
+          TRJ.pages.regional._bound = true;
+        }
+      } catch(e){ console.error('regional render error', e); }
+    }
   };
-
-  function metric(label, value, cor, onClick) {
-    var box = TRJ.ui.h('div', { class: onClick ? 'cursor-pointer' : '' }, [
-      TRJ.ui.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: label }),
-      TRJ.ui.h('div', { class: 'font-bold text-lg', style: { color: cor || 'var(--trj-fg)' }, text: value })
-    ]);
-    if (onClick) box.addEventListener('click', onClick);
-    return box;
-  }
-})(window.TRJ = window.TRJ || {});
+})();
