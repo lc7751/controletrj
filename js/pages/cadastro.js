@@ -1,4 +1,4 @@
-// cadastro.js - formulário de cadastro de sites (modificado)
+// cadastro.js - formulário de cadastro de sites (modificado e corrigido)
 (function (TRJ) {
   TRJ = TRJ || {};
   var U = TRJ.ui || {};
@@ -13,7 +13,6 @@
     { label: 'ES - Merielem', value: 'MERIELEM_ES' }
   ];
 
-  // helper: cria elemento via TRJ.ui.h quando disponível, senão cria DOM manualmente
   function h(tag, props, children) {
     if (U && typeof U.h === 'function') return U.h(tag, props, children);
     var el = document.createElement(tag);
@@ -39,6 +38,20 @@
   // constrói o formulário dentro do elemento root (DOM element)
   function buildForm(root) {
     if (!root) return;
+    // prevenir duplicação: se já houver container, reutiliza
+    var existing = root.querySelector('#cadastro-container');
+    if (existing) {
+      // garante que o conteúdo está correto (re-render)
+      existing.innerHTML = '';
+      root = existing;
+    } else {
+      // criar container
+      var container = document.createElement('div');
+      container.id = 'cadastro-container';
+      root.appendChild(container);
+      root = container;
+    }
+
     // limpar conteúdo anterior
     root.innerHTML = '';
 
@@ -111,7 +124,11 @@
 
     function setResult(txt, type) {
       result.textContent = txt || '';
-      if (U && typeof U.toast === 'function' && type) U.toast(txt, type);
+      if (U && typeof U.toast === 'function' && type) {
+        // normalizar tipos: 'ok' -> 'success'
+        var t = (type === 'ok') ? 'success' : (type === 'err' ? 'error' : type);
+        U.toast(txt, t);
+      }
     }
 
     // salvar
@@ -130,13 +147,14 @@
       }
 
       btnSalvar.disabled = true;
+      var prevText = btnSalvar.textContent;
       btnSalvar.textContent = 'Salvando...';
 
       // função salvar via API se disponível
       var savePromise;
       if (window.TRJ && TRJ.api && typeof TRJ.api.saveSite === 'function') {
         try {
-          savePromise = TRJ.api.saveSite(data);
+          savePromise = Promise.resolve(TRJ.api.saveSite(data));
         } catch (e) {
           savePromise = Promise.reject(e);
         }
@@ -154,16 +172,27 @@
 
       savePromise.then(function (res) {
         setResult('Site salvo com sucesso.', 'ok');
-        // disparar evento para listeners externos
+
+        // disparar evento(s) para listeners externos (compatibilidade)
         try {
           document.dispatchEvent(new CustomEvent('trj:siteSaved', { detail: data }));
         } catch (e) { /* ignore */ }
+        try {
+          document.dispatchEvent(new CustomEvent('trj:siteAdded', { detail: data }));
+        } catch (e) { /* ignore */ }
+
+        // limpar form
+        q('cad-bairro').value = '';
+        q('cad-endid').value = '';
+        q('cad-site').value = '';
+        q('cad-resp').selectedIndex = 0;
+
       }).catch(function (err) {
         console.error('Erro ao salvar site:', err);
         setResult('Erro ao salvar: ' + ((err && err.message) || err), 'err');
       }).finally(function () {
         btnSalvar.disabled = false;
-        btnSalvar.textContent = 'Salvar';
+        btnSalvar.textContent = prevText;
       });
     });
 
@@ -188,11 +217,16 @@
   TRJ.pages = TRJ.pages || {};
   TRJ.pages.cadastro = {
     render: function (root, opts) {
-      // root pode ser a div #page; criar um container interno para o formulário
-      var container = document.createElement('div');
-      container.id = 'cadastro-container';
-      root.appendChild(container);
-      buildForm(container);
+      // root pode ser null, id string, ou elemento
+      var mount = root;
+      if (!mount) mount = document.getElementById('page') || document.body;
+      if (typeof mount === 'string') {
+        var el = document.getElementById(mount) || document.querySelector(mount);
+        if (el) mount = el;
+      }
+      if (!mount) return;
+      // garantir que o mount está limpo de conteúdos antigos do cadastro
+      buildForm(mount);
     }
   };
 
