@@ -1,113 +1,58 @@
-/* Página: Dashboard */
-(function (TRJ) {
+// js/pages/dashboard.js
+(function(){
+  if (!window.TRJ) window.TRJ = {};
   TRJ.pages = TRJ.pages || {};
-  var U = TRJ.ui, C = TRJ.constants, Comp = TRJ.compute;
-  var state = { regiao: 'TODAS', prioridade: 'TODAS' };
 
-  TRJ.pages.dashboard = function (container, ctx) {
-    var data = ctx.data, app = ctx.app;
-    if (!data) { container.appendChild(U.h('div', { class: 'trj-card p-6', text: 'Sem dados carregados.' })); return; }
-    var d = Comp.dashboard(data.tasksEnriched, data.incidentsEnriched, state);
-    var f = state;
+  TRJ.pages.dashboard = {
+    render: function(root) {
+      try {
+        var mount = root || document.getElementById('page') || document.getElementById('importar-root') || document.body;
+        mount.innerHTML = '';
 
-    // ---- filtros + ações ----
-    var selReg = U.h('select', { class: 'trj-select', style: { width: 'auto' }, onchange: function () { state.regiao = this.value; app.render(); } },
-      [U.h('option', { value: 'TODAS', text: 'Todas as regiões' })].concat(C.REGIOES.map(function (r) {
-        return U.h('option', { value: r, text: C.REGIAO_LABELS[r] || r, selected: f.regiao === r ? 'selected' : null });
-      })));
-    var selPri = U.h('select', { class: 'trj-select', style: { width: 'auto' }, onchange: function () { state.prioridade = this.value; app.render(); } },
-      [U.h('option', { value: 'TODAS', text: 'Todas as prioridades' })].concat(C.PRIORIDADES.map(function (p) {
-        return U.h('option', { value: p, text: p, selected: f.prioridade === p ? 'selected' : null });
-      })));
-    var btnWa = U.h('button', { class: 'trj-btn trj-btn-ghost', text: '📱 Copiar resumo', onclick: function () { copiarResumo(d); } });
-    var btnRef = U.h('button', { class: 'trj-btn trj-btn-primary', html: app.icon('refresh') + ' Atualizar', onclick: function () { app.refresh(); } });
-    var right = U.h('div', { class: 'flex items-center gap-2 flex-wrap' }, [selReg, selPri, btnWa, btnRef]);
-    container.appendChild(U.pageHeader('Dashboard Operacional', 'Atualizado em ' + new Date(d.atualizadoEm).toLocaleString('pt-BR'), right));
+        var header = document.createElement('h3'); header.textContent = 'Dashboard'; header.className = 'mb-3';
+        var card = document.createElement('div'); card.className = 'trj-card p-4';
 
-    // ---- KPIs ----
-    var K = d.kpis;
-    var kpiDefs = [
-      { label: 'Fora do SLA', value: U.fmtNum(K.foraSla), cor: C.CORES_TRJ.red, spec: { tipo: 'foraSla' }, t: 'Backlog fora do SLA' },
-      { label: 'Backlog Total', value: U.fmtNum(K.backlogTotal), cor: C.CORES_TRJ.orange, spec: { tipo: 'backlogTotal' }, t: 'Backlog total' },
-      { label: 'Backlog Indefinido', value: U.fmtNum(K.backlogIndef), cor: C.CORES_TRJ.red, spec: { tipo: 'backlogIndef' }, t: 'Backlog sem SLA definido' },
-      { label: 'Preditiva', value: U.fmtNum(K.preditiva), cor: C.CORES_TRJ.orange, spec: { tipo: 'preditiva' }, t: 'Atividades preditivas' },
-      { label: 'Produtividade', value: U.fmtNum(K.produtividade), cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, t: 'Concluídas' },
-      { label: 'SLA Geral', value: U.fmtPct(K.slaGeral), cor: C.CORES_TRJ.green, spec: null, t: '' }
-    ];
-    var kpiGrid = U.h('div', { class: 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5' }, kpiDefs.map(function (k) {
-      return U.kpiCard({ label: k.label, value: k.value, cor: k.cor, onClick: k.spec ? function () { app.openDrillTasks(k.spec, f, k.t); } : null });
-    }));
-    container.appendChild(kpiGrid);
+        var tasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() || [] : JSON.parse(localStorage.getItem('trj_tasks')||'[]');
+        var incidents = (TRJ.files && typeof TRJ.files.getIncidents === 'function') ? TRJ.files.getIncidents() || [] : JSON.parse(localStorage.getItem('trj_incidentes')||'[]');
 
-    // ---- charts grid ----
-    var aging = U.chartCard('Aging do Backlog');
-    var venc = U.chartCard('Prazos a Vencer');
-    var sites = U.chartCard('Sites Fora por Região');
-    var slaReg = U.chartCard('SLA por Região');
-    var manu = U.chartCard('Atividades Manuais');
-    var prod = U.chartCard('Produtividade Encerramento');
-    var grid = U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5' }, [aging.card, venc.card, sites.card, slaReg.card, manu.card, prod.card]);
-    container.appendChild(grid);
+        var summary = document.createElement('div');
+        summary.innerHTML = '<strong>Tarefas:</strong> ' + (tasks.length || 0) + ' &nbsp;&nbsp; <strong>Incidentes:</strong> ' + (incidents.length || 0);
 
-    // ---- top cidades ----
-    container.appendChild(buildTopCidades(d.topCidades, app));
+        var p = document.createElement('p');
+        p.style.margin = '8px 0';
+        p.textContent = 'Visão geral rápida. Clique em "Detalhar" para abrir páginas específicas.';
 
-    // ---- desenha charts (canvas já no DOM) ----
-    U.barChart(aging.canvas, d.aging, { onBar: function (i) { app.openDrillTasks({ tipo: 'aging', arg: i }, f, 'Aging: ' + d.aging[i].label); } });
-    U.hbarChart(venc.canvas, d.prazosVencimento, { onBar: function (i) { app.openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A vencer: ' + d.prazosVencimento[i].label); } });
-    U.barChart(sites.canvas, d.sitesForaRegiao.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), { onBar: function (i) { app.openDrillIncidents({ tipo: 'sitesFora', arg: d.sitesForaRegiao[i].regiao }, 'Sites fora: ' + d.sitesForaRegiao[i].label); } });
-    U.stackedChart(slaReg.canvas, d.slaPorRegiao, { onSeg: function (i, ds) { var r = d.slaPorRegiao[i]; app.openDrillTasks({ tipo: 'slaRegiao', arg: r.regiao + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'SLA ' + r.label); } });
-    U.donutChart(manu.canvas, d.atividadesManuais, { cores: C.DONUT_CORES, onSlice: function (i) { var nm = d.atividadesManuais[i].name; app.openDrillTasks({ tipo: 'atividades', arg: argAtiv(nm) }, f, nm); } });
-    U.stackedChart(prod.canvas, d.produtividade.map(function (p) { return { label: p.categoria, dentro: p.dentro, fora: p.fora }; }), { onSeg: function (i, ds) { var cat = d.produtividade[i].categoria; app.openDrillTasks({ tipo: 'produtividadeCat', arg: cat + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'Produtividade ' + cat); } });
+        var btns = document.createElement('div');
+        btns.style.marginTop = '10px';
+        var b1 = document.createElement('button'); b1.className='trj-btn clickable'; b1.textContent='Recarregar'; b1.onclick = function(){ try{ if(TRJ.app && TRJ.app.refresh) TRJ.app.refresh(); } catch(_){ } TRJ.pages.dashboard.render(mount); };
+        btns.appendChild(b1);
+
+        // mini list of top 10 incidents
+        var list = document.createElement('div'); list.style.marginTop='12px';
+        list.innerHTML = '<strong>Últimos incidentes (top 10):</strong>';
+        var ul = document.createElement('div'); ul.style.marginTop='8px';
+        (incidents.slice(0,10) || []).forEach(function(inc){
+          var div = document.createElement('div');
+          div.className = 'trj-row';
+          div.textContent = (inc.site || inc._raw && (inc._raw.SITE || inc._raw.Site) || '') + ' — ' + (inc.motivo || inc._raw && inc._raw.MOTIVO || '');
+          ul.appendChild(div);
+        });
+        list.appendChild(ul);
+
+        card.appendChild(summary);
+        card.appendChild(p);
+        card.appendChild(btns);
+        card.appendChild(list);
+        mount.appendChild(header);
+        mount.appendChild(card);
+
+        // subscribe updates
+        if (!TRJ.pages.dashboard._bound) {
+          document.addEventListener('trj:tasksLoaded', function(){ setTimeout(function(){ TRJ.pages.dashboard.render(mount); }, 200); });
+          document.addEventListener('trj:incidentsLoaded', function(){ setTimeout(function(){ TRJ.pages.dashboard.render(mount); }, 200); });
+          TRJ.pages.dashboard._bound = true;
+        }
+      } catch(e) { console.error('dashboard render error', e); }
+    }
   };
-
-  function argAtiv(name) {
-    if (/WO/i.test(name)) return 'wo';
-    if (/Prevent/i.test(name)) return 'prev';
-    if (/Conjunta/i.test(name)) return 'conj';
-    return 'outras';
-  }
-
-  function buildTopCidades(tc, app) {
-    var anfList = U.h('div', { class: 'flex flex-wrap gap-2 mb-4' }, tc.porAnf.map(function (a) {
-      return U.h('button', { class: 'trj-btn trj-btn-ghost', style: { fontSize: '12px' }, onclick: function () { app.openDrillIncidents({ tipo: 'anf', arg: a.anfRaw }, a.anf); },
-        html: '<b>' + U.esc(a.anf) + '</b> &nbsp;<span style="color:var(--trj-primary)">' + a.total + '</span> <span style="color:var(--trj-muted)">(' + a.pct + '%)</span>' });
-    }));
-    var maxBars = tc.cidades.slice(0, 15);
-    var bars = U.h('div', { class: 'flex flex-col gap-2' }, maxBars.map(function (c) {
-      return U.h('div', { class: 'cursor-pointer', onclick: function () { app.openDrillIncidents({ tipo: 'cidade', arg: c.cidade }, c.cidade); } }, [
-        U.h('div', { class: 'flex justify-between text-xs mb-1' }, [U.h('span', { text: c.cidade }), U.h('span', { style: { color: 'var(--trj-primary)' }, text: c.total })]),
-        U.h('div', { style: { background: 'rgba(255,255,255,.06)', borderRadius: '6px', height: '8px' } }, U.h('div', { style: { background: 'var(--trj-primary)', width: c.pct + '%', height: '8px', borderRadius: '6px' } }))
-      ]);
-    }));
-    var total = U.h('div', { class: 'trj-card p-5 flex flex-col items-center justify-center', style: { minWidth: '180px' } }, [
-      U.h('div', { class: 'text-xs uppercase', style: { color: 'var(--trj-muted)' }, text: 'Total Sites Fora' }),
-      U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1' }, text: U.fmtNum(tc.totalSitesFora) })
-    ]);
-    return U.h('div', { class: 'trj-card p-4' }, [
-      U.h('h3', { class: 'text-sm font-bold mb-3', text: 'Top Cidades — Sites Fora' }),
-      U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4' }, [
-        total,
-        U.h('div', { class: 'lg:col-span-2' }, [anfList, bars])
-      ])
-    ]);
-  }
-
-  function copiarResumo(d) {
-    var K = d.kpis;
-    var linhas = [
-      '*Controle TRJ — Resumo*',
-      'Fora do SLA: ' + K.foraSla,
-      'Backlog Total: ' + K.backlogTotal,
-      'Backlog Indef.: ' + K.backlogIndef,
-      'Preditiva: ' + K.preditiva,
-      'Concluídas: ' + K.produtividade,
-      'SLA Geral: ' + K.slaGeral + '%',
-      'Sites fora: ' + d.topCidades.totalSitesFora,
-      'Atualizado: ' + new Date(d.atualizadoEm).toLocaleString('pt-BR')
-    ];
-    var txt = linhas.join('\n');
-    if (navigator.clipboard) navigator.clipboard.writeText(txt).then(function () { U.toast('Resumo copiado!', 'ok'); }, function () { U.toast('Não foi possível copiar.', 'err'); });
-    else U.toast('Cópia não suportada neste navegador.', 'err');
-  }
-})(window.TRJ = window.TRJ || {});
+})();
