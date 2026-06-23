@@ -1,40 +1,23 @@
-/* Página: Configurações (prazos de SLA) */
-(function (TRJ) {
+// js/pages/configuracoes.js
+(function(){
+  if (!window.TRJ) window.TRJ = {};
   TRJ.pages = TRJ.pages || {};
-  var U = TRJ.ui, C = TRJ.constants;
 
-  TRJ.pages.configuracoes = function (container, ctx) {
-    var data = ctx.data, app = ctx.app;
-    container.appendChild(U.pageHeader('Configurações', 'Prazos de SLA por prioridade (em horas)'));
-
-    var inputs = {};
-    var rows = C.PRIORIDADES.map(function (p) {
-      var val = (data && data.prazoMap && data.prazoMap[p]) != null ? data.prazoMap[p] : C.SLA_PADRAO_HORAS[p];
-      var inp = U.h('input', { class: 'trj-input', type: 'number', min: '0', step: '0.5', value: val, style: { width: '120px' } });
-      inputs[p] = inp;
-      return U.h('div', { class: 'flex items-center gap-4' }, [
-        U.h('label', { class: 'font-semibold', style: { width: '60px', color: 'var(--trj-primary)' }, text: p }),
-        inp, U.h('span', { class: 'text-sm', style: { color: 'var(--trj-muted)' }, text: 'horas' })
-      ]);
-    });
-
-    var btn = U.h('button', { class: 'trj-btn trj-btn-primary', text: 'Salvar prazos', onclick: async function () {
-      var cfg = {};
-      C.PRIORIDADES.forEach(function (p) { cfg['sla_' + p] = String(inputs[p].value || C.SLA_PADRAO_HORAS[p]); });
+  TRJ.pages.configuracoes = {
+    render: function(root) {
       try {
-        U.loading(true);
-        await TRJ.api.setConfig(cfg);
-        U.toast('Prazos salvos. Recarregando dados...', 'ok');
-        await app.loadAll();
-        app.render();
-      } catch (e) { U.toast(e.message || 'Erro ao salvar.', 'err'); }
-      finally { U.loading(false); }
-    } });
+        var mount = root || document.getElementById('page') || document.body;
+        mount.innerHTML = '';
+        var header = document.createElement('h3'); header.textContent = 'Configurações'; header.className='mb-3';
+        var card = document.createElement('div'); card.className='trj-card p-4';
 
-    container.appendChild(U.h('div', { class: 'trj-card p-6 flex flex-col gap-4', style: { maxWidth: '460px' } }, rows.concat([U.h('div', { class: 'pt-2' }, btn)])));
+        var content = document.createElement('div');
+        content.innerHTML = '<p>Opções de configuração do sistema. Ajuste conforme necessário.</p>';
 
-    container.appendChild(U.h('div', { class: 'trj-card p-4 mt-4 text-sm', style: { maxWidth: '640px', color: 'var(--trj-muted)' } }, [
-      U.h('p', { html: '<b style="color:var(--trj-fg)">Como funciona:</b> os prazos definem o vencimento do SLA quando a plataforma não informa uma data específica. Após salvar, o cálculo é refeito automaticamente.' })
-    ]));
+        card.appendChild(content);
+        mount.appendChild(header);
+        mount.appendChild(card);
+      } catch(e){ console.error('configuracoes render error', e); }
+    }
   };
-})(window.TRJ = window.TRJ || {});
+})();
