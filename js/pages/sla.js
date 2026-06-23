@@ -1,4 +1,4 @@
-// js/pages/sla.js
+// js/pages/sla.js (Atualizado com Barras Empilhadas)
 (function(){
   if (!window.TRJ) window.TRJ = {};
   TRJ.pages = TRJ.pages || {};
@@ -9,34 +9,53 @@
         var mount = root || document.getElementById('page') || document.body;
         mount.innerHTML = '';
 
-        var header = document.createElement('h3'); header.textContent = 'SLA / Aderência'; header.className = 'mb-3';
-        var card = document.createElement('div'); card.className = 'trj-card p-4';
+        var h = document.createElement('h3'); h.textContent = 'Aderência por Prioridade (%)'; h.className='mb-3';
+        var card = document.createElement('div'); card.className = 'trj-card p-4 clickable'; // .clickable aqui!
 
-        var tasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() || [] : JSON.parse(localStorage.getItem('trj_tasks')||'[]');
+        var tasks = (TRJ.files && TRJ.files.getTasks) ? TRJ.files.getTasks() : [];
+        
+        // Agrupar por prioridade
+        var prios = ["P1", "P2", "P3", "P4"];
+        var dataSla = [0, 0, 0, 0];
+        var dataFora = [0, 0, 0, 0];
 
-        // compute simple SLA summary: fraction with withinSLA flag if present, else default unknown
-        var within = tasks.filter(function(t){ return t.withinSLA === true || t.within_sla === true || t.aderencia === 'within'; }).length;
-        var total = tasks.length || 0;
-        var outside = total - within;
-        var pct = total ? Math.round((within/total)*100) : 0;
+        tasks.forEach(function(t) {
+          var p = (t._raw && (t._raw.PRIORIDADE || t._raw.Prio)) || "P4";
+          var idx = prios.indexOf(p);
+          if (idx === -1) idx = 3;
+          
+          if (t.withinSLA === true) dataSla[idx]++;
+          else dataFora[idx]++;
+        });
 
-        var summary = document.createElement('div');
-        summary.innerHTML = '<strong>Total tarefas:</strong> ' + total + ' &nbsp;&nbsp; <strong>Dentro SLA:</strong> ' + within + ' &nbsp;&nbsp; <strong>Fora SLA:</strong> ' + outside + ' &nbsp;&nbsp; <strong>Pct:</strong> ' + pct + '%';
+        card.innerHTML = '<canvas id="chart-sla-priority" style="max-height:300px;"></canvas>';
+        mount.appendChild(h); mount.appendChild(card);
 
-        // placeholder chart area (consumir Chart.js later)
-        var chartWrap = document.createElement('div'); chartWrap.style.marginTop='12px';
-        chartWrap.innerHTML = '<div style="height:180px;display:flex;align-items:center;justify-content:center;color:var(--trj-muted);">Gráfico Aderência por Prioridade (placeholder)</div>';
+        // Inicializar Chart.js (Barras Empilhadas)
+        setTimeout(function() {
+          var ctx = document.getElementById('chart-sla-priority');
+          if (!ctx || !window.Chart) return;
+          new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: prios,
+              datasets: [
+                { label: 'Dentro SLA', data: dataSla, backgroundColor: '#ff8c00' },
+                { label: 'Fora SLA', data: dataFora, backgroundColor: '#33333a' }
+              ]
+            },
+            options: {
+              responsive: true,
+              plugins: { legend: { labels: { color: '#8a8a93' } } },
+              scales: {
+                x: { stacked: true, grid: { display: false }, ticks: { color: '#8a8a93' } },
+                y: { stacked: true, grid: { color: '#1a1a24' }, ticks: { color: '#8a8a93' } }
+              }
+            }
+          });
+        }, 100);
 
-        card.appendChild(summary);
-        card.appendChild(chartWrap);
-        mount.appendChild(header);
-        mount.appendChild(card);
-
-        if (!TRJ.pages.sla._bound) {
-          document.addEventListener('trj:tasksLoaded', function(){ setTimeout(function(){ TRJ.pages.sla.render(mount); }, 200); });
-          TRJ.pages.sla._bound = true;
-        }
-      } catch(e){ console.error('sla render error', e); }
+      } catch(e) { console.error(e); }
     }
   };
 })();
