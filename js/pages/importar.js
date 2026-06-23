@@ -1,4 +1,4 @@
-// js/pages/importar.js - Importador e integração com TRJ.files (corrigido para evitar loop infinito)
+// js/pages/importar.js - Importador e integração com TRJ.files (ajustado)
 (function () {
   'use strict';
 
@@ -38,17 +38,12 @@
   async function parseFileHandle(handle) {
     try {
       // Aceita tanto FileSystemFileHandle (com getFile) quanto File objetos
-      const file = (typeof handle.getFile === 'function') ? await handle.getFile() : (handle instanceof File ? handle : null);
+      const file = (handle && typeof handle.getFile === 'function') ? await handle.getFile() : (handle instanceof File ? handle : null);
       const name = (file && file.name) ? file.name : (handle && handle.name) ? handle.name : ('untitled_' + Date.now());
       const ext = extFromName(name);
 
       // XLSX / XLS / XLSM usando XLSX global se disponível
-      if (window.XLSX && ['xlsx', 'xls', 'xlsm', 'csv'].includes(ext)) {
-        if (ext === 'csv') {
-          // parse CSV text
-          const text = await (file ? file.text() : '');
-          return parseTextToRows(name, text);
-        }
+      if (window.XLSX && ['xlsx', 'xls', 'xlsm'].includes(ext)) {
         const ab = await file.arrayBuffer();
         const wb = XLSX.read(ab, { type: 'array' });
         const sheetName = wb.SheetNames && wb.SheetNames[0];
@@ -60,8 +55,14 @@
         return { name: name, headers: headers, rows: rows, sheetName: sheetName || '' };
       }
 
-      // Text formats (csv, txt, tsv, html)
-      if (['csv', 'txt', 'tsv', 'html', 'htm'].includes(ext) || !ext) {
+      // CSV handled by XLSX if XLSX present and ext === 'csv'
+      if (ext === 'csv') {
+        const text = await (file ? file.text() : '');
+        return parseTextToRows(name, text, 'csv');
+      }
+
+      // Text formats (txt, tsv, html) or unknown -> try parse as text
+      if (['txt', 'tsv', 'html', 'htm'].includes(ext) || !ext) {
         const text = await (file ? file.text() : '');
         return parseTextToRows(name, text, ext);
       }
@@ -87,7 +88,6 @@
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
     // HTML: extrair tabela se existir
     if (ext === 'html' || ext === 'htm' || text.trim().startsWith('<')) {
-      // tenta extrair primeira <table>
       try {
         const parser = new DOMParser();
         const doc = parser.parseFromString(text, 'text/html');
@@ -124,15 +124,14 @@
     const headerStr = headers.join('|');
 
     // Palavras-chave que indicam incidentes/sites fora
-    const incidentKeywords = ['fora', 'incident', 'incidente', 'site fora', 'sites fora', 'outage', 'fora de', 'down', 'fora'];
-    const taskKeywords = ['prazo','prioridade','sla','duração','endereço','end_id','site','ne','cidade','estado'];
+    const incidentKeywords = ['fora', 'incident', 'incidente', 'site fora', 'sites fora', 'outage', 'fora de', 'down', 'ocorr', 'motivo'];
+    const taskKeywords = ['prazo','prioridade','sla','duração','duracao','endereço','endereco','end_id','site','ne','cidade','estado','atividade'];
 
     let scoreInc = incidentKeywords.reduce((s, k) => s + (name.indexOf(k) >= 0 ? 2 : 0) + (headerStr.indexOf(k) >= 0 ? 2 : 0), 0);
     let scoreTask = taskKeywords.reduce((s, k) => s + (name.indexOf(k) >= 0 ? 1 : 0) + (headerStr.indexOf(k) >= 0 ? 1 : 0), 0);
 
     // if ambiguous, use header presence
     if (scoreInc === 0 && scoreTask === 0) {
-      // se header contém 'incidente' ou 'motivo' ou 'inicio' => incident
       if (headerStr.match(/incid|motivo|motivos|ocorrido|ocorreu|inicio|fim|horario|hora/)) scoreInc += 2;
       if (headerStr.match(/priorid|sla|prazo|durac|dur.|enderec|end_id|cidade|estado/)) scoreTask += 2;
     }
@@ -164,14 +163,17 @@
   // Normaliza e cria estrutura de task mínima (ajuste conforme schema real)
   function mapObjectsToTasks(objs) {
     return objs.map(o => {
-      // heurística: procurar campos conhecidos
       const norm = {};
       norm._raw = o;
-      norm.site = o.site || o.SITE || o['Site'] || o['END_ID'] || o.end_id || o['END_ID'] || o.endereco || o.endereço || o['ENDERECO'] || null;
-      norm.prioridade = o.prioridade || o.PRIORIDADE || o.PRI || null;
-      norm.prazo_h = o.prazo || o.prazo_h || o['Prazo (h)'] || null;
-      norm.status = o.status || o.Status || o.STATUS || null;
-      norm.cidade = o.cidade || o.CIDADE || null;
+      // tenta diversos nomes comuns (case-sensitive keys as provided by parser)
+      norm.end_id = o['END_ID'] || o.end_id || o['End_Id'] || o['End ID'] || o['Endereco ID'] || o['ENDERECO'] || o.endereco || o['endereço'] || o['ENDEREÇO'] || null;
+      norm.site = o['SITE'] || o.site || o['Site'] || null;
+      norm.prioridade = o['PRIORIDADE'] || o.prioridade || o['Prioridade'] || null;
+      norm.prazo_h = o['Prazo (h)'] || o.prazo || o.prazo_h || null;
+      norm.status = o['STATUS'] || o.status || null;
+      norm.cidade = o['CIDADE'] || o.cidade || null;
+      norm.bairro = o['Bairro'] || o.bairro || null;
+      norm.cm = o['CM'] || o.cm || null;
       // adiciona timestamp de importação
       norm.importedAt = new Date().toISOString();
       return norm;
@@ -183,10 +185,11 @@
     return objs.map(o => {
       const norm = {};
       norm._raw = o;
-      norm.site = o.site || o.SITE || o['Site'] || o['END_ID'] || o.end_id || o.endereco || o.endereço || null;
-      norm.motivo = o.motivo || o.MOTIVO || o.reason || null;
-      norm.inicio = o.inicio || o.INICIO || o.data || o.DATA || null;
-      norm.fim = o.fim || o.FIM || o['end time'] || null;
+      norm.end_id = o['END_ID'] || o.end_id || o['End_Id'] || o['End ID'] || o.endereco || o['endereço'] || null;
+      norm.site = o['SITE'] || o.site || o['Site'] || null;
+      norm.motivo = o['motivo'] || o.MOTIVO || o['Motivo'] || o['reason'] || null;
+      norm.inicio = o['inicio'] || o.INICIO || o['data'] || o['DATA'] || null;
+      norm.fim = o['fim'] || o.FIM || o['end time'] || null;
       norm.importedAt = new Date().toISOString();
       return norm;
     });
@@ -210,23 +213,28 @@
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         // it pode ser { name, handle } ou um FileSystemHandle/ File
-        const handle = it.handle || it;
-        const parsed = await parseFileHandle(handle);
-        if (!parsed || !parsed.rows || parsed.rows.length === 0) {
-          log('arquivo vazio ou não legível:', parsed.name);
+        const handle = (it && it.handle) ? it.handle : it;
+        try {
+          const parsed = await parseFileHandle(handle);
+          if (!parsed || !parsed.rows || parsed.rows.length === 0) {
+            log('arquivo vazio ou não legível:', parsed ? parsed.name : handle && handle.name);
+            continue;
+          }
+          // classificar
+          const kind = classifyParsed(parsed);
+          const objs = convertRowsToObjects(parsed);
+          if (kind === 'incident') {
+            const incs = mapObjectsToIncidents(objs);
+            allIncidents.push.apply(allIncidents, incs);
+            log('classificado como incidentes:', parsed.name, incs.length);
+          } else {
+            const tasks = mapObjectsToTasks(objs);
+            allTasks.push.apply(allTasks, tasks);
+            log('classificado como tasks:', parsed.name, tasks.length);
+          }
+        } catch (e) {
+          warn('Falha ao processar arquivo (continua com próximos):', (it && it.name) || (it && it.handle && it.handle.name), e);
           continue;
-        }
-        // classificar
-        const kind = classifyParsed(parsed);
-        const objs = convertRowsToObjects(parsed);
-        if (kind === 'incident') {
-          const incs = mapObjectsToIncidents(objs);
-          allIncidents.push.apply(allIncidents, incs);
-          log('classificado como incidentes:', parsed.name, incs.length);
-        } else {
-          const tasks = mapObjectsToTasks(objs);
-          allTasks.push.apply(allTasks, tasks);
-          log('classificado como tasks:', parsed.name, tasks.length);
         }
       }
 
@@ -344,7 +352,12 @@
 
   // Render HTML da página (injetável)
   function renderHtml() {
-    const statusText = (TRJ && TRJ.files && typeof TRJ.files.hasTasks === 'function' && TRJ.files.hasTasks()) || localStorage.getItem('trj_tasks') ? 'Dados carregados' : 'Sem dados';
+    let hasTasks = false;
+    try {
+      hasTasks = (TRJ && TRJ.files && typeof TRJ.files.getTasks === 'function') ? (TRJ.files.getTasks() || []).length > 0 : !!localStorage.getItem('trj_tasks');
+    } catch (_) { hasTasks = !!localStorage.getItem('trj_tasks'); }
+    const statusText = hasTasks ? 'Dados carregados' : 'Sem dados';
+
     return `
       <section data-page="importar" id="importar" class="page page-importar" style="padding:20px; max-width:1100px; margin:0 auto;">
         <div style="display:flex; gap:18px; align-items:center; justify-content:space-between; margin-bottom:12px;">
@@ -363,7 +376,7 @@
             <p style="margin:0 0 10px 0; color:var(--trj-muted); font-size:13px;">Você pode carregar XLSX/CSV ou conectar uma pasta para monitoramento automático.</p>
             <div style="display:flex; gap:8px; align-items:center;">
               <button class="trj-btn" data-action="choose-file">Escolher arquivo</button>
-              <input type="file" accept=".csv,.xlsx,.xls" data-action="file-input" style="display:none;" />
+              <input type="file" accept=".csv,.xlsx,.xls,.ods,.txt,.html" data-action="file-input" style="display:none;" />
               <button class="trj-btn" data-action="connect-folder">Conectar pasta</button>
               <button class="trj-btn" data-action="verify-now">Verificar agora</button>
             </div>
@@ -403,7 +416,13 @@
   }
 
   function delegatedClickHandler(ev) {
-    const action = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-action');
+    // procura no target e em ancestrais até encontrar data-action
+    let el = ev.target;
+    while (el && el !== containerEl && !el.getAttribute) el = el.parentNode;
+    if (!el) return;
+    let action = el.getAttribute && el.getAttribute('data-action');
+    // Se não achar no elemento, verifica target direto
+    if (!action && ev.target && ev.target.getAttribute) action = ev.target.getAttribute('data-action');
     if (!action) return;
     ev.preventDefault();
     if (action === 'connect-folder') {
@@ -435,7 +454,7 @@
 
     // define containerEl se ainda não tiver sido definido (quando init for chamada isoladamente)
     if (!containerEl) {
-      containerEl = document.querySelector('[data-page="importar"]') || document.querySelector('#importar') || document.querySelector('#app-shell') || document.body;
+      containerEl = document.querySelector('[data-page="importar"]') || document.querySelector('#importar') || document.querySelector('#page') || document.body;
     }
     if (!containerEl) {
       warn('container importar não encontrado no init');
@@ -446,7 +465,7 @@
     document.removeEventListener('trj:folderChanged', onFolderChangedHandler);
     document.addEventListener('trj:folderChanged', onFolderChangedHandler);
 
-    // Se quiser um hook de compatibilidade adicional
+    // Compatibilidade adicional
     document.removeEventListener('trj:folderChanged.importar', onFolderChangedHandler);
     document.addEventListener('trj:folderChanged.importar', onFolderChangedHandler);
 
@@ -456,7 +475,7 @@
     // Atualiza status
     const statusEl = containerEl.querySelector && containerEl.querySelector('#importar-status');
     if (statusEl) {
-      const has = (TRJ && TRJ.files && typeof TRJ.files.hasTasks === 'function' && TRJ.files.hasTasks()) || !!localStorage.getItem('trj_tasks');
+      const has = (TRJ && TRJ.files && typeof TRJ.files.getTasks === 'function') ? (TRJ.files.getTasks() || []).length > 0 : !!localStorage.getItem('trj_tasks');
       statusEl.textContent = has ? 'Dados carregados' : 'Sem dados';
     }
 
@@ -474,12 +493,13 @@
       const handle = await TRJ.files.connectFolder();
       if (handle) {
         toast('Pasta conectada: ' + (handle.name || 'Pasta'), 'success');
-        // opcional: disparar verificação inicial (não o evento que cria recursão)
+        // disparar verificação inicial via triggerScan (processFolderItems consome items e não re-dispara trigger)
         try {
-          const res = await TRJ.files.triggerScan();
-          if (res && Array.isArray(res.items) && res.items.length) {
-            // processar retornos diretamente (sem re-disparar eventos)
-            processFolderItems(res.items);
+          if (typeof TRJ.files.triggerScan === 'function') {
+            const res = await TRJ.files.triggerScan();
+            if (res && Array.isArray(res.items) && res.items.length) {
+              processFolderItems(res.items);
+            }
           }
         } catch (scanErr) {
           warn('triggerScan após connectFolder falhou', scanErr);
@@ -501,7 +521,6 @@
       }
       const res = await TRJ.files.triggerScan();
       if (res && res.items) {
-        // se triggerScan retornou changed=false mas items preenchidos, também processa (não causa loop)
         await processFolderItems(res.items);
       } else {
         toast('Nenhum arquivo encontrado na verificação.', 'info');
@@ -521,12 +540,12 @@
   // --- Render API que o roteador chama ---
   P.importar.render = function (root) {
     try {
-      const mount = root || document.querySelector('#app-shell') || document.body;
+      const mount = root || document.querySelector('#page') || document.body;
       if (!mount) {
         warn('mount não encontrado para render');
         return;
       }
-      // injetar HTML da página
+      // injetar HTML da página (substitui o conteúdo do container recebido pelo roteador)
       mount.innerHTML = renderHtml();
       // apontar containerEl para a seção injetada
       containerEl = mount.querySelector('[data-page="importar"]') || mount;
@@ -538,22 +557,19 @@
   };
 
   // Auto-init (se a página for carregada e TRJ estiver pronto)
-  // Aguarda até que DOM esteja pronto e registra init (mas somente init; render é usado pelo roteador)
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
-      // tenta registrar handlers genéricos (sem injetar HTML) - safe no caso de router injetar depois
       initImportPage();
     });
   } else {
     setTimeout(initImportPage, 0);
   }
 
-  // Se TRJ.files já tem eventos pendentes (carregados antes), podemos também tentar carregar saved folder
+  // Tenta carregar pasta salva e processar arquivos uma vez (startup)
   (async function tryLoadSavedFolderAndScan() {
     try {
       if (TRJ && TRJ.files && typeof TRJ.files.loadSavedFolder === 'function') {
         await TRJ.files.loadSavedFolder();
-        // optional: trigger initial scan (but not mandatory)
         if (typeof TRJ.files.triggerScan === 'function') {
           try {
             const res = await TRJ.files.triggerScan();
@@ -561,7 +577,7 @@
               // process once at startup
               processFolderItems(res.items);
             }
-          } catch (e) { /* ignore */ }
+          } catch (e) { /* ignore scan errors at startup */ }
         }
       }
     } catch (e) { /* ignore */ }
