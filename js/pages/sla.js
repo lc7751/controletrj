@@ -1,48 +1,42 @@
-/* Página: SLA / Aderência */
-(function (TRJ) {
+// js/pages/sla.js
+(function(){
+  if (!window.TRJ) window.TRJ = {};
   TRJ.pages = TRJ.pages || {};
-  var U = TRJ.ui, C = TRJ.constants, Comp = TRJ.compute;
 
-  TRJ.pages.sla = function (container, ctx) {
-    var data = ctx.data, app = ctx.app;
-    if (!data) { container.appendChild(U.h('div', { class: 'trj-card p-6', text: 'Sem dados.' })); return; }
-    var d = Comp.slaPage(data.tasksEnriched, data.prazoMap);
+  TRJ.pages.sla = {
+    render: function(root) {
+      try {
+        var mount = root || document.getElementById('page') || document.body;
+        mount.innerHTML = '';
 
-    container.appendChild(U.pageHeader('SLA / Aderência', 'Aderência geral: ' + d.geral.pct + '%  (' + d.geral.dentro + ' dentro / ' + d.geral.fora + ' fora)'));
+        var header = document.createElement('h3'); header.textContent = 'SLA / Aderência'; header.className = 'mb-3';
+        var card = document.createElement('div'); card.className = 'trj-card p-4';
 
-    // chart por prioridade
-    var ch = U.chartCard('Aderência por Prioridade (%)');
-    container.appendChild(ch.card);
+        var tasks = (TRJ.files && typeof TRJ.files.getTasks === 'function') ? TRJ.files.getTasks() || [] : JSON.parse(localStorage.getItem('trj_tasks')||'[]');
 
-    // tabela por prioridade
-    var thead = U.h('thead', null, U.h('tr', null, ['Prioridade', 'Prazo (h)', 'Total', 'Dentro', 'Fora', 'Aderência'].map(function (t) { return U.h('th', { text: t }); })));
-    var tbody = U.h('tbody', null, d.porPrioridade.map(function (p) {
-      return U.h('tr', null, [
-        U.h('td', { html: '<b>' + p.prioridade + '</b>' }),
-        U.h('td', { text: p.prazoHoras }),
-        U.h('td', { text: U.fmtNum(p.total) }),
-        U.h('td', { text: U.fmtNum(p.dentro), style: { color: C.CORES_TRJ.green } }),
-        U.h('td', { text: U.fmtNum(p.fora), style: { color: C.CORES_TRJ.red } }),
-        U.h('td', { html: '<b style="color:' + (p.pct >= 90 ? C.CORES_TRJ.green : p.pct >= 70 ? C.CORES_TRJ.orange : C.CORES_TRJ.red) + '">' + p.pct + '%</b>' })
-      ]);
-    }));
-    container.appendChild(U.h('div', { class: 'trj-card p-4 mb-5' }, [U.h('h3', { class: 'text-sm font-bold mb-3', text: 'Por Prioridade' }), U.h('table', { class: 'trj-table' }, [thead, tbody])]));
+        // compute simple SLA summary: fraction with withinSLA flag if present, else default unknown
+        var within = tasks.filter(function(t){ return t.withinSLA === true || t.within_sla === true || t.aderencia === 'within'; }).length;
+        var total = tasks.length || 0;
+        var outside = total - within;
+        var pct = total ? Math.round((within/total)*100) : 0;
 
-    // tabela por regiao
-    var thead2 = U.h('thead', null, U.h('tr', null, ['Região', 'Total', 'Dentro', 'Fora', 'Aderência'].map(function (t) { return U.h('th', { text: t }); })));
-    var tbody2 = U.h('tbody', null, d.porRegiao.map(function (r) {
-      return U.h('tr', { class: 'cursor-pointer', onclick: function () { app.openDrillTasks({ tipo: 'regiaoSla', arg: r.regiao + '|fora' }, {}, 'Fora SLA: ' + r.label); } }, [
-        U.h('td', { text: r.label }),
-        U.h('td', { text: U.fmtNum(r.total) }),
-        U.h('td', { text: U.fmtNum(r.dentro), style: { color: C.CORES_TRJ.green } }),
-        U.h('td', { text: U.fmtNum(r.fora), style: { color: C.CORES_TRJ.red } }),
-        U.h('td', { html: '<b style="color:' + (r.pct >= 90 ? C.CORES_TRJ.green : r.pct >= 70 ? C.CORES_TRJ.orange : C.CORES_TRJ.red) + '">' + r.pct + '%</b>' })
-      ]);
-    }));
-    container.appendChild(U.h('div', { class: 'trj-card p-4' }, [U.h('h3', { class: 'text-sm font-bold mb-3', text: 'Por Região (clique para detalhar fora do SLA)' }), U.h('table', { class: 'trj-table' }, [thead2, tbody2])]));
+        var summary = document.createElement('div');
+        summary.innerHTML = '<strong>Total tarefas:</strong> ' + total + ' &nbsp;&nbsp; <strong>Dentro SLA:</strong> ' + within + ' &nbsp;&nbsp; <strong>Fora SLA:</strong> ' + outside + ' &nbsp;&nbsp; <strong>Pct:</strong> ' + pct + '%';
 
-    U.barChart(ch.canvas, d.porPrioridade.map(function (p) {
-      return { label: p.prioridade, total: p.pct, cor: p.pct >= 90 ? C.CORES_TRJ.green : p.pct >= 70 ? C.CORES_TRJ.orange : C.CORES_TRJ.red };
-    }), { onBar: function (i) { var p = d.porPrioridade[i]; app.openDrillTasks({ tipo: 'prioridadeSla', arg: p.prioridade + '|fora' }, {}, 'Fora SLA: ' + p.prioridade); } });
+        // placeholder chart area (consumir Chart.js later)
+        var chartWrap = document.createElement('div'); chartWrap.style.marginTop='12px';
+        chartWrap.innerHTML = '<div style="height:180px;display:flex;align-items:center;justify-content:center;color:var(--trj-muted);">Gráfico Aderência por Prioridade (placeholder)</div>';
+
+        card.appendChild(summary);
+        card.appendChild(chartWrap);
+        mount.appendChild(header);
+        mount.appendChild(card);
+
+        if (!TRJ.pages.sla._bound) {
+          document.addEventListener('trj:tasksLoaded', function(){ setTimeout(function(){ TRJ.pages.sla.render(mount); }, 200); });
+          TRJ.pages.sla._bound = true;
+        }
+      } catch(e){ console.error('sla render error', e); }
+    }
   };
-})(window.TRJ = window.TRJ || {});
+})();
