@@ -10,7 +10,8 @@
  *   • anexando o arquivo do painel G.E.N.E.S.I.S;
  *   • clicando em "Buscar automaticamente" — chama a Ponte TRJ local
  *     (servidor que roda na sua máquina enquanto conectado na VPN e
- *     executa o puxar_dados.exe por baixo dos panos).
+ *     busca direto na página do painel, sem precisar de nenhum
+ *     executável extra).
  * ===================================================================== */
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
@@ -65,11 +66,16 @@
     reader.readAsText(file, 'UTF-8');
   }
 
-  // Converte as linhas devolvidas pela Ponte local (já extraídas pelo
-  // puxar_dados.exe) para o mesmo formato que parseGenesisHtml() produz,
-  // pra poder reaproveitar Comp.genesisToIncidents() sem duplicar lógica.
+  // Converte as linhas devolvidas pela Ponte local (busca direta no
+  // painel, sem depender de nenhum .exe) para o mesmo formato que
+  // parseGenesisHtml() produz, pra reaproveitar Comp.genesisToIncidents()
+  // sem duplicar lógica. A ponte devolve bem mais campos do que o
+  // parser de HTML colado consegue pegar (ex.: statusEvento real, anf
+  // numérico, tecnologia direta da coluna, nota de abertura) — usamos
+  // o que for útil e combinamos o resto em "detalhe".
   function genesisRowsFromPonte(rows) {
     return (rows || []).map(function (r) {
+      var detalhePartes = [r.detalhe, r.falha, r.notaAbertura].filter(Boolean);
       return {
         site: r.site || null,
         horario: r.horario || null,
@@ -77,17 +83,17 @@
         gsbi: null,
         qtdFurtos: 0,
         qtdCelulas: 0,
-        tecnologia: null,
-        enderecoId: r.end_id || null,
-        anf: r.anf || null,
-        cidadeUf: r.cidade || null,
+        tecnologia: r.tecnologia || null,
+        enderecoId: r.endId || null,
+        anf: r.anf || r.anfLabel || null,
+        cidadeUf: r.cidadeUf || null,
         infra: r.infra || null,
         eve: r.eve || null,
-        statusEvento: null,
+        statusEvento: r.statusEvento || null,
         previsao: r.previsao || null,
         causa: r.causa || null,
-        detalhe: null,
-        alarme: r.alarme || null,
+        detalhe: detalhePartes.length ? detalhePartes.join(' | ') : null,
+        alarme: r.alarmeCompleto || r.alarme || null,
         peso: parseInt(r.peso, 10) || 0
       };
     });
