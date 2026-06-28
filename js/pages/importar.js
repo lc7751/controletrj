@@ -21,12 +21,10 @@
   // servidor local rodando e a VPN da empresa conectada.
   var PONTE_URL = 'http://localhost:5057/api/incidentes';
 
-  // Modo de importação dos incidentes: Agrupado (uma linha por END_ID) ou Detalhado.
-  var LS_AGRUPADO = 'trj_imp_agrupado';
-  function getAgrupado() { try { return localStorage.getItem(LS_AGRUPADO) === '1'; } catch (e) { return false; } }
-  function setAgrupado(v) { try { localStorage.setItem(LS_AGRUPADO, v ? '1' : '0'); } catch (e) {} }
-
   // Processa um texto/HTML do G.E.N.E.S.I.S e atualiza os incidentes.
+  // Importante: salva SEMPRE os incidentes completos (não agrupados) — o
+  // agrupamento por END_ID é só uma forma de visualização na página
+  // "Sites Fora", pra não distorcer nenhuma contagem (dashboard, resumo etc.).
   async function processarGenesis(html, data, app, origemLabel) {
     if (!html || !html.trim()) { U.toast('Cole o conteúdo do painel G.E.N.E.S.I.S primeiro.', 'err'); return false; }
     try {
@@ -41,7 +39,6 @@
         catch (e) { /* sem backend de cidades: segue sem enriquecimento */ }
       }
       var incidentes = Comp.genesisToIncidents(genesisRows, validMap);
-      if (getAgrupado()) incidentes = Comp.agruparIncidentesPorEndId(incidentes);
       FS.setIncidents(incidentes, { origem: origemLabel || 'genesis', em: new Date().toISOString() });
       await app.reloadIncidents();
       U.toast(incidentes.length + ' incidente(s) importado(s).', 'ok');
@@ -115,7 +112,6 @@
         catch (e) { /* sem backend de cidades: segue sem enriquecimento */ }
       }
       var incidentes = Comp.genesisToIncidents(genesisRows, validMap);
-      if (getAgrupado()) incidentes = Comp.agruparIncidentesPorEndId(incidentes);
       FS.setIncidents(incidentes, { origem: 'genesis-auto', em: new Date().toISOString() });
       await app.reloadIncidents();
       U.toast(incidentes.length + ' incidente(s) importado(s) automaticamente.', 'ok');
@@ -230,23 +226,6 @@
     // =====================================================================
     container.appendChild(secaoTitulo('Incidentes (Sites Fora)', C.CORES_TRJ.blue));
 
-    // --- modo de importação: Agrupado (1 linha por END_ID) ou Detalhado ---
-    var agrupadoAtual = getAgrupado();
-    var modoCard = U.h('div', { class: 'trj-card p-4 mb-3 flex items-center justify-between flex-wrap gap-3' });
-    modoCard.appendChild(U.h('div', null, [
-      U.h('div', { class: 'text-sm font-bold', text: 'Modo de importação' }),
-      U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: 'Agrupado junta numa só linha os sites com o mesmo END_ID (ex.: 3 tecnologias do mesmo END_ID → 1 linha), usando o horário da primeira que caiu.' })
-    ]));
-    var selModo = U.h('select', {
-      class: 'trj-select', style: { width: 'auto', minWidth: '220px' },
-      onchange: function () { setAgrupado(this.value === 'agrupado'); }
-    }, [
-      U.h('option', { value: 'detalhado', text: 'Detalhado (1 linha por tecnologia)', selected: !agrupadoAtual ? 'selected' : null }),
-      U.h('option', { value: 'agrupado', text: 'Agrupado (1 linha por END_ID)', selected: agrupadoAtual ? 'selected' : null })
-    ]);
-    modoCard.appendChild(selModo);
-    container.appendChild(modoCard);
-
     // --- ação primária: busca automática, em destaque ---
     var autoCard = U.h('div', {
       class: 'trj-card p-6 mb-3',
@@ -319,3 +298,4 @@
     ]);
   }
 })(window.TRJ = window.TRJ || {});
+  
