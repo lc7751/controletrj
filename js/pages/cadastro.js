@@ -30,6 +30,8 @@
   // ---- Varredura de sites sem cadastro (regiao = OTHERS) ----
   // Reúne tarefas e incidentes ativos que caíram em "OTHERS" por falta de
   // cadastro no VALID_CAD, deduplicando por END_ID, pra cadastrar em lote.
+  // Importante: considera só TSKs (tickets corretiva) — atividades manuais
+  // (Preventiva/Conjunta/WO) não entram, pois não fazem parte do cadastro.
   function coletarSemCadastro(data) {
     var vistos = {}, lista = [];
     function add(endId, site, cidade, origem) {
@@ -40,6 +42,7 @@
     }
     ((data && data.tasksEnriched) || []).forEach(function (t) {
       if ((t.regiao || 'OTHERS') !== 'OTHERS') return;
+      if (!TRJ.domain.isTicketCorretiva(t.tipoAtividade)) return; // só TSK — sem atividades manuais
       add(t.enderecoId, t.siteId, t.cidade, 'Tarefa');
     });
     ((data && data.incidentsEnriched) || []).forEach(function (i) {
