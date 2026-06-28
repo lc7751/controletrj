@@ -155,12 +155,16 @@
     });
     var aging = C.AGING_BUCKETS.map(function (b, i) { return { label: b.label, total: agingCount[i], cor: C.AGING_CORES[i] }; });
 
-    // Vencimento
+    // Vencimento — mesmo recorte do painel original: só considera tickets
+    // "dentro do SLA" que vencem dentro de 6h30 (390min) a partir de agora.
+    // Sem esse limite, a faixa "> 6h" acumularia todo o backlog futuro
+    // (mesmo prazos de dias/semanas), em vez de só o que está prestes a vencer.
+    var LIMITE_VENCIMENTO_MIN = 390;
     var vencCount = C.VENCIMENTO_BUCKETS.map(function () { return 0; });
     dentro.forEach(function (t) {
       if (!t.vencimentoCalc) return;
       var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
-      if (rest < 0) return;
+      if (rest < 0 || rest > LIMITE_VENCIMENTO_MIN) return;
       var idx = C.VENCIMENTO_BUCKETS.findIndex(function (b) { return rest >= b.min && rest < b.max; });
       if (idx >= 0) vencCount[idx]++;
     });
