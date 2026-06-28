@@ -335,37 +335,131 @@
     return h('span', { class: 'trj-badge', style: { color: cor, background: bg }, text: st || 'ATIVO' });
   };
 
-  // ---------- Tabela de tasks (drill) ----------
+  // ---------- TSK aberta (cruza END_ID do incidente GENESIS com a fila de tarefas/TOA) ----------
+  var STATUS_FECHADO_TSK = ['CONCLUÍDA', 'CONCLUIDA', 'CANCELADA', 'CANCELADO'];
+  function tskAberta(incident, tasksEnriched) {
+    if (!incident || !tasksEnriched || !tasksEnriched.length) return null;
+    var key = (incident.enderecoId || incident.endId || '').toString().trim().toUpperCase();
+    if (!key) return null;
+    var candidatos = tasksEnriched.filter(function (t) {
+      var k2 = (t.enderecoId || '').toString().trim().toUpperCase();
+      if (k2 !== key) return false;
+      var st = (t.status || '').toString().trim().toUpperCase();
+      return STATUS_FECHADO_TSK.indexOf(st) < 0; // ignora tarefas já fechadas
+    });
+    if (!candidatos.length) return null;
+    // prioriza "Iniciado" sobre os demais; entre iguais, a mais recente
+    candidatos.sort(function (a, b) {
+      var pa = (a.status || '').toUpperCase() === 'INICIADO' ? 0 : 1;
+      var pb = (b.status || '').toUpperCase() === 'INICIADO' ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      var da = a.dataCriacao ? new Date(a.dataCriacao).getTime() : 0;
+      var db = b.dataCriacao ? new Date(b.dataCriacao).getTime() : 0;
+      return db - da;
+    });
+    return { osNumero: candidatos[0].osNumero, status: candidatos[0].status || null, total: candidatos.length };
+  }
+  U.tskAberta = tskAberta;
+
+  // Badge "TSK <num>" colorido por status (Iniciado=verde, Não iniciado=amarelo bem visível), ou "SEM TSK".
+  U.tskCell = function (incident, tasksEnriched) {
+    var m = tskAberta(incident, tasksEnriched);
+    if (!m) {
+      return h('span', { class: 'trj-badge', style: { background: 'rgba(231,76,60,.16)', color: '#ff6b6b', fontWeight: '700' } }, [
+        h('span', { class: 'trj-pulse-dot', style: { marginRight: '5px', verticalAlign: 'middle' } }),
+        h('span', { text: 'SEM TSK' })
+      ]);
+    }
+    var st = (m.status || '').toUpperCase();
+    var cor = '#9aa5b1', bg = 'rgba(154,165,177,.15)';
+    if (st === 'INICIADO') { cor = '#1fae5e'; bg = 'rgba(46,204,113,.22)'; }
+    else if (st === 'NÃO INICIADO' || st === 'NAO INICIADO') { cor = '#9a7d00'; bg = 'rgba(241,196,15,.35)'; }
+    var texto = (m.osNumero || '—') + (m.total > 1 ? ' (+' + (m.total - 1) + ')' : '');
+    return h('span', { class: 'trj-badge', style: { background: bg, color: cor, fontWeight: '700' }, title: m.status || '' }, texto);
+  };
+
+  // ---------- Correlação entre incidentes (mesmo horário ±4min + ANF/cidade) ----------
+  function parseHorarioMin(horario) {
+    if (!horario) return null;
+    var m = String(horario).match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+    if (!m) return null;
+    var dia = parseInt(m[1], 10), mes = parseInt(m[2], 10), hh = parseInt(m[3], 10), mi = parseInt(m[4], 10);
+    return ((mes * 31) + dia) * 1440 + hh * 60 + mi; // só serve para medir diferenças pequenas
+  }
+  // Retorna { idx: {forte, fraca} } — forte = mesma ANF e cidade; fraca = só mesma ANF.
+  U.computeCorrelacoes = function (rows) {
+    function cidadeNorm(r) {
+      var c = (r.cidadeUf || r.cidade || '').toString().toUpperCase().trim();
+      return c.split('/')[0].trim(); // "VILA VELHA / ES" e "VILA VELHA" devem bater
+    }
+    var pts = rows.map(function (r, i) {
+      return { i: i, t: parseHorarioMin(r.horario), anf: (r.anf || '').toString().trim(), cidade: cidadeNorm(r) };
+    }).filter(function (x) { return x.t != null && x.anf; });
+    var result = {};
+    for (var a = 0; a < pts.length; a++) {
+      for (var b = a + 1; b < pts.length; b++) {
+        var x = pts[a], y = pts[b];
+        if (x.anf !== y.anf || Math.abs(x.t - y.t) > 4) continue;
+        var forte = !!(x.cidade && y.cidade && x.cidade === y.cidade);
+        result[x.i] = result[x.i] || { forte: 0, fraca: 0 };
+        result[y.i] = result[y.i] || { forte: 0, fraca: 0 };
+        if (forte) { result[x.i].forte++; result[y.i].forte++; }
+        else { result[x.i].fraca++; result[y.i].fraca++; }
+      }
+    }
+    return result;
+  };
+
+  // ---------- Tabela de tasks (drill) — mesmas colunas da BASE_METRICAS original ----------
   U.taskTable = function (rows) {
-    var thead = h('thead', null, h('tr', null, ['OS', 'Atividade', 'Status', 'Prio', 'Região', 'SLA', 'Vencimento', 'Aging'].map(function (t) { return h('th', { text: t }); })));
+    var thead = h('thead', null, h('tr', null, ['Região', 'TSK', 'Site', 'Cidade', 'Falha', 'P', 'Criação', 'Vencimento'].map(function (t) { return h('th', { text: t }); })));
     var body = rows.slice(0, 1000).map(function (t) {
       return h('tr', null, [
-        h('td', { text: t.osNumero || t.siteId || '—' }),
-        h('td', { text: t.tipoAtividade || '—' }),
-        h('td', { text: t.status || '—' }),
-        h('td', { text: (t.prioridade || '—') }),
         h('td', { text: C.REGIAO_LABELS[t.regiao] || t.regiao || '—' }),
-        h('td', null, U.slaBadge(t.statusSla)),
-        h('td', { text: t.vencimentoCalc ? D.formatarDataBR(t.vencimentoCalc) : '—' }),
-        h('td', { text: t.agingMinutos != null ? D.formatarDuracao(t.agingMinutos) : '—' })
+        h('td', { text: t.osNumero || '—' }),
+        h('td', { text: t.siteId || t.enderecoId || '—' }),
+        h('td', { text: t.cidade || '—' }),
+        h('td', { text: t.tipoFalha || '—' }),
+        h('td', { text: t.prioridade || '—' }),
+        h('td', { text: t.dataCriacao ? D.formatarDataBR(t.dataCriacao) : '—' }),
+        h('td', { text: t.vencimentoCalc ? D.formatarDataBR(t.vencimentoCalc) : '—' })
       ]);
     });
     var tbl = h('table', { class: 'trj-table' }, [thead, h('tbody', null, body)]);
     return wrapTable(tbl, rows.length);
   };
 
-  // ---------- Tabela de incidentes (drill) ----------
-  U.incidentTable = function (rows) {
-    var thead = h('thead', null, h('tr', null, ['Site', 'Cidade', 'ANF', 'Causa', 'GSBI', 'Início', 'Status'].map(function (t) { return h('th', { text: t }); })));
-    var body = rows.slice(0, 1000).map(function (r) {
-      return h('tr', null, [
-        h('td', { text: r.site || r.enderecoId || '—' }),
-        h('td', { text: r.cidade || '—' }),
+  // ---------- Tabela de incidentes G.E.N.E.S.I.S (Sites Fora + drills) ----------
+  // Colunas iguais ao painel de origem (Horário/Duração/Tec/Site/END_ID/ANF/Cidade-UF),
+  // troca a coluna "Status" do GENESIS pela TSK aberta na fila (tasksEnriched),
+  // e sinaliza com ⚡ incidentes prováveis de mesma causa raiz (mesma ANF, horário próximo).
+  U.incidentTable = function (rows, tasksEnriched) {
+    var corr = U.computeCorrelacoes(rows);
+    var thead = h('thead', null, h('tr', null,
+      ['Horário', 'Duração', 'Tec', 'Site', 'END_ID', 'ANF', 'Cidade/UF', 'TSK', 'Previsão', 'Causa', 'Detalhe']
+        .map(function (t) { return h('th', { text: t }); })));
+    var body = rows.slice(0, 1000).map(function (r, idx) {
+      var c = corr[idx];
+      var rowStyle = {}, corrIcon = null;
+      if (c && c.forte > 0) {
+        rowStyle.borderLeft = '3px solid #e74c3c';
+        corrIcon = h('span', { style: { marginRight: '5px' }, title: 'Correlacionado com ' + c.forte + ' outro(s) incidente(s) — mesma ANF e cidade, horário a até 4min de diferença', text: '⚡' });
+      } else if (c && c.fraca > 0) {
+        rowStyle.borderLeft = '3px solid #f1c40f';
+        corrIcon = h('span', { style: { marginRight: '5px' }, title: 'Correlacionado com ' + c.fraca + ' outro(s) incidente(s) — mesma ANF, horário a até 4min de diferença', text: '⚡' });
+      }
+      return h('tr', { style: rowStyle }, [
+        h('td', { text: r.horario || '—' }),
+        h('td', { text: r.downtime || r.duracao || '—' }),
+        h('td', { text: r.tecnologia || '—' }),
+        h('td', null, [corrIcon, h('span', { text: r.site || '—' })]),
+        h('td', { text: r.enderecoId || '—' }),
         h('td', { text: r.anf || '—' }),
-        h('td', { text: r.causa || r.causaGrupo || '—' }),
-        h('td', { text: r.gsbi || '—' }),
-        h('td', { text: r.horarioDt ? D.formatarDataBR(r.horarioDt) : '—' }),
-        h('td', null, U.tratBadge(r.statusTrat))
+        h('td', { text: r.cidadeUf || r.cidade || '—' }),
+        h('td', null, U.tskCell(r, tasksEnriched)),
+        h('td', { text: r.previsao || '/' }),
+        h('td', { text: r.causa || '/' }),
+        h('td', { text: r.detalhe || '#', style: { maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } })
       ]);
     });
     var tbl = h('table', { class: 'trj-table' }, [thead, h('tbody', null, body)]);
