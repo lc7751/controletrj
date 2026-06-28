@@ -10,6 +10,47 @@
       .toUpperCase().replace(/\s+/g, ' ').trim();
   }
 
+  // ===================== CORREÇÃO DE ACENTOS BAGUNÇADOS (mojibake) =====================
+  // O painel de origem às vezes entrega texto corrompido tipo "IntervenûÏûÈo"
+  // em vez de "Intervenção". Isso é texto UTF-8 que foi mal-lido como a
+  // codificação "HP Roman-8" (um charset antigo de impressoras/terminais HP)
+  // em algum ponto da cadeia de origem. A correção é o caminho inverso:
+  // reinterpreta cada caractere como um byte HP Roman-8 e decodifica o
+  // resultado como UTF-8. Se o texto já estiver correto, o passo de
+  // decodificação falha (não é uma sequência UTF-8 válida) e devolvemos o
+  // texto original sem alterar nada — por isso é seguro aplicar sempre.
+  var HP_ROMAN8_CHAR_TO_BYTE = {
+    'À': 161, 'Â': 162, 'È': 163, 'Ê': 164, 'Ë': 165, 'Î': 166, 'Ï': 167, '´': 168, 'ˋ': 169, 'ˆ': 170,
+    '¨': 171, '˜': 172, 'Ù': 173, 'Û': 174, '₤': 175, '¯': 176, 'Ý': 177, 'ý': 178, '°': 179, 'Ç': 180,
+    'ç': 181, 'Ñ': 182, 'ñ': 183, '¡': 184, '¿': 185, '¤': 186, '£': 187, '¥': 188, '§': 189, 'ƒ': 190,
+    '¢': 191, 'â': 192, 'ê': 193, 'ô': 194, 'û': 195, 'á': 196, 'é': 197, 'ó': 198, 'ú': 199, 'à': 200,
+    'è': 201, 'ò': 202, 'ù': 203, 'ä': 204, 'ë': 205, 'ö': 206, 'ü': 207, 'Å': 208, 'î': 209, 'Ø': 210,
+    'Æ': 211, 'å': 212, 'í': 213, 'ø': 214, 'æ': 215, 'Ä': 216, 'ì': 217, 'Ö': 218, 'Ü': 219, 'É': 220,
+    'ï': 221, 'ß': 222, 'Ô': 223, 'Á': 224, 'Ã': 225, 'ã': 226, 'Ð': 227, 'ð': 228, 'Í': 229, 'Ì': 230,
+    'Ó': 231, 'Ò': 232, 'Õ': 233, 'õ': 234, 'Š': 235, 'š': 236, 'Ú': 237, 'Ÿ': 238, 'ÿ': 239, 'Þ': 240,
+    'þ': 241, '·': 242, 'µ': 243, '¶': 244, '¾': 245, '—': 246, '¼': 247, '½': 248, 'ª': 249, 'º': 250,
+    '«': 251, '■': 252, '»': 253, '±': 254
+  };
+  var _decoderUtf8Strict = (typeof TextDecoder !== 'undefined') ? new TextDecoder('utf-8', { fatal: true }) : null;
+  function corrigirAcentos(texto) {
+    if (!texto || typeof texto !== 'string' || !_decoderUtf8Strict) return texto;
+    var bytes = [], i, code, b;
+    for (i = 0; i < texto.length; i++) {
+      code = texto.charCodeAt(i);
+      if (code < 0x80) { bytes.push(code); continue; }
+      b = HP_ROMAN8_CHAR_TO_BYTE[texto[i]];
+      if (b == null) return texto; // caractere fora da tabela: não é esse tipo de corrupção
+      bytes.push(b);
+    }
+    try {
+      var fixed = _decoderUtf8Strict.decode(new Uint8Array(bytes));
+      return fixed;
+    } catch (e) {
+      return texto; // não decodifica como UTF-8 válido -> texto já estava certo, mantém original
+    }
+  }
+  D.corrigirAcentos = corrigirAcentos;
+
   // ===================== REGIAO (region.ts) =====================
   var CRITERIOS_FILA = {
     'TRJ-RJ-ZNO01-ANG01': 'INTERIOR',
@@ -147,6 +188,38 @@
     }).format(date);
   }
 
+  // Data compacta pro espaço apertado dos drills: "28/06 14:30" (sem ano).
+  function formatarDataCompacta(d) {
+    if (!d) return '—';
+    var date = (typeof d === 'string' || typeof d === 'number') ? new Date(d) : d;
+    if (isNaN(date.getTime())) return '—';
+    var parts = new Intl.DateTimeFormat('pt-BR', {
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo'
+    }).formatToParts(date);
+    var map = {}; parts.forEach(function (p) { map[p.type] = p.value; });
+    return map.day + '/' + map.month + ' ' + map.hour + ':' + map.minute;
+  }
+
+  // Vencimento em linguagem simples: "VENCE EM 30min" / "VENCE EM 1h30" /
+  // "VENCIDO A 1h30" — junto com a cor sugerida (verde = ainda dentro do
+  // prazo, vermelho = já venceu), pra usar direto nos drills.
+  function formatarVencimentoSimples(vencimentoCalc, now) {
+    if (!vencimentoCalc) return { texto: '—', cor: null };
+    var venc = (typeof vencimentoCalc === 'string' || typeof vencimentoCalc === 'number') ? new Date(vencimentoCalc) : vencimentoCalc;
+    if (isNaN(venc.getTime())) return { texto: '—', cor: null };
+    now = now || new Date();
+    var diffMin = Math.round((venc.getTime() - now.getTime()) / 60000);
+    var venceu = diffMin < 0;
+    var abs = Math.abs(diffMin);
+    var horas = Math.floor(abs / 60);
+    var min = abs % 60;
+    var txt;
+    if (horas > 0 && min > 0) txt = horas + 'h' + String(min).padStart(2, '0');
+    else if (horas > 0) txt = horas + 'h';
+    else txt = min + 'min';
+    return { texto: (venceu ? 'VENCIDO A ' : 'VENCE EM ') + txt, cor: venceu ? '#e74c3c' : '#2ecc71', venceu: venceu };
+  }
+
   function getAgingBucket(minutos) {
     for (var i = 0; i < C.AGING_BUCKETS.length; i++) {
       var b = C.AGING_BUCKETS[i];
@@ -274,6 +347,8 @@
   D.toDate = toDate;
   D.formatarDuracao = formatarDuracao;
   D.formatarDataBR = formatarDataBR;
+  D.formatarDataCompacta = formatarDataCompacta;
+  D.formatarVencimentoSimples = formatarVencimentoSimples;
   D.getAgingBucket = getAgingBucket;
   D.isBacklogStatus = isBacklogStatus;
   D.computeSla = computeSla;
