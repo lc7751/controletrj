@@ -12,6 +12,15 @@
   var App = { data: null };
 
   // ícones SVG simples (stroke currentColor)
+  // ---------------- TEMA (claro/escuro) ----------------
+  var LS_THEME = 'trj_theme';
+  function getTheme() { try { return localStorage.getItem(LS_THEME) || 'dark'; } catch (e) { return 'dark'; } }
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+    try { localStorage.setItem(LS_THEME, t); } catch (e) {}
+  }
+  applyTheme(getTheme()); // aplica o tema salvo já no carregamento, antes de montar a tela
+
   var ICONS = {
     dashboard: '<path d="M3 13h8V3H3zM13 21h8V3h-8zM3 21h8v-6H3z"/>',
     sla: '<path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/>',
@@ -88,8 +97,20 @@
     if (!hasTasks) {
       nav.appendChild(U.h('div', { class: 'text-xs px-2 pt-2', style: { color: 'var(--trj-muted)', lineHeight: '1.4' }, text: 'Faça o upload dos arquivos para liberar as abas de visualização.' }));
     }
+    var temaAtual = getTheme();
+    var btnTema = U.h('button', {
+      class: 'trj-link w-full', onclick: function () {
+        var novo = getTheme() === 'light' ? 'dark' : 'light';
+        applyTheme(novo);
+        buildShell(); render(); // refaz o menu (ícone/label do tema) e a página atual
+      }
+    }, [
+      U.h('span', { class: 'ico', text: temaAtual === 'light' ? '🌙' : '☀️' }),
+      U.h('span', { text: temaAtual === 'light' ? 'Tema escuro' : 'Tema claro' })
+    ]);
     var footer = U.h('div', { class: 'px-3 py-3', style: { borderTop: '1px solid var(--trj-border)' } }, [
       U.h('div', { class: 'text-xs px-2 mb-2 truncate', style: { color: 'var(--trj-muted)' }, text: user.email || '' }),
+      btnTema,
       U.h('button', { class: 'trj-link w-full', onclick: doLogout }, [U.h('span', { class: 'ico', html: icon('logout') }), U.h('span', { text: 'Sair' })])
     ]);
     return U.h('aside', { id: 'sidebar', class: 'trj-card flex flex-col', style: { width: '256px', minWidth: '256px', borderRadius: '0', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', height: '100vh' } }, [brand, nav, footer]);
@@ -226,12 +247,12 @@
   App.openDrillTasks = function (spec, filtros, title) {
     if (!App.data) return;
     var rows = Comp.drillTasks(App.data.tasksEnriched, spec, filtros || {});
-    U.openModal(title || 'Detalhamento', U.taskTable(rows));
+    U.openModal(title || 'Detalhamento', U.taskTable(rows), { onCopy: function () { return U.taskTableCopyText(rows, title); } });
   };
   App.openDrillIncidents = function (spec, title) {
     if (!App.data) return;
     var rows = Comp.drillIncidents(App.data.incidentsEnriched, spec);
-    U.openModal(title || 'Detalhamento', U.incidentTable(rows, App.data.tasksEnriched));
+    U.openModal(title || 'Detalhamento', U.incidentTable(rows, App.data.tasksEnriched), { onCopy: function () { return U.incidentTableCopyText(rows, title); } });
   };
 
   // ---------------- ROTAS ----------------
