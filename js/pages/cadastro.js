@@ -27,6 +27,115 @@
     catch (e) { return []; }
   }
 
+  // ---- Varredura de sites sem cadastro (regiao = OTHERS) ----
+  // Reúne tarefas e incidentes ativos que caíram em "OTHERS" por falta de
+  // cadastro no VALID_CAD, deduplicando por END_ID, pra cadastrar em lote.
+  function coletarSemCadastro(data) {
+    var vistos = {}, lista = [];
+    function add(endId, site, cidade, origem) {
+      var key = (endId || '').toString().trim().toUpperCase();
+      if (!key || vistos[key]) return;
+      vistos[key] = true;
+      lista.push({ end_id: key, site: (site || '').toString().trim(), cidade: (cidade || '').toString().trim(), origem: origem });
+    }
+    ((data && data.tasksEnriched) || []).forEach(function (t) {
+      if ((t.regiao || 'OTHERS') !== 'OTHERS') return;
+      add(t.enderecoId, t.siteId, t.cidade, 'Tarefa');
+    });
+    ((data && data.incidentsEnriched) || []).forEach(function (i) {
+      if ((i.regiao || 'OTHERS') !== 'OTHERS') return;
+      if ((i.statusTrat || '').toUpperCase() === 'RESOLVIDO') return;
+      add(i.enderecoId, i.site, i.cidade || i.cidadeUf, 'Incidente');
+    });
+    return lista.sort(function (a, b) { return a.end_id.localeCompare(b.end_id); });
+  }
+
+  // ---- Card: varredura + cadastro em lote ----
+  function buildScanCard(ctx) {
+    var data = ctx.data, app = ctx.app;
+    var card = U.h('div', { class: 'trj-card p-5 mb-5' });
+    card.appendChild(U.h('h3', { class: 'text-base font-bold mb-1', text: '🔍 Sites sem cadastro (classificados como "Outros")' }));
+    card.appendChild(U.h('p', { class: 'text-xs mb-3', style: { color: 'var(--trj-muted)' }, text: 'Busca tarefas e incidentes ativos sem região cadastrada no VALID_CAD. Marque os que pertencem a uma região, escolha o responsável e cadastre todos de uma vez — sem copiar END_ID um por um.' }));
+
+    var resultWrap = U.h('div', { class: 'mt-3' });
+    var selResp = U.h('select', { class: 'trj-select', style: { width: 'auto', minWidth: '240px' } },
+      RESPONSAVEIS.map(function (r) { return U.h('option', { value: r.value, text: r.label }); }));
+    var btnBuscar = U.h('button', {
+      class: 'trj-btn trj-btn-primary clickable', html: '🔍 Buscar sites sem cadastro',
+      onclick: function () { renderResultado(); }
+    });
+    var statusTxt = U.h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' } });
+    card.appendChild(U.h('div', { class: 'flex items-center gap-2 flex-wrap' }, [btnBuscar, statusTxt]));
+    card.appendChild(resultWrap);
+
+    var checkboxes = []; // { item, cb }
+
+    function renderResultado() {
+      var lista = coletarSemCadastro(data);
+      resultWrap.innerHTML = '';
+      checkboxes = [];
+      if (!lista.length) {
+        statusTxt.textContent = '';
+        resultWrap.appendChild(U.h('div', { class: 'text-sm py-6 text-center', style: { color: 'var(--trj-green)' }, text: '✓ Nenhum site sem cadastro encontrado — tudo classificado!' }));
+        return;
+      }
+      statusTxt.textContent = lista.length + ' site(s) sem cadastro encontrado(s)';
+
+      var toolbar = U.h('div', { class: 'flex items-center gap-2 flex-wrap mt-3 mb-2' }, [
+        U.h('button', { class: 'trj-btn trj-btn-ghost clickable', style: { fontSize: '12px' }, text: 'Marcar todos', onclick: function () { checkboxes.forEach(function (c) { c.cb.checked = true; }); atualizarContagem(); } }),
+        U.h('button', { class: 'trj-btn trj-btn-ghost clickable', style: { fontSize: '12px' }, text: 'Desmarcar todos', onclick: function () { checkboxes.forEach(function (c) { c.cb.checked = false; }); atualizarContagem(); } }),
+        U.h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: 'Responsável/região destino:' }),
+        selResp
+      ]);
+      resultWrap.appendChild(toolbar);
+
+      var thStyle = { textAlign: 'left', padding: '7px 9px', fontSize: '11px', color: 'var(--trj-muted)', borderBottom: '1px solid var(--trj-border)', textTransform: 'uppercase' };
+      var tdStyle = { padding: '7px 9px', fontSize: '13px', borderBottom: '1px solid rgba(255,255,255,.05)' };
+      var head = U.h('tr', null, ['', 'END_ID', 'Site', 'Cidade', 'Origem'].map(function (t) { return U.h('th', { style: thStyle, text: t }); }));
+      var body = lista.map(function (item) {
+        var cb = U.h('input', { type: 'checkbox' });
+        checkboxes.push({ item: item, cb: cb });
+        cb.addEventListener('change', atualizarContagem);
+        return U.h('tr', null, [
+          U.h('td', { style: tdStyle }, cb),
+          U.h('td', { style: Object.assign({ fontFamily: 'ui-monospace, monospace' }, tdStyle), text: item.end_id }),
+          U.h('td', { style: tdStyle, text: item.site || '—' }),
+          U.h('td', { style: tdStyle, text: item.cidade || '—' }),
+          U.h('td', { style: tdStyle, text: item.origem })
+        ]);
+      });
+      resultWrap.appendChild(U.h('div', { style: { maxHeight: '360px', overflow: 'auto' } }, [
+        U.h('table', { style: { width: '100%', borderCollapse: 'collapse' } }, [U.h('thead', null, [head]), U.h('tbody', null, body)])
+      ]));
+
+      var btnCadastrar = U.h('button', { class: 'trj-btn trj-btn-primary clickable', text: 'Cadastrar selecionados (0)', style: { marginTop: '12px' }, disabled: true,
+        onclick: async function () {
+          var selecionados = checkboxes.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.item; });
+          if (!selecionados.length) return;
+          btnCadastrar.disabled = true;
+          var ok = 0, falhas = 0;
+          for (var i = 0; i < selecionados.length; i++) {
+            var it = selecionados[i];
+            try {
+              await TRJ.api.saveSite({ bairro: it.cidade || '', end_id: it.end_id, site: it.site || '', responsavel: selResp.value });
+              ok++;
+            } catch (e) { falhas++; }
+          }
+          U.toast(ok + ' site(s) cadastrado(s)' + (falhas ? ' · ' + falhas + ' falha(s)' : '') + '.', falhas ? 'err' : 'ok');
+          if (app && app.refresh) await app.refresh(true); // já re-renderiza a página
+        } });
+      resultWrap.appendChild(btnCadastrar);
+
+      function atualizarContagem() {
+        var n = checkboxes.filter(function (c) { return c.cb.checked; }).length;
+        btnCadastrar.textContent = 'Cadastrar selecionados (' + n + ')';
+        btnCadastrar.disabled = n === 0;
+      }
+    }
+
+    return card;
+  }
+
   function labelResp(value) {
     for (var i = 0; i < RESPONSAVEIS.length; i++) {
       if (RESPONSAVEIS[i].value === value) return RESPONSAVEIS[i].label;
@@ -45,6 +154,8 @@
   TRJ.pages.cadastro = function (container, ctx) {
     container.appendChild(U.pageHeader('Cadastro de Cidades',
       'Cadastre manualmente os sites com bairro, END_ID e o responsável pela região.'));
+
+    container.appendChild(buildScanCard(ctx));
 
     // ---- inputs ----
     var inBairro = U.h('input', { id: 'cad-bairro', class: 'trj-input w-full', placeholder: 'Ex.: Centro' });
