@@ -21,7 +21,8 @@
   var state = {
     text: lsGet(LS_TEXT, ''),
     neids: lsGetJSON(LS_IDS, []),
-    planilha: null // { nome, rows, headers, idCol, filaCol }
+    planilha: null, // { nome, rows, headers, idCol, filaCol }
+    busca: ''       // texto de busca da lista de incidentes
   };
 
   function lsGet(k, d) { try { var v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } }
@@ -39,6 +40,33 @@
 
   TRJ.pages.sitesFora = function (container, ctx) {
     var app = ctx.app;
+    var incidents = (ctx.data && ctx.data.incidentsEnriched) || [];
+    var ativos = incidents.filter(function (i) { return (i.statusTrat || 'ATIVO').toUpperCase() !== 'RESOLVIDO'; });
+
+    container.appendChild(U.pageHeader('Sites Fora — Incidentes',
+      'Lista de incidentes importados do painel G.E.N.E.S.I.S. Para atualizar, use a aba "Importar dados".'));
+
+    // ---------------- Resumo (total ativos + distribuição por ANF) ----------------
+    if (ativos.length) {
+      var porAnf = {};
+      ativos.forEach(function (i) { var a = (i.anf || '').toString().trim() || 'N/D'; porAnf[a] = (porAnf[a] || 0) + 1; });
+      var anfItens = Object.keys(porAnf)
+        .sort(function (a, b) { return porAnf[b] - porAnf[a]; })
+        .map(function (a) {
+          return { nome: a === 'N/D' ? 'N/D' : 'ANF ' + a, valor: porAnf[a], pct: (Math.round(porAnf[a] / ativos.length * 1000) / 10) + '%' };
+        });
+      container.appendChild(U.h('div', { class: 'mb-5' }, U.resumoBar('Total Sites Fora', ativos.length, anfItens)));
+    }
+
+    // ---------------- Lista de incidentes (com busca) ----------------
+    container.appendChild(buildListaIncidentes(incidents));
+
+    // ---------------- Separador: ferramenta auxiliar ----------------
+    container.appendChild(U.h('div', { class: 'flex items-center gap-3 mt-8 mb-4' }, [
+      U.h('div', { style: { flex: '1', height: '1px', background: 'var(--trj-border)' } }),
+      U.h('span', { class: 'text-xs font-semibold uppercase', style: { color: 'var(--trj-muted)', letterSpacing: '1px', whiteSpace: 'nowrap' }, text: '🔧 Ferramenta auxiliar · Cruzamento com planilha de filas' }),
+      U.h('div', { style: { flex: '1', height: '1px', background: 'var(--trj-border)' } })
+    ]));
 
     var grid = U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4' }, [
       buildNeIdCard(app),
@@ -51,6 +79,38 @@
       container.appendChild(buildCruzamento(app));
     }
   };
+
+  // ---------------- Lista de Incidentes (busca livre) ----------------
+  function buildListaIncidentes(incidents) {
+    var wrap = U.h('div', { class: 'trj-card p-5' });
+    wrap.appendChild(U.h('h3', { class: 'text-base font-bold mb-1', text: '📋 Lista de Incidentes' }));
+    wrap.appendChild(U.h('p', { class: 'text-xs mb-3', style: { color: 'var(--trj-muted)' }, text: 'Busque por site, end id, cidade, ANF, causa ou alarme.' }));
+
+    var listEl = U.h('div', { class: 'mt-3' });
+    var search = U.searchInput('🔎 Buscar incidente...', function (q) { state.busca = q; renderLista(); }, { value: state.busca });
+    wrap.appendChild(search);
+    wrap.appendChild(listEl);
+
+    function renderLista() {
+      var q = (state.busca || '').toLowerCase().trim();
+      var rows = !q ? incidents : incidents.filter(function (r) {
+        var hay = [r.site, r.enderecoId, r.cidade, r.anf, r.causa, r.causaGrupo, r.obs, r.infra, r.gsbi].filter(Boolean).join(' ').toLowerCase();
+        return hay.indexOf(q) >= 0;
+      });
+      listEl.innerHTML = '';
+      if (!incidents.length) {
+        listEl.appendChild(U.h('div', { class: 'text-sm py-10 text-center', style: { color: 'var(--trj-muted)' }, html: 'Nenhum incidente importado ainda.<br>Vá em <b>Importar dados</b> e use a busca automática (ou cole o painel G.E.N.E.S.I.S).' }));
+        return;
+      }
+      if (!rows.length) {
+        listEl.appendChild(U.h('div', { class: 'text-sm py-10 text-center', style: { color: 'var(--trj-muted)' }, text: 'Nenhum incidente encontrado para essa busca.' }));
+        return;
+      }
+      listEl.appendChild(U.incidentTable(rows));
+    }
+    renderLista();
+    return wrap;
+  }
 
   // ---------------- Card 1: NE IDs ----------------
   function buildNeIdCard(app) {
@@ -100,33 +160,18 @@
   function buildPlanilhaCard(app) {
     var head = cardHead('📁', 'Planilha de Filas', 'Arquivo Excel com os dados de filas para cruzamento com os NE IDs.');
 
-    var fileInput = U.h('input', { type: 'file', accept: '.xlsx,.xls', style: { display: 'none' }, onchange: function () { lerPlanilha(this.files && this.files[0], app); } });
-
     var carregada = !!state.planilha;
-    var statusTxt = carregada
-      ? ('✓ ' + state.planilha.nome + ' — ' + U.fmtNum(state.planilha.rows.length) + ' linha(s)')
-      : 'ⓘ Aguardando arquivo...';
-    var statusPill = U.h('div', { class: 'trj-badge', style: { background: 'rgba(255,255,255,.05)', color: carregada ? C.CORES_TRJ.green : 'var(--trj-muted)', fontFamily: 'ui-monospace, monospace', padding: '6px 12px' }, text: statusTxt });
-
-    var dz = U.h('div', { class: 'flex flex-col items-center justify-center gap-3 clickable', style: {
-      border: '2px dashed ' + (carregada ? 'rgba(46,204,113,.5)' : 'var(--trj-border)'),
-      borderRadius: '14px', padding: '36px 16px', textAlign: 'center', cursor: 'pointer', minHeight: '230px'
-    } }, [
-      U.h('div', { style: { fontSize: '40px' }, text: '📁' }),
-      U.h('div', { class: 'font-bold', text: carregada ? 'Trocar arquivo' : 'Arraste o arquivo aqui' }),
-      U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, html: 'ou clique para selecionar — suporte a<br>.xlsx e .xls' }),
-      statusPill
-    ]);
-    dz.addEventListener('click', function () { fileInput.click(); });
-    dz.addEventListener('dragover', function (e) { e.preventDefault(); dz.style.borderColor = 'var(--trj-primary)'; dz.style.background = 'rgba(255,140,0,.06)'; });
-    dz.addEventListener('dragleave', function () { dz.style.borderColor = carregada ? 'rgba(46,204,113,.5)' : 'var(--trj-border)'; dz.style.background = 'transparent'; });
-    dz.addEventListener('drop', function (e) {
-      e.preventDefault(); dz.style.background = 'transparent';
-      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      lerPlanilha(f, app);
+    var dz = U.dropzone({
+      icon: '📁',
+      title: carregada ? 'Trocar arquivo' : 'Arraste o arquivo aqui',
+      sub: 'ou clique para selecionar — suporte a .xlsx e .xls',
+      accept: '.xlsx,.xls',
+      statusOk: carregada,
+      statusText: carregada ? ('✓ ' + state.planilha.nome + ' — ' + U.fmtNum(state.planilha.rows.length) + ' linha(s)') : 'Aguardando arquivo...',
+      onFile: function (file) { lerPlanilha(file, app); }
     });
 
-    return U.h('div', { class: 'trj-card p-5 flex flex-col gap-1' }, [head, fileInput, dz]);
+    return U.h('div', { class: 'trj-card p-5 flex flex-col gap-1' }, [head, dz]);
   }
 
   function lerPlanilha(file, app) {
