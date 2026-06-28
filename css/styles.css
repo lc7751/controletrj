@@ -2,15 +2,30 @@
 :root {
   --trj-bg: #0a0a0f;
   --trj-card: #13131a;
+  --trj-card2: #1a1a24;
   --trj-popover: #1a1a24;
   --trj-primary: #ff8c00;
+  --trj-primary2: #ffb347;
+  --trj-red: #e74c3c;
+  --trj-green: #2ecc71;
+  --trj-blue: #3498db;
   --trj-fg: #f0f0f0;
   --trj-muted: #8a8a93;
   --trj-border: rgba(255, 140, 0, 0.15);
+  --trj-border2: rgba(255, 140, 0, 0.32);
 }
 
 html, body { background: var(--trj-bg); color: var(--trj-fg); }
-body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; }
+body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; position: relative; }
+
+/* brilho ambiente sutil de fundo, igual ao dashboard de referência */
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(ellipse at 10% 0%, rgba(255,140,0,0.10) 0%, transparent 50%),
+    radial-gradient(ellipse at 90% 100%, rgba(255,80,0,0.07) 0%, transparent 50%);
+}
+#app-shell { position: relative; z-index: 1; }
 
 /* Scrollbar discreta */
 ::-webkit-scrollbar { width: 9px; height: 9px; }
@@ -34,25 +49,36 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
 .trj-link.active { background: rgba(255,140,0,0.16); color: var(--trj-primary); }
 .trj-link .ico { width: 18px; text-align: center; }
 
-.trj-kpi { cursor: pointer; transition: transform .12s ease, box-shadow .12s ease; }
-.trj-kpi:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+/* KPI: elevação + brilho colorido no hover (cor é definida via inline style por card) */
+.trj-kpi {
+  cursor: pointer; position: relative; overflow: hidden;
+  transition: transform .25s cubic-bezier(.4,0,.2,1), box-shadow .25s ease, border-color .25s ease;
+}
+.trj-kpi:hover {
+  transform: translateY(-5px);
+  border-color: rgba(255,140,0,.5);
+  box-shadow: 0 20px 40px rgba(0,0,0,.5), 0 0 30px rgba(255,140,0,.15);
+}
 
 .trj-btn {
   display: inline-flex; align-items: center; gap: 8px; justify-content: center;
   padding: 8px 14px; border-radius: 10px; font-size: 14px; font-weight: 600;
-  cursor: pointer; border: 1px solid transparent; transition: all .15s ease;
+  cursor: pointer; border: 1px solid transparent; transition: all .18s ease;
 }
-.trj-btn-primary { background: var(--trj-primary); color: #111; }
-.trj-btn-primary:hover { background: #ffa733; }
+.trj-btn-primary { background: var(--trj-primary); color: #111; box-shadow: 0 2px 10px rgba(255,140,0,.25); }
+.trj-btn-primary:hover { background: #ffa733; transform: translateY(-1px); box-shadow: 0 6px 18px rgba(255,140,0,.35); }
 .trj-btn-ghost { background: transparent; color: var(--trj-fg); border-color: var(--trj-border); }
-.trj-btn-ghost:hover { background: rgba(255,140,0,0.10); }
+.trj-btn-ghost:hover { background: rgba(255,140,0,0.10); border-color: var(--trj-border2); }
+.trj-btn-lg { padding: 14px 28px; font-size: 15.5px; border-radius: 12px; }
+.trj-btn:disabled { opacity: .4; cursor: not-allowed; }
 
 .trj-input, .trj-select {
   background: var(--trj-popover); color: var(--trj-fg);
   border: 1px solid var(--trj-border); border-radius: 10px;
   padding: 8px 12px; font-size: 14px; outline: none; width: 100%;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
-.trj-input:focus, .trj-select:focus { border-color: var(--trj-primary); }
+.trj-input:focus, .trj-select:focus { border-color: var(--trj-primary); box-shadow: 0 0 0 3px rgba(255,140,0,.12); }
 .trj-select option { background: var(--trj-popover); color: var(--trj-fg); }
 
 .trj-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -60,11 +86,72 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
   text-align: left; padding: 9px 10px; color: var(--trj-muted);
   font-weight: 600; border-bottom: 1px solid var(--trj-border);
   position: sticky; top: 0; background: var(--trj-card);
+  text-transform: uppercase; font-size: 11px; letter-spacing: .4px;
 }
-.trj-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.05); }
-.trj-table tr:hover td { background: rgba(255,140,0,0.05); }
+.trj-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.05); transition: background .12s ease; }
+.trj-table tr:hover td { background: rgba(255,140,0,0.07); }
 
 .trj-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+
+/* Cartão de gráfico: cabeçalho com "pulso" + hover de borda/sombra */
+.trj-chart-card { transition: border-color .25s ease, box-shadow .25s ease; }
+.trj-chart-card:hover { border-color: rgba(255,140,0,.4); box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+.trj-chart-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--trj-primary); box-shadow: 0 0 10px var(--trj-primary); flex-shrink: 0; }
+
+/* Dropzone reutilizável (upload de arquivos) */
+.trj-dropzone {
+  border: 2px dashed var(--trj-border2);
+  border-radius: 14px; background: rgba(255,255,255,0.02);
+  padding: 30px 18px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; text-align: center; cursor: pointer; transition: all .22s ease; min-height: 190px;
+}
+.trj-dropzone:hover, .trj-dropzone.dragover {
+  border-color: var(--trj-primary); background: rgba(255,140,0,.06); transform: translateY(-2px);
+}
+.trj-dropzone-icon {
+  width: 52px; height: 52px; border-radius: 14px; background: var(--trj-card2);
+  border: 1px solid var(--trj-border); display: flex; align-items: center; justify-content: center;
+  font-size: 22px; box-shadow: 0 8px 20px rgba(0,0,0,.4);
+}
+.trj-dropzone-title { font-size: 14.5px; font-weight: 700; color: var(--trj-fg); }
+.trj-dropzone-sub { font-size: 12px; color: var(--trj-muted); line-height: 1.5; }
+
+/* Barra de resumo (total em destaque + lista lateral) */
+.trj-resumo-bar {
+  display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: flex-start;
+  background: rgba(255,140,0,0.05); border: 1px solid rgba(255,140,0,.15);
+  border-radius: 12px; padding: 16px 22px;
+}
+.trj-resumo-total { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 120px; padding-right: 24px; border-right: 1px solid rgba(255,140,0,.2); margin-right: 8px; }
+.trj-resumo-total-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--trj-muted); margin-bottom: 6px; text-align: center; }
+.trj-resumo-total-valor { font-size: 44px; font-weight: 900; color: #ff4444; text-shadow: 0 0 20px rgba(255,68,68,.4); line-height: 1; }
+.trj-resumo-grid { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 200px; }
+.trj-resumo-item { display: flex; align-items: center; gap: 12px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.04); }
+.trj-resumo-item:last-child { border-bottom: none; }
+.trj-resumo-nome { font-size: 12px; color: var(--trj-muted); min-width: 90px; }
+.trj-resumo-val { font-size: 20px; font-weight: 800; color: #fff; min-width: 36px; }
+.trj-resumo-pct { font-size: 11px; color: rgba(255,140,0,.7); }
+
+/* Indicador "ao vivo" pulsante */
+.trj-pulse-dot {
+  display: inline-flex; width: 9px; height: 9px; border-radius: 50%; background: #ff5a5a;
+  box-shadow: 0 0 0 0 rgba(255,90,90,.65); animation: trjPulseWarn 1.4s infinite; flex-shrink: 0;
+}
+@keyframes trjPulseWarn {
+  0% { transform: scale(.95); box-shadow: 0 0 0 0 rgba(255,90,90,.65); }
+  70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(255,90,90,0); }
+  100% { transform: scale(.95); box-shadow: 0 0 0 0 rgba(255,90,90,0); }
+}
+
+/* Revelação progressiva nativa (<details>) usada no Importar Dados */
+.trj-details > summary {
+  cursor: pointer; list-style: none; color: var(--trj-primary);
+  font-size: 13px; font-weight: 600; padding: 6px 0; user-select: none;
+}
+.trj-details > summary::-webkit-details-marker { display: none; }
+.trj-details > summary::before { content: '▸ '; }
+.trj-details[open] > summary::before { content: '▾ '; }
+.trj-details[open] > summary { margin-bottom: 10px; }
 
 /* Modal */
 .trj-modal-bg {
@@ -74,6 +161,7 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
 .trj-modal {
   background: var(--trj-card); border: 1px solid var(--trj-border); border-radius: 16px;
   width: 100%; max-width: 1100px; max-height: 88vh; display: flex; flex-direction: column;
+  box-shadow: 0 40px 80px rgba(0,0,0,.6);
 }
 
 /* Toast */
@@ -88,12 +176,14 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
 .trj-toast.info { border-left: 3px solid #ff8c00; }
 @keyframes trjslide { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
-/* Loading */
+/* Loading (com mensagem opcional de etapa) */
 #trj-loading {
   position: fixed; inset: 0; background: rgba(10,10,15,.6); z-index: 90;
-  display: none; align-items: center; justify-content: center; backdrop-filter: blur(2px);
+  display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  backdrop-filter: blur(2px);
 }
 #trj-loading.show { display: flex; }
+#trj-loading-msg { font-size: 13px; max-width: 280px; text-align: center; }
 .trj-spin {
   width: 46px; height: 46px; border: 4px solid rgba(255,140,0,.25);
   border-top-color: var(--trj-primary); border-radius: 50%; animation: trjspin .8s linear infinite;
