@@ -15,7 +15,7 @@
 
   C.PRIORIDADES = ['P1', 'P2', 'P3', 'P4', 'P5'];
 
-  C.SLA_PADRAO_HORAS = { P1: 4, P2: 8, P3: 12, P4: 24, P5: 48 };
+  C.SLA_PADRAO_HORAS = { P1: 4, P2: 6, P3: 12, P4: 24, P5: 48 };
 
   C.ANF_LIST = ['21', '22', '24', '27', '28'];
 
@@ -39,18 +39,15 @@
   C.TIPO_CORRETIVA = 'Planta Interna - Manutenção Corretiva';
 
   C.AGING_BUCKETS = [
-    { label: 'Até 4h', min: 0, max: 240 },
-    { label: '4h a 6h', min: 240, max: 360 },
-    { label: '6h a 8h', min: 360, max: 480 },
-    { label: '8h a 12h', min: 480, max: 720 },
-    { label: '12h a 24h', min: 720, max: 1440 },
-    { label: '24h a 48h', min: 1440, max: 2880 },
-    { label: '48h a 72h', min: 2880, max: 4320 },
-    { label: '72h a 96h', min: 4320, max: 5760 },
-    { label: '>96h', min: 5760, max: Infinity }
+    { label: '0-1h', min: 0, max: 60 },
+    { label: '1-4h', min: 60, max: 240 },
+    { label: '4-12h', min: 240, max: 720 },
+    { label: '12-24h', min: 720, max: 1440 },
+    { label: '24-48h', min: 1440, max: 2880 },
+    { label: '>48h', min: 2880, max: Infinity }
   ];
 
-  C.AGING_CORES = ['#2ecc71', '#52d68a', '#ffb347', '#ff9f1c', '#ff8c00', '#ff6b35', '#e74c3c', '#c0392b', '#922b21'];
+  C.AGING_CORES = ['#2ecc71', '#ffb347', '#ff9f1c', '#ff8c00', '#e74c3c', '#922b21'];
 
   C.VENCIMENTO_BUCKETS = [
     { label: '< 2h', min: 0, max: 120, cor: '#e74c3c' },
