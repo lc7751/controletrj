@@ -6,6 +6,17 @@
   var C2 = {};
 
   function up(s) { return (s == null ? '' : s).toString().toUpperCase().trim(); }
+
+  // Filtra incidentes pela região escolhida no Dashboard, mas sempre mantém
+  // "OTHERS" (sem cadastro) visível, independente do filtro selecionado —
+  // assim o operador não perde de vista o que falta cadastrar.
+  function incidentesPorFiltro(incidentsEnriched, regiaoFiltro) {
+    if (!regiaoFiltro || regiaoFiltro === 'TODAS') return incidentsEnriched;
+    return incidentsEnriched.filter(function (inc) {
+      var r = inc.regiao || 'OTHERS';
+      return r === regiaoFiltro || r === 'OTHERS';
+    });
+  }
   function cidadeDe(cidadeUf) {
     if (!cidadeUf) return null;
     var parte = cidadeUf.split('/')[0];
@@ -170,9 +181,14 @@
     });
     var prazosVencimento = C.VENCIMENTO_BUCKETS.map(function (b, i) { return { label: b.label, total: vencCount[i], cor: b.cor }; });
 
+    // Incidentes filtrados pela região selecionada — mas "OTHERS" (sem
+    // cadastro) continua sempre visível em qualquer filtro, pra não perder
+    // de vista o que falta cadastrar.
+    var incFiltrados = incidentesPorFiltro(incidentsEnriched, regiaoFiltro);
+
     // Sites fora por regiao (incidentes ativos)
     var sfRegMap = {};
-    incidentsEnriched.forEach(function (inc) {
+    incFiltrados.forEach(function (inc) {
       if (up(inc.statusTrat) === 'RESOLVIDO') return;
       var reg = inc.regiao || 'OTHERS';
       sfRegMap[reg] = (sfRegMap[reg] || 0) + 1;
@@ -212,8 +228,8 @@
     });
     var produtividade = ['Geral', 'CCI', 'Campo'].map(function (c) { return { categoria: c, dentro: prod[c].dentro, fora: prod[c].fora }; });
 
-    // Top cidades (incidentes ativos)
-    var ativos = incidentsEnriched.filter(function (i) { return up(i.statusTrat) !== 'RESOLVIDO'; });
+    // Top cidades (incidentes ativos, já filtrados pela região — OTHERS sempre visível)
+    var ativos = incFiltrados.filter(function (i) { return up(i.statusTrat) !== 'RESOLVIDO'; });
     var totalSitesFora = ativos.length;
     var anfMap = {}; C.ANF_LIST.forEach(function (a) { anfMap[a] = 0; });
     var cidMap = {};
@@ -412,6 +428,40 @@
     return [];
   }
 
+  // ---- Agrupa incidentes com o mesmo END_ID em uma única linha ----
+  // Mantém a ordem original dos sites (a página de origem já vem da mais
+  // recente p/ mais antiga) e usa o horário MAIS ANTIGO do grupo — ou seja,
+  // o momento em que a "primeira tecnologia" daquele END_ID caiu.
+  function agruparIncidentesPorEndId(incidents) {
+    var grupos = {}, ordem = [];
+    (incidents || []).forEach(function (inc) {
+      var key = (inc.enderecoId || '').toString().trim().toUpperCase();
+      if (!key) { ordem.push([inc]); return; } // sem END_ID: não tem como agrupar, mantém como está
+      if (!grupos[key]) { grupos[key] = []; ordem.push(grupos[key]); }
+      grupos[key].push(inc);
+    });
+    return ordem.map(function (items) {
+      if (items.length === 1) return items[0];
+      var maisAntigo = items[0];
+      for (var i = 1; i < items.length; i++) {
+        var ta = maisAntigo.horarioDt ? new Date(maisAntigo.horarioDt).getTime() : Infinity;
+        var tb = items[i].horarioDt ? new Date(items[i].horarioDt).getTime() : Infinity;
+        if (tb < ta) maisAntigo = items[i];
+      }
+      var sites = [], tecs = [];
+      items.forEach(function (it) {
+        if (it.site && sites.indexOf(it.site) < 0) sites.push(it.site);
+        if (it.tecnologia && tecs.indexOf(it.tecnologia) < 0) tecs.push(it.tecnologia);
+      });
+      return Object.assign({}, maisAntigo, {
+        site: sites.join(', '),
+        tecnologia: tecs.length ? tecs.join(', ') : maisAntigo.tecnologia,
+        agrupado: true,
+        qtdAgrupados: items.length
+      });
+    });
+  }
+
   C2.collectIds = collectIds;
   C2.enrichTasks = enrichTasks;
   C2.enrichIncidents = enrichIncidents;
@@ -422,5 +472,6 @@
   C2.incidentsPage = incidentsPage;
   C2.drillTasks = drillTasks;
   C2.drillIncidents = drillIncidents;
+  C2.agruparIncidentesPorEndId = agruparIncidentesPorEndId;
   TRJ.compute = C2;
 })(window.TRJ = window.TRJ || {});
