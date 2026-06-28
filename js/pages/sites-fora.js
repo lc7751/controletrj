@@ -59,7 +59,7 @@
     }
 
     // ---------------- Lista de incidentes (com busca) ----------------
-    container.appendChild(buildListaIncidentes(incidents));
+    container.appendChild(buildListaIncidentes(incidents, (ctx.data && ctx.data.tasksEnriched) || []));
 
     // ---------------- Separador: ferramenta auxiliar ----------------
     container.appendChild(U.h('div', { class: 'flex items-center gap-3 mt-8 mb-4' }, [
@@ -81,10 +81,10 @@
   };
 
   // ---------------- Lista de Incidentes (busca livre) ----------------
-  function buildListaIncidentes(incidents) {
+  function buildListaIncidentes(incidents, tasksEnriched) {
     var wrap = U.h('div', { class: 'trj-card p-5' });
     wrap.appendChild(U.h('h3', { class: 'text-base font-bold mb-1', text: '📋 Lista de Incidentes' }));
-    wrap.appendChild(U.h('p', { class: 'text-xs mb-3', style: { color: 'var(--trj-muted)' }, text: 'Busque por site, end id, cidade, ANF, causa ou alarme.' }));
+    wrap.appendChild(U.h('p', { class: 'text-xs mb-3', style: { color: 'var(--trj-muted)' }, text: 'Busque por site, end id, cidade, ANF, causa ou alarme. ⚡ = correlacionado a outro(s) incidente(s) (mesma ANF/horário próximo).' }));
 
     var listEl = U.h('div', { class: 'mt-3' });
     var search = U.searchInput('🔎 Buscar incidente...', function (q) { state.busca = q; renderLista(); }, { value: state.busca });
@@ -106,7 +106,7 @@
         listEl.appendChild(U.h('div', { class: 'text-sm py-10 text-center', style: { color: 'var(--trj-muted)' }, text: 'Nenhum incidente encontrado para essa busca.' }));
         return;
       }
-      listEl.appendChild(U.incidentTable(rows));
+      listEl.appendChild(U.incidentTable(rows, tasksEnriched));
     }
     renderLista();
     return wrap;
