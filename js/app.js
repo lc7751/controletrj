@@ -203,7 +203,7 @@
   App.openDrillIncidents = function (spec, title) {
     if (!App.data) return;
     var rows = Comp.drillIncidents(App.data.incidentsEnriched, spec);
-    U.openModal(title || 'Detalhamento', U.incidentTable(rows));
+    U.openModal(title || 'Detalhamento', U.incidentTable(rows, App.data.tasksEnriched));
   };
 
   // ---------------- ROTAS ----------------
