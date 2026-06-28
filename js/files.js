@@ -223,14 +223,21 @@
   }
 
   async function collectMatches(handle) {
-    var matches = [];
+    // 1ª passada: só nomes (rápido) — filtra antes de tocar em qualquer arquivo.
+    var entries = [];
     for await (var entry of handle.values()) {
       if (entry.kind !== 'file') continue;
       if (!isAtividadesFile(entry.name)) continue;
-      var file = await entry.getFile();
-      matches.push({ name: entry.name, file: file, naoAgendada: isNaoAgendada(entry.name), key: dateKey(entry.name, file.lastModified) });
+      entries.push(entry);
     }
-    return matches;
+    // 2ª passada: lê os poucos arquivos que importam, em paralelo (bem mais rápido
+    // que um `await` por arquivo dentro do loop, principalmente com vários
+    // "Atividades-TRJ_FMMT_<data>" acumulados).
+    var files = await Promise.all(entries.map(function (e) { return e.getFile(); }));
+    return entries.map(function (entry, i) {
+      var file = files[i];
+      return { name: entry.name, file: file, naoAgendada: isNaoAgendada(entry.name), key: dateKey(entry.name, file.lastModified) };
+    });
   }
 
   // ------------------------------------------------------------------
@@ -257,17 +264,20 @@
     return false;
   }
 
-  async function loadFromMatches(matches, origem, signature) {
+  async function loadFromMatches(matches, origem, signature, onProgress) {
     var ag = matches.filter(function (m) { return !m.naoAgendada; }).sort(function (a, b) { return b.key - a.key; });
     var na = matches.filter(function (m) { return m.naoAgendada; }).sort(function (a, b) { return b.key - a.key; });
     var chosen = [];
     if (ag[0]) chosen.push(ag[0]);
     if (na[0]) chosen.push(na[0]);
     if (!chosen.length) chosen = matches; // fallback: tudo
+    if (onProgress) onProgress('Lendo ' + chosen.length + ' arquivo(s)...');
+    // lê todos os buffers em paralelo (em vez de um await por arquivo, sequencial)
+    var buffers = await Promise.all(chosen.map(function (c) { return c.file.arrayBuffer(); }));
+    if (onProgress) onProgress('Processando planilha...');
     var tasks = [], arquivos = [];
     for (var i = 0; i < chosen.length; i++) {
-      var buf = await chosen[i].file.arrayBuffer();
-      var parsed = parseArrayBuffer(buf);
+      var parsed = parseArrayBuffer(buffers[i]);
       tasks = tasks.concat(parsed);
       arquivos.push({ nome: chosen[i].name, qtd: parsed.length });
     }
@@ -275,24 +285,27 @@
     return { total: tasks.length, arquivos: arquivos };
   }
 
-  // Relê a pasta conectada e carrega os arquivos mais recentes
-  F.scanFolder = async function () {
+  // Relê a pasta conectada e carrega os arquivos mais recentes.
+  // onProgress(msg) é opcional — usado pra mostrar a etapa atual no overlay de loading.
+  F.scanFolder = async function (onProgress) {
+    if (onProgress) onProgress('Verificando pasta conectada...');
     var handle = await idbGet(IDB_KEY);
     if (!handle) throw new Error('Nenhuma pasta conectada. Clique em "Conectar pasta de Downloads".');
     if (!(await ensurePermission(handle))) throw new Error('Permissão para ler a pasta foi negada.');
+    if (onProgress) onProgress('Procurando arquivos na pasta...');
     var matches = await collectMatches(handle);
     if (!matches.length) throw new Error('Nenhum arquivo "Atividades-TRJ_FMMT" foi encontrado na pasta conectada.');
     var sig = buildSignature(matches);
     if (sig && sig === monitor.lastSignature) {
       return { total: mem.tasks.length, arquivos: (mem.meta && mem.meta.tasks && mem.meta.tasks.arquivos) || [], unchanged: true };
     }
-    return await loadFromMatches(matches, 'pasta', sig);
+    return await loadFromMatches(matches, 'pasta', sig, onProgress);
   };
 
   // ------------------------------------------------------------------
   // 7) Upload manual (qualquer navegador)
   // ------------------------------------------------------------------
-  F.readManualFiles = async function (fileList) {
+  F.readManualFiles = async function (fileList, onProgress) {
     var files = Array.prototype.slice.call(fileList || []);
     var xls = files.filter(function (f) { return isExcelName(f.name); });
     if (!xls.length) throw new Error('Selecione um ou mais arquivos .xlsx (Atividades-TRJ_FMMT).');
@@ -301,7 +314,7 @@
     });
     // Se nenhum nome casar com o padrão, assume que o usuário escolheu certo e usa todos.
     var validos = matches.filter(function (m) { return isAtividadesFile(m.name); });
-    return await loadFromMatches(validos.length ? validos : matches, 'upload');
+    return await loadFromMatches(validos.length ? validos : matches, 'upload', null, onProgress);
   };
 
   // Preview rápido (sem salvar) — para o usuário conferir o mapeamento
