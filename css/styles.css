@@ -15,6 +15,29 @@
   --trj-border2: rgba(255, 140, 0, 0.32);
 }
 
+/* Tema claro — ativado via <html data-theme="light"> (ver app.js, toggle no menu) */
+html[data-theme="light"] {
+  --trj-bg: #f3f4f7;
+  --trj-card: #ffffff;
+  --trj-card2: #eef0f5;
+  --trj-popover: #ffffff;
+  --trj-primary: #e07a00;
+  --trj-primary2: #ff8c00;
+  --trj-red: #d6334a;
+  --trj-green: #1f9d57;
+  --trj-blue: #2a7fc9;
+  --trj-fg: #181820;
+  --trj-muted: #5a5d6b;
+  --trj-border: rgba(224, 122, 0, 0.18);
+  --trj-border2: rgba(224, 122, 0, 0.38);
+}
+
+/* Título com fonte mais executiva/chamativa (Sora) — usado no pageHeader e nos cabeçalhos das páginas */
+.trj-heading {
+  font-family: 'Sora', ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
 html, body { background: var(--trj-bg); color: var(--trj-fg); }
 body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; position: relative; }
 
