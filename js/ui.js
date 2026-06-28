@@ -49,6 +49,17 @@
   U.fmtNum = fmtNum;
   U.fmtPct = function (n) { return (n == null || isNaN(n) ? 0 : n) + '%'; };
 
+  // hex (#rgb ou #rrggbb) -> "r,g,b" para usar em rgba(...)
+  function hexToRgb(hex) {
+    hex = String(hex || '').replace('#', '');
+    if (hex.length === 3) hex = hex.split('').map(function (c) { return c + c; }).join('');
+    var r = parseInt(hex.substr(0, 2), 16), g = parseInt(hex.substr(2, 2), 16), b = parseInt(hex.substr(4, 2), 16);
+    if (isNaN(r) || isNaN(g) || isNaN(b)) return '255,140,0';
+    return r + ',' + g + ',' + b;
+  }
+  function hexToRgba(hex, a) { return 'rgba(' + hexToRgb(hex) + ',' + a + ')'; }
+  U.hexToRgba = hexToRgba;
+
   // ---------- toast ----------
   function ensureToasts() {
     var t = document.getElementById('trj-toasts');
@@ -62,13 +73,23 @@
     setTimeout(function () { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(function () { el.remove(); }, 320); }, 3600);
   };
 
-  // ---------- loading ----------
+  // ---------- loading (com mensagem opcional de etapa) ----------
   function ensureLoading() {
     var l = document.getElementById('trj-loading');
-    if (!l) { l = h('div', { id: 'trj-loading' }, h('div', { class: 'trj-spin' })); document.body.appendChild(l); }
+    if (!l) {
+      l = h('div', { id: 'trj-loading' }, [
+        h('div', { class: 'trj-spin' }),
+        h('div', { id: 'trj-loading-msg', style: { color: 'var(--trj-muted)' } })
+      ]);
+      document.body.appendChild(l);
+    }
     return l;
   }
-  U.loading = function (show) { ensureLoading().classList.toggle('show', !!show); };
+  U.loading = function (show, msg) {
+    ensureLoading().classList.toggle('show', !!show);
+    var m = document.getElementById('trj-loading-msg');
+    if (m) m.textContent = msg || '';
+  };
 
   // ---------- modal ----------
   U.closeModal = function () {
@@ -90,15 +111,93 @@
   };
 
   // ---------- KPI card ----------
+  // Mesma assinatura de sempre: { label, value, sub?, cor?, onClick? }
+  // Visual: barra de destaque no topo + brilho no canto + glow no valor,
+  // tudo na cor "cor" (ou laranja padrão), com elevação no hover (via CSS .trj-kpi).
   U.kpiCard = function (o) {
-    var card = h('div', { class: 'trj-card trj-kpi p-4 flex flex-col gap-1' }, [
-      h('div', { class: 'text-xs font-semibold uppercase tracking-wide', style: { color: 'var(--trj-muted)' }, text: o.label }),
-      h('div', { class: 'text-3xl font-extrabold', style: { color: o.cor || 'var(--trj-fg)' }, text: o.value }),
+    var corHex = /^#/.test(o.cor || '') ? o.cor : '#ff8c00';
+    var accent = h('div', { style: { position: 'absolute', top: '0', left: '0', right: '0', height: '3px', background: corHex } });
+    var glow = h('div', { style: {
+      position: 'absolute', bottom: '-22px', right: '-22px', width: '90px', height: '90px', borderRadius: '50%',
+      background: 'radial-gradient(circle, ' + hexToRgba(corHex, .16) + ', transparent)', pointerEvents: 'none'
+    } });
+    var card = h('div', { class: 'trj-card trj-kpi p-4 flex flex-col gap-1', style: { position: 'relative' } }, [
+      accent, glow,
+      h('div', { class: 'text-xs font-semibold uppercase tracking-wide', style: { color: 'var(--trj-muted)', letterSpacing: '1px' }, text: o.label }),
+      h('div', { class: 'text-3xl font-extrabold', style: { color: o.cor || 'var(--trj-fg)', textShadow: '0 0 18px ' + hexToRgba(corHex, .3) }, text: o.value }),
       o.sub ? h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: o.sub }) : null
     ]);
     if (o.onClick) card.addEventListener('click', o.onClick);
     else card.style.cursor = 'default';
     return card;
+  };
+
+  // ---------- Barra de resumo (total em destaque + lista lateral) ----------
+  // items: [{ nome, valor, pct? }]
+  U.resumoBar = function (totalLabel, totalValor, items) {
+    return h('div', { class: 'trj-resumo-bar' }, [
+      h('div', { class: 'trj-resumo-total' }, [
+        h('span', { class: 'trj-resumo-total-label', text: totalLabel }),
+        h('span', { class: 'trj-resumo-total-valor', text: String(totalValor) })
+      ]),
+      h('div', { class: 'trj-resumo-grid' }, (items || []).map(function (it) {
+        return h('div', { class: 'trj-resumo-item' }, [
+          h('span', { class: 'trj-resumo-nome', text: it.nome }),
+          h('span', { class: 'trj-resumo-val', text: String(it.valor) }),
+          it.pct != null ? h('span', { class: 'trj-resumo-pct', text: it.pct }) : null
+        ]);
+      }))
+    ]);
+  };
+
+  // ---------- Caixa de busca (debounce simples) ----------
+  U.searchInput = function (placeholder, onChange, opts) {
+    opts = opts || {};
+    var inp = h('input', { type: 'text', class: 'trj-input', placeholder: placeholder, value: opts.value || '' });
+    var t = null;
+    inp.addEventListener('input', function () {
+      clearTimeout(t);
+      t = setTimeout(function () { onChange(inp.value); }, 140);
+    });
+    return inp;
+  };
+
+  // ---------- Dropzone reutilizável (clique ou arraste-e-solte) ----------
+  // opts: { icon, title, sub, accept, multiple, statusText, statusOk, onFile(fileOrFileList) }
+  U.dropzone = function (opts) {
+    opts = opts || {};
+    var fileInput = h('input', {
+      type: 'file', style: { display: 'none' },
+      accept: opts.accept || '', multiple: opts.multiple || false,
+      onchange: function () {
+        if (!this.files || !this.files.length) return;
+        opts.onFile(opts.multiple ? this.files : this.files[0]);
+      }
+    });
+    var statusPill = h('div', {
+      class: 'trj-badge', style: {
+        background: opts.statusOk ? 'rgba(46,204,113,.12)' : 'rgba(255,255,255,.05)',
+        color: opts.statusOk ? 'var(--trj-green)' : 'var(--trj-muted)',
+        fontFamily: 'ui-monospace, monospace', padding: '6px 12px', marginTop: '4px'
+      }, text: opts.statusText || 'Aguardando arquivo...'
+    });
+    var dz = h('div', { class: 'trj-dropzone' }, [
+      h('div', { class: 'trj-dropzone-icon', text: opts.icon || '📁' }),
+      h('div', { class: 'trj-dropzone-title', text: opts.title || 'Arraste o arquivo aqui' }),
+      h('div', { class: 'trj-dropzone-sub', html: opts.sub || 'ou clique para selecionar' }),
+      statusPill,
+      fileInput
+    ]);
+    dz.addEventListener('click', function (e) { if (e.target !== fileInput) fileInput.click(); });
+    dz.addEventListener('dragover', function (e) { e.preventDefault(); dz.classList.add('dragover'); });
+    dz.addEventListener('dragleave', function () { dz.classList.remove('dragover'); });
+    dz.addEventListener('drop', function (e) {
+      e.preventDefault(); dz.classList.remove('dragover');
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      opts.onFile(opts.multiple ? files : files[0]);
+    });
+    return dz;
   };
 
   // ---------- Chart card (titulo + canvas) ----------
@@ -107,10 +206,13 @@
     var canvas = h('canvas');
     var wrap = h('div', { class: 'chart-wrap' + (opts.small ? ' sm' : '') }, canvas);
     var head = h('div', { class: 'flex items-center justify-between mb-3' }, [
-      h('h3', { class: 'text-sm font-bold', text: title }),
+      h('h3', { class: 'text-sm font-bold flex items-center gap-2' }, [
+        h('span', { class: 'trj-chart-dot' }),
+        h('span', { text: title })
+      ]),
       opts.hint ? h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: opts.hint }) : null
     ]);
-    var card = h('div', { class: 'trj-card p-4' }, [head, wrap]);
+    var card = h('div', { class: 'trj-card trj-chart-card p-4' }, [head, wrap]);
     return { card: card, canvas: canvas };
   };
 
