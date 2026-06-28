@@ -45,12 +45,12 @@
     container.appendChild(kpiGrid);
 
     // ---- charts grid ----
-    var aging = U.chartCard('Aging do Backlog');
-    var venc = U.chartCard('Prazos a Vencer');
-    var sites = U.chartCard('Sites Fora por Região');
-    var slaReg = U.chartCard('SLA por Região');
-    var manu = U.chartCard('Atividades Manuais');
-    var prod = U.chartCard('Produtividade Encerramento');
+    var aging = U.chartCard('Aging do Backlog', { onCopy: function () { return copyChartTexto('Aging do Backlog', d.aging); } });
+    var venc = U.chartCard('Prazos a Vencer', { onCopy: function () { return copyChartTexto('Prazos a Vencer', d.prazosVencimento); } });
+    var sites = U.chartCard('Sites Fora por Região', { onCopy: function () { return copyChartTexto('Sites Fora por Região', d.sitesForaRegiao); } });
+    var slaReg = U.chartCard('SLA por Região', { onCopy: function () { return copyChartTexto('SLA por Região', d.slaPorRegiao); } });
+    var manu = U.chartCard('Atividades Manuais', { onCopy: function () { return copyChartTexto('Atividades Manuais', d.atividadesManuais); } });
+    var prod = U.chartCard('Produtividade Encerramento', { onCopy: function () { return copyChartTexto('Produtividade Encerramento', d.produtividade); } });
     var grid = U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5' }, [aging.card, venc.card, sites.card, slaReg.card, manu.card, prod.card]);
     container.appendChild(grid);
 
@@ -74,6 +74,20 @@
     return 'outras';
   }
 
+  // Formata os dados de qualquer gráfico do dashboard como texto simples,
+  // pra copiar e colar (WhatsApp, e-mail, etc.).
+  function copyChartTexto(titulo, rows) {
+    var linhas = ['*' + titulo + '*'];
+    (rows || []).forEach(function (r) {
+      var nome = r.label || r.categoria || r.name || r.regiao || '?';
+      if (r.dentro != null || r.fora != null) linhas.push(nome + ': Dentro ' + (r.dentro || 0) + ' · Fora ' + (r.fora || 0));
+      else if (r.total != null) linhas.push(nome + ': ' + r.total);
+      else if (r.value != null) linhas.push(nome + ': ' + r.value);
+    });
+    if (linhas.length === 1) linhas.push('(sem dados)');
+    return linhas.join('\n');
+  }
+
   function buildTopCidades(tc, app) {
     var porAnf = tc.porAnf || [], cidades = tc.cidades || [];
     var anfList = U.h('div', { class: 'flex flex-wrap gap-2 mb-4' }, porAnf.map(function (a) {
@@ -91,8 +105,21 @@
       U.h('div', { class: 'text-xs uppercase', style: { color: 'var(--trj-muted)' }, text: 'Total Sites Fora' }),
       U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1' }, text: U.fmtNum(tc.totalSitesFora) })
     ]);
+    var btnCopiar = U.h('button', {
+      class: 'trj-btn trj-btn-ghost', title: 'Copiar dados em texto', style: { padding: '3px 9px', fontSize: '12px' }, text: '📋',
+      onclick: function () {
+        var linhas = ['*Top Cidades — Sites Fora*', 'Total: ' + (tc.totalSitesFora || 0)];
+        (porAnf || []).forEach(function (a) { if (a.total) linhas.push(a.anf + ': ' + a.total + ' (' + a.pct + '%)'); });
+        linhas.push('');
+        cidades.forEach(function (c) { linhas.push(c.cidade + ': ' + c.total); });
+        U.copyText(linhas.join('\n'), 'Dados copiados!');
+      }
+    });
     return U.h('div', { class: 'trj-card p-4' }, [
-      U.h('h3', { class: 'text-sm font-bold mb-3', text: 'Top Cidades — Sites Fora' }),
+      U.h('div', { class: 'flex items-center justify-between mb-3' }, [
+        U.h('h3', { class: 'text-sm font-bold', text: 'Top Cidades — Sites Fora' }),
+        btnCopiar
+      ]),
       U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4' }, [
         total,
         U.h('div', { class: 'lg:col-span-2' }, [anfList, bars])
