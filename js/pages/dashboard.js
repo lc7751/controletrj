@@ -25,8 +25,9 @@
         return U.h('option', { value: p, text: p, selected: f.prioridade === p ? 'selected' : null });
       })));
     var btnWa = U.h('button', { class: 'trj-btn trj-btn-ghost', text: '📱 Copiar resumo', onclick: function () { copiarResumo(d); } });
+    var btnExcel = U.h('button', { class: 'trj-btn trj-btn-ghost', text: '📊 Extrair Excel', onclick: function () { exportarExcelDashboard(d); } });
     var btnRef = U.h('button', { class: 'trj-btn trj-btn-primary', html: app.icon('refresh') + ' Atualizar', onclick: function () { app.refresh(); } });
-    var right = U.h('div', { class: 'flex items-center gap-2 flex-wrap' }, [selReg, selPri, btnWa, btnRef]);
+    var right = U.h('div', { class: 'flex items-center gap-2 flex-wrap' }, [selReg, selPri, btnWa, btnExcel, btnRef]);
     var atualizadoEm = d.atualizadoEm ? new Date(d.atualizadoEm).toLocaleString('pt-BR') : new Date().toLocaleString('pt-BR');
     container.appendChild(U.pageHeader('Dashboard Operacional', 'Atualizado em ' + atualizadoEm, right));
 
@@ -45,12 +46,12 @@
     container.appendChild(kpiGrid);
 
     // ---- charts grid ----
-    var aging = U.chartCard('Aging do Backlog', { onCopy: function () { return copyChartTexto('Aging do Backlog', d.aging); } });
-    var venc = U.chartCard('Prazos a Vencer', { onCopy: function () { return copyChartTexto('Prazos a Vencer', d.prazosVencimento); } });
-    var sites = U.chartCard('Sites Fora por Região', { onCopy: function () { return copyChartTexto('Sites Fora por Região', d.sitesForaRegiao); } });
-    var slaReg = U.chartCard('SLA por Região', { onCopy: function () { return copyChartTexto('SLA por Região', d.slaPorRegiao); } });
-    var manu = U.chartCard('Atividades Manuais', { onCopy: function () { return copyChartTexto('Atividades Manuais', d.atividadesManuais); } });
-    var prod = U.chartCard('Produtividade Encerramento', { onCopy: function () { return copyChartTexto('Produtividade Encerramento', d.produtividade); } });
+    var aging = U.chartCard('Aging do Backlog');
+    var venc = U.chartCard('Prazos a Vencer');
+    var sites = U.chartCard('Sites Fora por Região');
+    var slaReg = U.chartCard('SLA por Região');
+    var manu = U.chartCard('Atividades Manuais');
+    var prod = U.chartCard('Produtividade Encerramento');
     var grid = U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5' }, [aging.card, venc.card, sites.card, slaReg.card, manu.card, prod.card]);
     container.appendChild(grid);
 
@@ -64,7 +65,13 @@
     U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), { onBar: function (i) { app.openDrillIncidents({ tipo: 'sitesFora', arg: sfData[i].regiao }, 'Sites fora: ' + sfData[i].label); } });
     U.stackedChart(slaReg.canvas, srData, { onSeg: function (i, ds) { var r = srData[i]; app.openDrillTasks({ tipo: 'slaRegiao', arg: r.regiao + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'SLA ' + r.label); } });
     U.donutChart(manu.canvas, amData, { cores: C.DONUT_CORES, onSlice: function (i) { var nm = amData[i].name; app.openDrillTasks({ tipo: 'atividades', arg: argAtiv(nm) }, f, nm); } });
-    U.stackedChart(prod.canvas, pData.map(function (p) { return { label: p.categoria, dentro: p.dentro, fora: p.fora }; }), { onSeg: function (i, ds) { var cat = pData[i].categoria; app.openDrillTasks({ tipo: 'produtividadeCat', arg: cat + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'Produtividade ' + cat); } });
+    U.stackedChart(prod.canvas, pData.map(function (p) { return { label: p.categoria, dentro: p.dentro, fora: p.fora, preditiva: p.preditiva }; }), {
+      onSeg: function (i, ds) {
+        var cat = pData[i].categoria;
+        var lado = ds === 2 ? 'preditiva' : (ds === 1 ? 'fora' : 'dentro');
+        app.openDrillTasks({ tipo: 'produtividadeCat', arg: cat + '|' + lado }, f, 'Produtividade ' + cat + (ds === 2 ? ' — Preditiva' : (ds === 1 ? ' — Fora do SLA' : ' — Dentro do SLA')));
+      }
+    });
   };
 
   function argAtiv(name) {
@@ -72,20 +79,6 @@
     if (/Prevent/i.test(name)) return 'prev';
     if (/Conjunta/i.test(name)) return 'conj';
     return 'outras';
-  }
-
-  // Formata os dados de qualquer gráfico do dashboard como texto simples,
-  // pra copiar e colar (WhatsApp, e-mail, etc.).
-  function copyChartTexto(titulo, rows) {
-    var linhas = ['*' + titulo + '*'];
-    (rows || []).forEach(function (r) {
-      var nome = r.label || r.categoria || r.name || r.regiao || '?';
-      if (r.dentro != null || r.fora != null) linhas.push(nome + ': Dentro ' + (r.dentro || 0) + ' · Fora ' + (r.fora || 0));
-      else if (r.total != null) linhas.push(nome + ': ' + r.total);
-      else if (r.value != null) linhas.push(nome + ': ' + r.value);
-    });
-    if (linhas.length === 1) linhas.push('(sem dados)');
-    return linhas.join('\n');
   }
 
   function buildTopCidades(tc, app) {
@@ -105,21 +98,8 @@
       U.h('div', { class: 'text-xs uppercase', style: { color: 'var(--trj-muted)' }, text: 'Total Sites Fora' }),
       U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1' }, text: U.fmtNum(tc.totalSitesFora) })
     ]);
-    var btnCopiar = U.h('button', {
-      class: 'trj-btn trj-btn-ghost', title: 'Copiar dados em texto', style: { padding: '3px 9px', fontSize: '12px' }, text: '📋',
-      onclick: function () {
-        var linhas = ['*Top Cidades — Sites Fora*', 'Total: ' + (tc.totalSitesFora || 0)];
-        (porAnf || []).forEach(function (a) { if (a.total) linhas.push(a.anf + ': ' + a.total + ' (' + a.pct + '%)'); });
-        linhas.push('');
-        cidades.forEach(function (c) { linhas.push(c.cidade + ': ' + c.total); });
-        U.copyText(linhas.join('\n'), 'Dados copiados!');
-      }
-    });
     return U.h('div', { class: 'trj-card p-4' }, [
-      U.h('div', { class: 'flex items-center justify-between mb-3' }, [
-        U.h('h3', { class: 'text-sm font-bold', text: 'Top Cidades — Sites Fora' }),
-        btnCopiar
-      ]),
+      U.h('h3', { class: 'text-sm font-bold mb-3', text: 'Top Cidades — Sites Fora' }),
       U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4' }, [
         total,
         U.h('div', { class: 'lg:col-span-2' }, [anfList, bars])
@@ -144,5 +124,48 @@
     var txt = linhas.join('\n');
     if (navigator.clipboard) navigator.clipboard.writeText(txt).then(function () { U.toast('Resumo copiado!', 'ok'); }, function () { U.toast('Não foi possível copiar.', 'err'); });
     else U.toast('Cópia não suportada neste navegador.', 'err');
+  }
+
+  // Extrai todos os dados do Dashboard (KPIs + todos os gráficos) num único
+  // arquivo Excel, uma aba por bloco — pra quem preferir analisar fora do site.
+  function exportarExcelDashboard(d) {
+    if (typeof XLSX === 'undefined') { U.toast('Biblioteca de Excel não carregou. Recarregue a página.', 'err'); return; }
+    var K = d.kpis || {};
+    var tc = d.topCidades || {};
+    var wb = XLSX.utils.book_new();
+
+    function aba(nome, aoa) {
+      var ws = XLSX.utils.aoa_to_sheet(aoa);
+      XLSX.utils.book_append_sheet(wb, ws, nome.slice(0, 31)); // limite de 31 chars do Excel
+    }
+    function abaLista(nome, rows, cols) {
+      var aoa = [cols.map(function (c) { return c.h; })];
+      (rows || []).forEach(function (r) { aoa.push(cols.map(function (c) { return r[c.k] != null ? r[c.k] : ''; })); });
+      aba(nome, aoa);
+    }
+
+    aba('KPIs', [
+      ['Indicador', 'Valor'],
+      ['Fora do SLA', K.foraSla || 0],
+      ['Backlog Total', K.backlogTotal || 0],
+      ['Backlog Indefinido', K.backlogIndef || 0],
+      ['Preditiva', K.preditiva || 0],
+      ['Produtividade (total encerradas)', K.produtividade || 0],
+      ['SLA Geral (%)', K.slaGeral || 0],
+      ['Sites Fora (total)', tc.totalSitesFora || 0],
+      ['Atualizado em', new Date(d.atualizadoEm || Date.now()).toLocaleString('pt-BR')]
+    ]);
+    abaLista('Aging do Backlog', d.aging, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
+    abaLista('Prazos a Vencer', d.prazosVencimento, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
+    abaLista('Sites Fora por Regiao', d.sitesForaRegiao, [{ k: 'label', h: 'Região' }, { k: 'total', h: 'Total' }]);
+    abaLista('SLA por Regiao', d.slaPorRegiao, [{ k: 'label', h: 'Região' }, { k: 'dentro', h: 'Dentro SLA' }, { k: 'fora', h: 'Fora SLA' }]);
+    abaLista('Atividades Manuais', d.atividadesManuais, [{ k: 'name', h: 'Tipo' }, { k: 'value', h: 'Total' }]);
+    abaLista('Produtividade', d.produtividade, [{ k: 'categoria', h: 'Categoria' }, { k: 'dentro', h: 'Dentro SLA' }, { k: 'fora', h: 'Fora SLA' }, { k: 'preditiva', h: 'Preditiva' }]);
+    abaLista('Top Cidades', tc.cidades, [{ k: 'cidade', h: 'Cidade' }, { k: 'total', h: 'Total' }]);
+    abaLista('Sites Fora por ANF', tc.porAnf, [{ k: 'anf', h: 'ANF' }, { k: 'total', h: 'Total' }, { k: 'pct', h: '%' }]);
+
+    var ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    XLSX.writeFile(wb, 'Dashboard_TRJ_' + ts + '.xlsx');
+    U.toast('Excel exportado!', 'ok');
   }
 })(window.TRJ = window.TRJ || {});
