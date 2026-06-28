@@ -92,7 +92,42 @@
       U.h('div', { class: 'text-xs px-2 mb-2 truncate', style: { color: 'var(--trj-muted)' }, text: user.email || '' }),
       U.h('button', { class: 'trj-link w-full', onclick: doLogout }, [U.h('span', { class: 'ico', html: icon('logout') }), U.h('span', { text: 'Sair' })])
     ]);
-    return U.h('aside', { id: 'sidebar', class: 'trj-card flex flex-col', style: { width: '256px', minWidth: '256px', borderRadius: '0', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', height: '100vh', position: 'sticky', top: '0' } }, [brand, nav, footer]);
+    return U.h('aside', { id: 'sidebar', class: 'trj-card flex flex-col', style: { width: '256px', minWidth: '256px', borderRadius: '0', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', height: '100vh' } }, [brand, nav, footer]);
+  }
+
+  // ---------------- Comportamento do menu (hover na borda + botão p/ touch) ----------------
+  var SIDEBAR_CLOSE_DELAY = 220; // ms de tolerância ao tirar o mouse, evita fechar "tremendo"
+  var sidebarCloseTimer = null;
+  var sidebarPinned = false; // true = aberto via clique no botão (modo touch/clique)
+
+  function openSidebar() {
+    if (sidebarCloseTimer) { clearTimeout(sidebarCloseTimer); sidebarCloseTimer = null; }
+    document.body.classList.add('trj-sidebar-open');
+  }
+  function closeSidebarSoon() {
+    if (sidebarPinned) return; // só fecha automaticamente se não foi fixado pelo botão
+    if (sidebarCloseTimer) clearTimeout(sidebarCloseTimer);
+    sidebarCloseTimer = setTimeout(function () { document.body.classList.remove('trj-sidebar-open'); }, SIDEBAR_CLOSE_DELAY);
+  }
+  function closeSidebarNow() {
+    sidebarPinned = false;
+    if (sidebarCloseTimer) { clearTimeout(sidebarCloseTimer); sidebarCloseTimer = null; }
+    document.body.classList.remove('trj-sidebar-open');
+  }
+  function toggleSidebarPinned() {
+    sidebarPinned = !sidebarPinned;
+    if (sidebarPinned) openSidebar(); else closeSidebarNow();
+  }
+
+  // Wireup feito uma única vez (os elementos de hover/botão são fixos, fora do shell que é recriado a cada render)
+  function ensureSidebarChrome() {
+    if (document.getElementById('sidebar-hover-zone')) return;
+    var hoverZone = U.h('div', { id: 'sidebar-hover-zone' });
+    hoverZone.addEventListener('mouseenter', openSidebar);
+    hoverZone.addEventListener('mouseleave', closeSidebarSoon);
+    var toggleBtn = U.h('button', { id: 'sidebar-toggle-btn', title: 'Abrir menu', text: '⋮', onclick: toggleSidebarPinned });
+    document.body.appendChild(hoverZone);
+    document.body.appendChild(toggleBtn);
   }
 
   function doLogout() { if (TRJ.files && TRJ.files.stopAutoMonitor) TRJ.files.stopAutoMonitor(); if (App._timer) { clearInterval(App._timer); App._timer = null; } TRJ.auth.logout(); location.hash = '#/dashboard'; showLogin(); }
@@ -105,29 +140,22 @@
   }
 
   function buildShell() {
+    ensureSidebarChrome();
     var shell = document.getElementById('app-shell');
     shell.innerHTML = '';
     shell.style.display = 'flex';
     var sidebar = buildSidebar();
-    // topbar mobile
-    var topbar = U.h('div', { class: 'flex items-center justify-between px-4 py-3 lg:hidden trj-card', style: { borderRadius: '0', borderLeft: 'none', borderRight: 'none', borderTop: 'none' } }, [
-      U.h('div', { class: 'flex items-center gap-2' }, [
-        U.h('img', { src: 'assets/logo-trj.png', alt: 'TRJ', style: { width: '28px', height: '28px' } }),
-        U.h('span', { class: 'font-bold', style: { color: 'var(--trj-primary)' }, text: 'CONTROLE TRJ' })
-      ]),
-      U.h('button', { class: 'trj-btn trj-btn-ghost', text: '☰', onclick: toggleSidebar })
-    ]);
-    var page = U.h('div', { id: 'page', class: 'p-4 lg:p-6', style: { flex: '1' } });
-    var main = U.h('div', { style: { flex: '1', minWidth: '0' } }, [topbar, page]);
+    sidebar.addEventListener('mouseenter', openSidebar);
+    sidebar.addEventListener('mouseleave', closeSidebarSoon);
+    // ao escolher uma aba, prioriza o conteúdo: fecha o menu (inclusive se fixado pelo botão)
+    sidebar.querySelectorAll('.trj-link[data-hash]').forEach(function (a) {
+      a.addEventListener('click', closeSidebarNow);
+    });
+    var page = U.h('div', { id: 'page', class: 'p-4 lg:p-6', style: { paddingTop: '54px' } });
+    var main = U.h('div', { style: { flex: '1', minWidth: '0', width: '100%' } }, [page]);
     shell.appendChild(sidebar);
     shell.appendChild(main);
     setActiveLink();
-  }
-
-  function toggleSidebar() {
-    var sb = document.getElementById('sidebar');
-    if (!sb) return;
-    sb.style.display = (sb.style.display === 'none' || getComputedStyle(sb).display === 'none') ? 'flex' : 'none';
   }
 
   // ---------------- DADOS ----------------
