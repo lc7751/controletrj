@@ -5,13 +5,20 @@
  * de Downloads. Dois caminhos: leitura automática (Chrome/Edge) ou upload
  * manual (qualquer navegador).
  *
- * Os INCIDENTES (Sites Fora) podem ser importados de duas formas:
+ * Os INCIDENTES (Sites Fora) podem ser importados de três formas:
  *   • colando o texto/HTML do painel G.E.N.E.S.I.S em um campo de texto;
- *   • anexando o arquivo do painel G.E.N.E.S.I.S.
+ *   • anexando o arquivo do painel G.E.N.E.S.I.S;
+ *   • clicando em "Buscar automaticamente" — chama a Ponte TRJ local
+ *     (servidor que roda na sua máquina enquanto conectado na VPN e
+ *     executa o puxar_dados.exe por baixo dos panos).
  * ===================================================================== */
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
   var U = TRJ.ui, C = TRJ.constants, FS = TRJ.files, G = TRJ.genesis, Comp = TRJ.compute;
+
+  // Endereço da Ponte TRJ local (ver ponte_trj.py). Só funciona com o
+  // servidor local rodando e a VPN da empresa conectada.
+  var PONTE_URL = 'http://localhost:5057/api/incidentes';
 
   function listaArquivos(meta) {
     var arr = (meta && meta.arquivos) || [];
@@ -56,6 +63,74 @@
       processarGenesis(reader.result, data, app, 'genesis-arquivo').then(function () { input.value = ''; });
     };
     reader.readAsText(file, 'UTF-8');
+  }
+
+  // Converte as linhas devolvidas pela Ponte local (já extraídas pelo
+  // puxar_dados.exe) para o mesmo formato que parseGenesisHtml() produz,
+  // pra poder reaproveitar Comp.genesisToIncidents() sem duplicar lógica.
+  function genesisRowsFromPonte(rows) {
+    return (rows || []).map(function (r) {
+      return {
+        site: r.site || null,
+        horario: r.horario || null,
+        downtime: r.duracao || null,
+        gsbi: null,
+        qtdFurtos: 0,
+        qtdCelulas: 0,
+        tecnologia: null,
+        enderecoId: r.end_id || null,
+        anf: r.anf || null,
+        cidadeUf: r.cidade || null,
+        infra: r.infra || null,
+        eve: r.eve || null,
+        statusEvento: null,
+        previsao: r.previsao || null,
+        causa: r.causa || null,
+        detalhe: null,
+        alarme: r.alarme || null,
+        peso: parseInt(r.peso, 10) || 0
+      };
+    });
+  }
+
+  // Busca os incidentes automaticamente via Ponte TRJ local (que por sua
+  // vez executa o puxar_dados.exe). Requer VPN conectada e a ponte rodando.
+  async function buscarAutomatico(data, app) {
+    try {
+      U.loading(true);
+      var resp;
+      try {
+        resp = await fetch(PONTE_URL, { method: 'GET' });
+      } catch (e) {
+        U.toast('Não consegui falar com a Ponte TRJ local. Ela está rodando (iniciar_ponte_trj.bat) e você está conectado na VPN?', 'err');
+        return false;
+      }
+      var json = await resp.json().catch(function () { return null; });
+      if (!resp.ok || !json || json.erro) {
+        U.toast((json && json.erro) || ('A Ponte TRJ retornou um erro (HTTP ' + resp.status + ').'), 'err');
+        return false;
+      }
+      var genesisRows = genesisRowsFromPonte(json.incidentes);
+      if (!genesisRows.length) { U.toast('A busca automática não retornou nenhum incidente.', 'err'); return false; }
+
+      var ids = genesisRows.map(function (r) { return (r.enderecoId || r.site || '').toString().toUpperCase(); }).filter(Boolean);
+      var validMap = (data && data.validMap) || {};
+      if (ids.length) {
+        try { var lk = await TRJ.api.lookupCities(ids); validMap = Object.assign({}, validMap, (lk && lk.map) || {}); }
+        catch (e) { /* sem backend de cidades: segue sem enriquecimento */ }
+      }
+      var incidentes = Comp.genesisToIncidents(genesisRows, validMap);
+      FS.setIncidents(incidentes, { origem: 'genesis-auto', em: new Date().toISOString() });
+      await app.reloadIncidents();
+      U.toast(incidentes.length + ' incidente(s) importado(s) automaticamente.', 'ok');
+      app.render();
+      return true;
+    } catch (e) {
+      U.toast(e.message || 'Erro ao buscar incidentes automaticamente.', 'err');
+      return false;
+    } finally {
+      U.loading(false);
+    }
   }
 
   TRJ.pages.importar = function (container, ctx) {
@@ -155,6 +230,13 @@
     var incInput = U.h('input', { type: 'file', accept: '.html,.htm,.xls,.xlsx', style: { display: 'none' }, onchange: function () { importarIncidentesArquivo(this, data, app); } });
     var incBtn = U.h('button', { class: 'trj-btn trj-btn-ghost clickable', text: '📎 Anexar arquivo G.E.N.E.S.I.S', onclick: function () { incInput.click(); } });
     incCard.appendChild(U.h('div', { class: 'flex gap-2 flex-wrap' }, [incInput, incBtn]));
+
+    // --- (c) buscar automaticamente via Ponte local ---
+    incCard.appendChild(U.h('div', { class: 'text-xs mt-4 mb-1', style: { color: 'var(--trj-muted)' }, text: 'Ou busque automaticamente (sem copiar/colar nada):' }));
+    var btnAuto = U.h('button', { class: 'trj-btn trj-btn-primary clickable', style: { background: C.CORES_TRJ.green, borderColor: C.CORES_TRJ.green }, html: '🔄 Buscar incidentes automaticamente', onclick: function () { buscarAutomatico(data, app); } });
+    incCard.appendChild(U.h('div', { class: 'flex gap-2 flex-wrap' }, [btnAuto]));
+    incCard.appendChild(U.h('div', { class: 'text-xs mt-2', style: { color: 'var(--trj-muted)' }, text: 'Requer estar conectado na VPN da empresa e com a "Ponte TRJ" rodando na sua máquina (' + PONTE_URL + ').' }));
+
     container.appendChild(incCard);
 
     // ================= bloco de ajuda + limpar =================
