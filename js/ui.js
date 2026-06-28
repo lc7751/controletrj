@@ -200,17 +200,39 @@
     return dz;
   };
 
+  // ---------- Copiar texto (clipboard) ----------
+  U.copyText = function (text, msg) {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(
+        function () { U.toast(msg || 'Copiado!', 'ok'); },
+        function () { U.toast('Não foi possível copiar.', 'err'); }
+      );
+    } else {
+      U.toast('Cópia não suportada neste navegador.', 'err');
+    }
+  };
+
   // ---------- Chart card (titulo + canvas) ----------
+  // opts.onCopy(): se informado, mostra um botão "📋" que copia o texto retornado.
   U.chartCard = function (title, opts) {
     opts = opts || {};
     var canvas = h('canvas');
     var wrap = h('div', { class: 'chart-wrap' + (opts.small ? ' sm' : '') }, canvas);
+    var rightBits = [];
+    if (opts.hint) rightBits.push(h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: opts.hint }));
+    if (opts.onCopy) {
+      rightBits.push(h('button', {
+        class: 'trj-btn trj-btn-ghost', title: 'Copiar dados em texto',
+        style: { padding: '3px 9px', fontSize: '12px' }, text: '📋',
+        onclick: function () { U.copyText(opts.onCopy(), 'Dados copiados!'); }
+      }));
+    }
     var head = h('div', { class: 'flex items-center justify-between mb-3' }, [
       h('h3', { class: 'text-sm font-bold flex items-center gap-2' }, [
         h('span', { class: 'trj-chart-dot' }),
         h('span', { text: title })
       ]),
-      opts.hint ? h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: opts.hint }) : null
+      rightBits.length ? h('div', { class: 'flex items-center gap-2' }, rightBits) : null
     ]);
     var card = h('div', { class: 'trj-card trj-chart-card p-4' }, [head, wrap]);
     return { card: card, canvas: canvas };
@@ -436,7 +458,7 @@
   U.incidentTable = function (rows, tasksEnriched) {
     var corr = U.computeCorrelacoes(rows);
     var thead = h('thead', null, h('tr', null,
-      ['Horário', 'Duração', 'Tec', 'Site', 'END_ID', 'ANF', 'Cidade/UF', 'TSK', 'Previsão', 'Causa', 'Detalhe']
+      ['Horário', 'Duração', 'Site', 'END_ID', 'ANF', 'Cidade/UF', 'TSK', 'Previsão', 'Causa', 'Detalhe']
         .map(function (t) { return h('th', { text: t }); })));
     var body = rows.slice(0, 1000).map(function (r, idx) {
       var c = corr[idx];
@@ -451,7 +473,6 @@
       return h('tr', { style: rowStyle }, [
         h('td', { text: r.horario || '—' }),
         h('td', { text: r.downtime || r.duracao || '—' }),
-        h('td', { text: r.tecnologia || '—' }),
         h('td', null, [corrIcon, h('span', { text: r.site || '—' })]),
         h('td', { text: r.enderecoId || '—' }),
         h('td', { text: r.anf || '—' }),
