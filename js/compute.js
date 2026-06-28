@@ -86,13 +86,21 @@
   function genesisToIncidents(genesisRows, validMap) {
     var base = new Date();
     return (genesisRows || []).map(function (r) {
-      var v = validFor(validMap, r.enderecoId, r.site);
-      var cidade = (v && v.cidade) || cidadeDe(r.cidadeUf);
+      // o painel de origem às vezes entrega texto com acentos bagunçados
+      // (ex.: "IntervenûÏûÈo" em vez de "Intervenção") — corrige antes de usar.
+      var site0 = D.corrigirAcentos(r.site);
+      var causa0 = D.corrigirAcentos(r.causa);
+      var detalhe0 = D.corrigirAcentos(r.detalhe);
+      var alarme0 = D.corrigirAcentos(r.alarme);
+      var infra0 = D.corrigirAcentos(r.infra);
+      var cidadeUf0 = D.corrigirAcentos(r.cidadeUf);
+      var v = validFor(validMap, r.enderecoId, site0);
+      var cidade = (v && v.cidade) || cidadeDe(cidadeUf0);
       var anf = r.anf || null;
       var horarioDt = G.horarioDtDeDowntime(r.downtime, base) || D.parsePlatformDate(r.horario, base);
-      var obs = [r.eve ? ('EVE ' + r.eve) : null, r.alarme ? ('Alarme: ' + r.alarme) : null].filter(Boolean).join(' | ') || null;
+      var obs = [r.eve ? ('EVE ' + r.eve) : null, alarme0 ? ('Alarme: ' + alarme0) : null].filter(Boolean).join(' | ') || null;
       return {
-        site: r.site || null,
+        site: site0 || null,
         horario: r.horario || null,
         horarioDt: horarioDt ? horarioDt.toISOString() : null,
         downtime: r.downtime || null,
@@ -102,14 +110,14 @@
         tecnologia: r.tecnologia || null,
         enderecoId: r.enderecoId || null,
         anf: anf,
-        cidadeUf: r.cidadeUf || null,
+        cidadeUf: cidadeUf0 || null,
         cidade: cidade || null,
-        infra: r.infra || null,
+        infra: infra0 || null,
         statusEvento: r.statusEvento || null,
         previsao: r.previsao || null,
-        causa: r.causa || null,
-        causaGrupo: D.agruparCausa(r.causa),
-        detalhe: r.detalhe || null,
+        causa: causa0 || null,
+        causaGrupo: D.agruparCausa(causa0),
+        detalhe: detalhe0 || null,
         obs: obs,
         tsk: null,
         statusTrat: derivarStatusTrat(r)
@@ -219,14 +227,22 @@
       { name: 'Atividade Conjunta', value: conj }, { name: 'Outras', value: outras }
     ].filter(function (x) { return x.value > 0; });
 
-    // Produtividade
-    var prod = { Geral: { dentro: encDentro, fora: encFora }, CCI: { dentro: 0, fora: 0 }, Campo: { dentro: 0, fora: 0 } };
+    // Produtividade — encerradas (corretiva), separadas em Dentro/Fora do SLA;
+    // as PREDITIVAS encerradas contam à parte (não fazem sentido como
+    // "dentro/fora do SLA reativo"), mas continuam somando no total geral.
+    var prod = { Geral: { dentro: 0, fora: 0, preditiva: 0 }, CCI: { dentro: 0, fora: 0, preditiva: 0 }, Campo: { dentro: 0, fora: 0, preditiva: 0 } };
+    var prodEncDentro = 0, prodEncFora = 0, prodEncPreditiva = 0;
     concluidas.forEach(function (t) {
-      var r = encerradaDentro(t); if (r === null) return;
       var cat = D.classificarCciCampo(t.filaAtual);
-      if (r) prod[cat].dentro++; else prod[cat].fora++;
+      if (t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA') {
+        prodEncPreditiva++; prod.Geral.preditiva++; prod[cat].preditiva++;
+        return;
+      }
+      var r = encerradaDentro(t); if (r === null) return;
+      if (r) { prodEncDentro++; prod.Geral.dentro++; prod[cat].dentro++; }
+      else { prodEncFora++; prod.Geral.fora++; prod[cat].fora++; }
     });
-    var produtividade = ['Geral', 'CCI', 'Campo'].map(function (c) { return { categoria: c, dentro: prod[c].dentro, fora: prod[c].fora }; });
+    var produtividade = ['Geral', 'CCI', 'Campo'].map(function (c) { return { categoria: c, dentro: prod[c].dentro, fora: prod[c].fora, preditiva: prod[c].preditiva }; });
 
     // Top cidades (incidentes ativos, já filtrados pela região — OTHERS sempre visível)
     var ativos = incFiltrados.filter(function (i) { return up(i.statusTrat) !== 'RESOLVIDO'; });
@@ -414,7 +430,14 @@
       case 'atividades': return manuais.filter(function (t) { return D.categoriaManual(t.tipoAtividade) === arg; });
       case 'produtividadeCat': {
         var p4 = (arg || '').split('|'); var cat = p4[0]; var lado4 = p4[1];
-        return concluidas.filter(function (t) { var r = encDentro(t); if (r === null) return false; if (cat !== 'Geral' && D.classificarCciCampo(t.filaAtual) !== cat) return false; return lado4 === 'fora' ? r === false : r === true; });
+        return concluidas.filter(function (t) {
+          if (cat !== 'Geral' && D.classificarCciCampo(t.filaAtual) !== cat) return false;
+          var ehPreditiva = (t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA');
+          if (lado4 === 'preditiva') return ehPreditiva;
+          if (ehPreditiva) return false; // preditiva não entra em dentro/fora
+          var r = encDentro(t); if (r === null) return false;
+          return lado4 === 'fora' ? r === false : r === true;
+        });
       }
       default: return [];
     }
