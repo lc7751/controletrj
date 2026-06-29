@@ -104,6 +104,14 @@
     return call('saveSite', { row: row || {} });
   };
 
+  // Publica a "foto" do Dashboard (sem filtros) pro link público de
+  // visualização (dashboard-publico.html). Em modo offline não há como
+  // publicar (precisa do backend), então só ignora silenciosamente.
+  A.saveDashboardSnapshot = function (snapshot) {
+    if (offline()) return Promise.resolve({ ok: true, offline: true });
+    return call('saveDashboardSnapshot', { snapshot: snapshot || {} });
+  };
+
   A.call = call;
   A.getUrl = getUrl;
   A.isOffline = offline;
