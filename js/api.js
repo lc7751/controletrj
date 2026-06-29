@@ -95,6 +95,13 @@
     return call('setConfig', { config: config || {} });
   };
 
+  // Busca os valores únicos das colunas D, E, F do VALID_CAD pra montar
+  // os dropdowns dinâmicos no formulário de cadastro.
+  A.getValidCadOptions = function () {
+    if (offline()) return Promise.resolve({ ok: true, headers: { D: 'Coluna D', E: 'Coluna E', F: 'Coluna F' }, options: { D: [], E: [], F: [] } });
+    return call('getValidCadOptions');
+  };
+
   // Cadastro de sites (usado pela página Cadastro de Cidades).
   A.saveSite      = function (row)         {
     if (offline()) {
