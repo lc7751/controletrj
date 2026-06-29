@@ -108,8 +108,16 @@
       U.h('span', { class: 'ico', text: temaAtual === 'light' ? '🌙' : '☀️' }),
       U.h('span', { text: temaAtual === 'light' ? 'Tema escuro' : 'Tema claro' })
     ]);
+    var btnLinkPublico = U.h('button', {
+      class: 'trj-link w-full', title: 'Copiar o link de visualização pública do Dashboard',
+      onclick: function () {
+        var url = location.href.replace(/index\.html.*$/, '').replace(/\/?(#.*)?$/, '/') + 'dashboard-publico.html';
+        if (navigator.clipboard) navigator.clipboard.writeText(url).then(function () { U.toast('Link público copiado!', 'ok'); }, function () { U.toast(url, 'info'); });
+      }
+    }, [U.h('span', { class: 'ico', text: '🔗' }), U.h('span', { text: 'Copiar link público' })]);
     var footer = U.h('div', { class: 'px-3 py-3', style: { borderTop: '1px solid var(--trj-border)' } }, [
       U.h('div', { class: 'text-xs px-2 mb-2 truncate', style: { color: 'var(--trj-muted)' }, text: user.email || '' }),
+      btnLinkPublico,
       btnTema,
       U.h('button', { class: 'trj-link w-full', onclick: doLogout }, [U.h('span', { class: 'ico', html: icon('logout') }), U.h('span', { text: 'Sair' })])
     ]);
