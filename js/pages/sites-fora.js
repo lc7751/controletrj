@@ -49,13 +49,9 @@
 
     var headRow = U.h('div', { class: 'flex items-center justify-between flex-wrap gap-3 mb-1' }, [
       U.h('h3', { class: 'text-base font-bold', text: '📋 Lista de Incidentes' }),
-      U.h('label', { class: 'flex items-center gap-2 text-xs', style: { color: 'var(--trj-muted)', cursor: 'pointer' } }, [
-        U.h('input', {
-          type: 'checkbox', checked: state.agrupado ? 'checked' : null,
-          onchange: function () { state.agrupado = this.checked; setAgrupado(state.agrupado); renderLista(); }
-        }),
-        U.h('span', { text: 'Agrupar por END_ID (junta sites com a mesma queda)' })
-      ])
+      U.switch(state.agrupado, 'Agrupar por END_ID (junta sites com a mesma queda)', function (checked) {
+        state.agrupado = checked; setAgrupado(checked); renderLista();
+      })
     ]);
     wrap.appendChild(headRow);
     wrap.appendChild(U.h('p', { class: 'text-xs mb-3', style: { color: 'var(--trj-muted)' }, text: 'Busque por site, end id, cidade, ANF, causa ou alarme. ⚡ = correlacionado a outro(s) incidente(s) (mesma ANF/horário próximo).' }));
