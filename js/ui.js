@@ -177,6 +177,19 @@
     return inp;
   };
 
+  // ---------- Switch (toggle bonito, com hover/glow) ----------
+  // U.switch(checked, label, onChange) — onChange recebe o novo boolean.
+  U.switch = function (checked, label, onChange) {
+    var input = h('input', { type: 'checkbox', class: 'trj-switch-input', checked: checked ? 'checked' : null });
+    input.checked = !!checked; // garante o estado real do DOM, não só o atributo inicial
+    input.addEventListener('change', function () { onChange(input.checked); });
+    return h('label', { class: 'trj-switch-wrap' }, [
+      input,
+      h('span', { class: 'trj-switch-track' }, h('span', { class: 'trj-switch-thumb' })),
+      label ? h('span', { class: 'trj-switch-label', text: label }) : null
+    ]);
+  };
+
   // ---------- Dropzone reutilizável (clique ou arraste-e-solte) ----------
   // opts: { icon, title, sub, accept, multiple, statusText, statusOk, onFile(fileOrFileList) }
   U.dropzone = function (opts) {
@@ -562,7 +575,8 @@
   // que importa é o conteúdo da lista, não o topo).
   U.pageHeader = function (title, subtitle, right, opts) {
     opts = opts || {};
-    var logo = h('img', { src: 'assets/logo-trj.png', alt: '', style: { width: opts.compact ? '22px' : '30px', height: opts.compact ? '22px' : '30px', objectFit: 'contain', flexShrink: '0' } });
+    var logoSize = opts.compact ? '30px' : '42px';
+    var logo = h('img', { src: 'assets/logo-trj.png', alt: '', class: 'trj-logo-hover', style: { width: logoSize, height: logoSize, objectFit: 'contain', flexShrink: '0' } });
     var tituloEl = h('h1', { class: 'trj-heading font-extrabold flex items-center gap-2', style: { fontSize: opts.compact ? '17px' : '26px' } }, [logo, h('span', { text: title })]);
     return h('div', { class: 'flex items-end justify-between flex-wrap gap-3', style: { marginBottom: opts.compact ? '10px' : '20px' } }, [
       h('div', null, [
