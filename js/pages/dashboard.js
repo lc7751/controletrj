@@ -90,15 +90,19 @@
   // equipe) pro link público de visualização. Best-effort: nunca trava a
   // tela nem mostra erro pro operador, e só manda de novo se algo mudou
   // desde a última publicação (evita gravação repetida sem necessidade).
+  // Publica os dados BRUTOS (tarefas + incidentes) pro link público de
+  // visualização — não os números já calculados, pra a página pública
+  // poder filtrar por região e abrir os drills igual ao painel principal.
+  // Best-effort: nunca trava a tela nem mostra erro pro operador, e só
+  // manda de novo se algo mudou desde a última publicação.
   var _ultimoSnapshotJSON = null;
   function publicarSnapshotPublico(data) {
     try {
-      var dPub = Comp.dashboard(data.tasksEnriched, data.incidentsEnriched, { regiao: 'TODAS', prioridade: 'TODAS' }) || {};
-      var jsonStr = JSON.stringify(dPub); // comparação SEM timestamp — senão nunca bate
+      var payload = { tasksEnriched: data.tasksEnriched || [], incidentsEnriched: data.incidentsEnriched || [] };
+      var jsonStr = JSON.stringify(payload);
       if (jsonStr === _ultimoSnapshotJSON) return;
       _ultimoSnapshotJSON = jsonStr;
-      dPub.atualizadoEm = new Date().toISOString();
-      TRJ.api.saveDashboardSnapshot(dPub).catch(function () {});
+      TRJ.api.saveDashboardSnapshot(payload).catch(function () {});
     } catch (e) { /* nunca deixa a publicação quebrar o Dashboard */ }
   }
 
