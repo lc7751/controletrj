@@ -1,37 +1,52 @@
 /* =====================================================================
  * Página: Cadastro de Cidades / Sites
  * ---------------------------------------------------------------------
- * Formulário para cadastrar manualmente um site informando BAIRRO,
- * END_ID, SITE e o RESPONSÁVEL pela região. Os registros são salvos via
- * TRJ.api.saveSite (backend quando há URL; senão, localStorage offline).
- * Abaixo do formulário, lista os sites já cadastrados neste navegador.
+ * Formulário para cadastrar sites encontrados sem região no VALID_CAD.
+ *
+ * Mapeamento de colunas (novo):
+ *   A = Cidade   B = END_ID   C = Site
+ *   D/E/F = dinâmicos (valores únicos já existentes na planilha)
+ *   G = cópia de B (END_ID)   H = cópia de A (Cidade)
+ *
+ * As opções dos selects D, E, F são carregadas via getValidCadOptions
+ * (action do Apps Script que lê os valores únicos das colunas reais).
  * ===================================================================== */
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
   var U = TRJ.ui;
 
-  var RESPONSAVEIS = [
-    { label: 'Zona Oeste — Alan', value: 'ALAN' },
-    { label: 'Zona Sul / Niterói — Matheus', value: 'MATHEUS' },
-    { label: 'Zona Norte — Jack', value: 'JACKELINE' },
-    { label: 'ANG/CBF/NFB/PET/VRD — Jesse', value: 'JESSE' },
-    { label: 'Baixada — Vinicius', value: 'VINICIUS' },
-    { label: 'Campos — Merielem', value: 'MERIELEM' },
-    { label: 'ES — Merielem', value: 'MERIELEM' }
-  ];
-
   var LS_SITES = 'trj_sites';
+
+  // Cache de opções dinâmicas — carregado uma vez por sessão de navegação.
+  // Estrutura: { headers: {D,E,F}, options: {D:[...], E:[...], F:[...]} }
+  var _cadOptions = null;
 
   function lerSites() {
     try { return JSON.parse(localStorage.getItem(LS_SITES) || '[]') || []; }
     catch (e) { return []; }
   }
 
+  // ---- Carrega opções dinâmicas (D, E, F) do backend ----
+  async function carregarOpcoes() {
+    if (_cadOptions) return _cadOptions;
+    try {
+      var res = await TRJ.api.getValidCadOptions();
+      _cadOptions = res || { headers: { D: 'Coluna D', E: 'Coluna E', F: 'Coluna F' }, options: { D: [], E: [], F: [] } };
+    } catch (e) {
+      _cadOptions = { headers: { D: 'Coluna D', E: 'Coluna E', F: 'Coluna F' }, options: { D: [], E: [], F: [] } };
+    }
+    return _cadOptions;
+  }
+
+  // Monta um <select> com os valores da coluna (mais opção "— em branco —")
+  function selectDinamico(id, valores, cls) {
+    var opts = [U.h('option', { value: '', text: '— em branco —' })].concat(
+      (valores || []).map(function (v) { return U.h('option', { value: v, text: v }); })
+    );
+    return U.h('select', { id: id, class: cls || 'trj-select w-full' }, opts);
+  }
+
   // ---- Varredura de sites sem cadastro (regiao = OTHERS) ----
-  // Reúne tarefas e incidentes ativos que caíram em "OTHERS" por falta de
-  // cadastro no VALID_CAD, deduplicando por END_ID, pra cadastrar em lote.
-  // Importante: considera só TSKs (tickets corretiva) — atividades manuais
-  // (Preventiva/Conjunta/WO) não entram, pois não fazem parte do cadastro.
   function coletarSemCadastro(data) {
     var vistos = {}, lista = [];
     function add(endId, site, cidade, origem) {
@@ -42,7 +57,7 @@
     }
     ((data && data.tasksEnriched) || []).forEach(function (t) {
       if ((t.regiao || 'OTHERS') !== 'OTHERS') return;
-      if (!TRJ.domain.isTicketCorretiva(t.tipoAtividade)) return; // só TSK — sem atividades manuais
+      if (!TRJ.domain.isTicketCorretiva(t.tipoAtividade)) return;
       add(t.enderecoId, t.siteId, t.cidade, 'Tarefa');
     });
     ((data && data.incidentsEnriched) || []).forEach(function (i) {
@@ -54,24 +69,30 @@
   }
 
   // ---- Card: varredura + cadastro em lote ----
-  function buildScanCard(ctx) {
+  function buildScanCard(ctx, opts) {
     var data = ctx.data, app = ctx.app;
+    var headers = opts.headers || {};
+    var options = opts.options || {};
+
     var card = U.h('div', { class: 'trj-card p-5 mb-5' });
     card.appendChild(U.h('h3', { class: 'text-base font-bold mb-1', text: '🔍 Sites sem cadastro (classificados como "Outros")' }));
-    card.appendChild(U.h('p', { class: 'text-xs mb-3', style: { color: 'var(--trj-muted)' }, text: 'Busca tarefas e incidentes ativos sem região cadastrada no VALID_CAD. Marque os que pertencem a uma região, escolha o responsável e cadastre todos de uma vez — sem copiar END_ID um por um.' }));
+    card.appendChild(U.h('p', { class: 'text-xs mb-3', style: { color: 'var(--trj-muted)' }, text: 'Busca tarefas e incidentes ativos sem região cadastrada. Marque os que quer cadastrar, preencha D/E/F e cadastre em lote.' }));
+
+    // Selects D, E, F compartilhados para o cadastro em lote
+    var selD = selectDinamico('scan-sel-d', options.D, 'trj-select');
+    var selE = selectDinamico('scan-sel-e', options.E, 'trj-select');
+    var selF = selectDinamico('scan-sel-f', options.F, 'trj-select');
 
     var resultWrap = U.h('div', { class: 'mt-3' });
-    var selResp = U.h('select', { class: 'trj-select', style: { width: 'auto', minWidth: '240px' } },
-      RESPONSAVEIS.map(function (r) { return U.h('option', { value: r.value, text: r.label }); }));
+    var statusTxt = U.h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' } });
     var btnBuscar = U.h('button', {
-      class: 'trj-btn trj-btn-primary clickable', html: '🔍 Buscar sites sem cadastro',
+      class: 'trj-btn trj-btn-primary clickable', text: '🔍 Buscar sites sem cadastro',
       onclick: function () { renderResultado(); }
     });
-    var statusTxt = U.h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' } });
     card.appendChild(U.h('div', { class: 'flex items-center gap-2 flex-wrap' }, [btnBuscar, statusTxt]));
     card.appendChild(resultWrap);
 
-    var checkboxes = []; // { item, cb }
+    var checkboxes = [];
 
     function renderResultado() {
       var lista = coletarSemCadastro(data);
@@ -84,66 +105,86 @@
       }
       statusTxt.textContent = lista.length + ' site(s) sem cadastro encontrado(s)';
 
-      var toolbar = U.h('div', { class: 'flex items-center gap-2 flex-wrap mt-3 mb-2' }, [
-        U.h('button', { class: 'trj-btn trj-btn-ghost clickable', style: { fontSize: '12px' }, text: 'Marcar todos', onclick: function () { checkboxes.forEach(function (c) { c.cb.checked = true; }); atualizarContagem(); } }),
-        U.h('button', { class: 'trj-btn trj-btn-ghost clickable', style: { fontSize: '12px' }, text: 'Desmarcar todos', onclick: function () { checkboxes.forEach(function (c) { c.cb.checked = false; }); atualizarContagem(); } }),
-        U.h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: 'Responsável/região destino:' }),
-        selResp
+      // Barra de ferramentas com os selects D/E/F
+      var colsDEF = U.h('div', { class: 'flex flex-wrap items-center gap-2 flex-1' }, [
+        U.h('div', null, [
+          U.h('div', { class: 'text-xs mb-1', style: { color: 'var(--trj-muted)' }, text: headers.D || 'Coluna D' }),
+          selD
+        ]),
+        U.h('div', null, [
+          U.h('div', { class: 'text-xs mb-1', style: { color: 'var(--trj-muted)' }, text: headers.E || 'Coluna E' }),
+          selE
+        ]),
+        U.h('div', null, [
+          U.h('div', { class: 'text-xs mb-1', style: { color: 'var(--trj-muted)' }, text: headers.F || 'Coluna F' }),
+          selF
+        ])
+      ]);
+      var toolbar = U.h('div', { class: 'flex items-start gap-3 flex-wrap mt-3 mb-3 p-3 trj-card', style: { borderRadius: '10px' } }, [
+        U.h('div', { class: 'flex flex-col gap-2' }, [
+          U.h('button', { class: 'trj-btn trj-btn-ghost clickable', style: { fontSize: '12px' }, text: 'Marcar todos', onclick: function () { checkboxes.forEach(function (c) { c.cb.checked = true; }); atualizarContagem(); } }),
+          U.h('button', { class: 'trj-btn trj-btn-ghost clickable', style: { fontSize: '12px' }, text: 'Desmarcar todos', onclick: function () { checkboxes.forEach(function (c) { c.cb.checked = false; }); atualizarContagem(); } })
+        ]),
+        colsDEF
       ]);
       resultWrap.appendChild(toolbar);
 
-      var thStyle = { textAlign: 'left', padding: '7px 9px', fontSize: '11px', color: 'var(--trj-muted)', borderBottom: '1px solid var(--trj-border)', textTransform: 'uppercase' };
-      var tdStyle = { padding: '7px 9px', fontSize: '13px', borderBottom: '1px solid rgba(255,255,255,.05)' };
-      var head = U.h('tr', null, ['', 'END_ID', 'Site', 'Cidade', 'Origem'].map(function (t) { return U.h('th', { style: thStyle, text: t }); }));
+      var thSt = { textAlign: 'left', padding: '7px 9px', fontSize: '11px', color: 'var(--trj-muted)', borderBottom: '1px solid var(--trj-border)', textTransform: 'uppercase' };
+      var tdSt = { padding: '7px 9px', fontSize: '13px', borderBottom: '1px solid rgba(255,255,255,.05)' };
+      var head = U.h('tr', null, ['', 'Cidade', 'END_ID', 'Site', 'Origem'].map(function (t) { return U.h('th', { style: thSt, text: t }); }));
       var body = lista.map(function (item) {
         var cb = U.h('input', { type: 'checkbox' });
         checkboxes.push({ item: item, cb: cb });
         cb.addEventListener('change', atualizarContagem);
         return U.h('tr', null, [
-          U.h('td', { style: tdStyle }, cb),
-          U.h('td', { style: Object.assign({ fontFamily: 'ui-monospace, monospace' }, tdStyle), text: item.end_id }),
-          U.h('td', { style: tdStyle, text: item.site || '—' }),
-          U.h('td', { style: tdStyle, text: item.cidade || '—' }),
-          U.h('td', { style: tdStyle, text: item.origem })
+          U.h('td', { style: tdSt }, cb),
+          U.h('td', { style: tdSt, text: item.cidade || '—' }),
+          U.h('td', { style: Object.assign({ fontFamily: 'ui-monospace, monospace' }, tdSt), text: item.end_id }),
+          U.h('td', { style: tdSt, text: item.site || '—' }),
+          U.h('td', { style: tdSt, text: item.origem })
         ]);
       });
       resultWrap.appendChild(U.h('div', { style: { maxHeight: '360px', overflow: 'auto' } }, [
         U.h('table', { style: { width: '100%', borderCollapse: 'collapse' } }, [U.h('thead', null, [head]), U.h('tbody', null, body)])
       ]));
 
-      var btnCadastrar = U.h('button', { class: 'trj-btn trj-btn-primary clickable', text: 'Cadastrar selecionados (0)', style: { marginTop: '12px' }, disabled: true,
+      var btnCad = U.h('button', {
+        class: 'trj-btn trj-btn-primary clickable', text: 'Cadastrar selecionados (0)',
+        style: { marginTop: '12px' }, disabled: true,
         onclick: async function () {
-          var selecionados = checkboxes.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.item; });
-          if (!selecionados.length) return;
-          btnCadastrar.disabled = true;
+          var sel = checkboxes.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.item; });
+          if (!sel.length) return;
+          btnCad.disabled = true;
           var ok = 0, falhas = 0;
-          for (var i = 0; i < selecionados.length; i++) {
-            var it = selecionados[i];
+          for (var i = 0; i < sel.length; i++) {
+            var it = sel[i];
             try {
-              await TRJ.api.saveSite({ bairro: it.cidade || '', end_id: it.end_id, site: it.site || '', responsavel: selResp.value });
+              await TRJ.api.saveSite({
+                cidade: it.cidade || '',
+                end_id: it.end_id,
+                site: it.site || '',
+                colD: selD.value,
+                colE: selE.value,
+                colF: selF.value
+              });
               ok++;
             } catch (e) { falhas++; }
           }
           U.toast(ok + ' site(s) cadastrado(s)' + (falhas ? ' · ' + falhas + ' falha(s)' : '') + '.', falhas ? 'err' : 'ok');
-          if (app && app.refresh) await app.refresh(true); // já re-renderiza a página
-        } });
-      resultWrap.appendChild(btnCadastrar);
+          if (app && app.refresh) await app.refresh(true);
+          if (app && app.render) app.render();
+        }
+      });
+      resultWrap.appendChild(btnCad);
 
       function atualizarContagem() {
         var n = checkboxes.filter(function (c) { return c.cb.checked; }).length;
-        btnCadastrar.textContent = 'Cadastrar selecionados (' + n + ')';
-        btnCadastrar.disabled = n === 0;
+        btnCad.textContent = 'Cadastrar selecionados (' + n + ')';
+        btnCad.disabled = n === 0;
       }
     }
 
     return card;
-  }
-
-  function labelResp(value) {
-    for (var i = 0; i < RESPONSAVEIS.length; i++) {
-      if (RESPONSAVEIS[i].value === value) return RESPONSAVEIS[i].label;
-    }
-    return value || '—';
   }
 
   // bloco label + campo
@@ -154,111 +195,79 @@
     ]);
   }
 
-  TRJ.pages.cadastro = function (container, ctx) {
+  TRJ.pages.cadastro = async function (container, ctx) {
     container.appendChild(U.pageHeader('Cadastro de Cidades',
-      'Cadastre manualmente os sites com bairro, END_ID e o responsável pela região.'));
+      'Gerencie os sites encontrados sem região no VALID_CAD.'));
 
-    container.appendChild(buildScanCard(ctx));
+    // Mostra um spinner enquanto carrega as opções do backend
+    var loadingEl = U.h('div', { class: 'trj-card p-6 mb-5 text-sm', style: { color: 'var(--trj-muted)' }, text: '⏳ Carregando opções do banco de dados...' });
+    container.appendChild(loadingEl);
 
-    // ---- inputs ----
-    var inBairro = U.h('input', { id: 'cad-bairro', class: 'trj-input w-full', placeholder: 'Ex.: Centro' });
-    var inEndId  = U.h('input', { id: 'cad-endid', class: 'trj-input w-full', placeholder: 'Ex.: RJCEN_001' });
-    var inSite   = U.h('input', { id: 'cad-site', class: 'trj-input w-full', placeholder: 'Nome / identificação do site' });
-    var selResp  = U.h('select', { id: 'cad-resp', class: 'trj-select w-full' },
-      RESPONSAVEIS.map(function (r) { return U.h('option', { value: r.value, text: r.label }); }));
+    var opts = await carregarOpcoes();
+    loadingEl.remove();
+
+    container.appendChild(buildScanCard(ctx, opts));
+
+    // ---- Formulário de cadastro manual ----
+    var headers = opts.headers || {};
+    var options = opts.options || {};
+
+    var inCidade = U.h('input', { class: 'trj-input w-full', placeholder: 'Ex.: Rio de Janeiro' });
+    var inEndId  = U.h('input', { class: 'trj-input w-full', placeholder: 'Ex.: RJCEN_001' });
+    var inSite   = U.h('input', { class: 'trj-input w-full', placeholder: 'Nome / identificação do site' });
+    var selD     = selectDinamico('form-sel-d', options.D);
+    var selE     = selectDinamico('form-sel-e', options.E);
+    var selF     = selectDinamico('form-sel-f', options.F);
 
     var msg = U.h('div', { class: 'text-sm mt-1', style: { color: 'var(--trj-muted)', minHeight: '20px' } });
 
-    function renderLista() {
-      var sites = lerSites();
-      listaWrap.innerHTML = '';
-      listaWrap.appendChild(U.h('div', { class: 'flex items-center justify-between mb-3' }, [
-        U.h('h3', { class: 'text-base font-bold', text: 'Sites cadastrados' }),
-        U.h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: sites.length + ' registro(s)' })
-      ]));
-      if (!sites.length) {
-        listaWrap.appendChild(U.h('div', { class: 'text-sm py-6 text-center', style: { color: 'var(--trj-muted)' }, text: 'Nenhum site cadastrado ainda.' }));
-        return;
-      }
-      var thStyle = { textAlign: 'left', padding: '8px 10px', fontSize: '12px', color: 'var(--trj-muted)', borderBottom: '1px solid var(--trj-border)' };
-      var head = U.h('tr', null, ['BAIRRO', 'END_ID', 'SITE', 'RESPONSÁVEL', ''].map(function (t) { return U.h('th', { style: thStyle, text: t }); }));
-      var body = sites.map(function (s, idx) {
-        var tdStyle = { padding: '8px 10px', fontSize: '13px', borderBottom: '1px solid var(--trj-border)' };
-        var btnDel = U.h('button', { class: 'trj-btn trj-btn-ghost clickable', style: { padding: '2px 10px', fontSize: '12px' }, text: 'Remover', onclick: function () {
-          var arr = lerSites(); arr.splice(idx, 1);
-          try { localStorage.setItem(LS_SITES, JSON.stringify(arr)); } catch (e) {}
-          renderLista();
-          U.toast('Site removido.', 'ok');
-        } });
-        return U.h('tr', null, [
-          U.h('td', { style: tdStyle, text: s.bairro || '—' }),
-          U.h('td', { style: tdStyle, text: s.end_id || '—' }),
-          U.h('td', { style: tdStyle, text: s.site || '—' }),
-          U.h('td', { style: tdStyle, text: labelResp(s.responsavel) }),
-          U.h('td', { style: Object.assign({ textAlign: 'right' }, tdStyle) }, [btnDel])
-        ]);
-      });
-      var table = U.h('div', { style: { overflowX: 'auto' } }, [
-        U.h('table', { style: { width: '100%', borderCollapse: 'collapse' } }, [
-          U.h('thead', null, [head]),
-          U.h('tbody', null, body)
-        ])
-      ]);
-      listaWrap.appendChild(table);
-    }
-
-    function limpar() {
-      inBairro.value = ''; inEndId.value = ''; inSite.value = '';
-      selResp.selectedIndex = 0; msg.textContent = '';
-    }
-
-    var btnSalvar = U.h('button', { class: 'trj-btn trj-btn-primary clickable', text: 'Salvar', onclick: function () {
-      var row = {
-        bairro: (inBairro.value || '').trim(),
-        end_id: (inEndId.value || '').trim(),
-        site: (inSite.value || '').trim(),
-        responsavel: selResp.value
-      };
-      if (!row.end_id && !row.site && !row.bairro) {
-        msg.textContent = 'Preencha ao menos o BAIRRO, o END_ID ou o SITE.';
-        msg.style.color = 'var(--trj-red, #e74c3c)';
-        return;
-      }
-      btnSalvar.disabled = true;
-      Promise.resolve(TRJ.api.saveSite(row)).then(function (res) {
-        // em modo backend o saveSite não grava localmente; garantimos a lista local também
-        if (res && res.offline !== true && !TRJ.api.isOffline()) {
-          try { var arr = lerSites(); arr.push(row); localStorage.setItem(LS_SITES, JSON.stringify(arr)); } catch (e) {}
+    var btnSalvar = U.h('button', { class: 'trj-btn trj-btn-primary clickable', text: 'Salvar',
+      onclick: async function () {
+        var row = {
+          cidade: (inCidade.value || '').trim(),
+          end_id: (inEndId.value || '').trim(),
+          site: (inSite.value || '').trim(),
+          colD: selD.value,
+          colE: selE.value,
+          colF: selF.value
+        };
+        if (!row.end_id && !row.site && !row.cidade) {
+          msg.textContent = 'Preencha ao menos Cidade, END_ID ou Site.';
+          msg.style.color = 'var(--trj-red, #e74c3c)'; return;
         }
-        msg.textContent = 'Site salvo com sucesso.';
-        msg.style.color = 'var(--trj-green, #2ecc71)';
-        U.toast('Site cadastrado.', 'ok');
-        limpar();
-        renderLista();
-      }).catch(function (e) {
-        msg.textContent = e && e.message ? e.message : 'Erro ao salvar o site.';
-        msg.style.color = 'var(--trj-red, #e74c3c)';
-        U.toast('Erro ao salvar o site.', 'err');
-      }).then(function () { btnSalvar.disabled = false; });
-    } });
-
-    var btnLimpar = U.h('button', { class: 'trj-btn trj-btn-ghost clickable', text: 'Limpar', onclick: limpar });
+        btnSalvar.disabled = true;
+        try {
+          await TRJ.api.saveSite(row);
+          msg.textContent = 'Site salvo com sucesso.';
+          msg.style.color = 'var(--trj-green, #2ecc71)';
+          U.toast('Site cadastrado.', 'ok');
+          inCidade.value = ''; inEndId.value = ''; inSite.value = '';
+          selD.selectedIndex = 0; selE.selectedIndex = 0; selF.selectedIndex = 0;
+          msg.textContent = '';
+        } catch (e) {
+          msg.textContent = e && e.message ? e.message : 'Erro ao salvar o site.';
+          msg.style.color = 'var(--trj-red, #e74c3c)';
+          U.toast('Erro ao salvar o site.', 'err');
+        } finally { btnSalvar.disabled = false; }
+      }
+    });
+    var btnLimpar = U.h('button', { class: 'trj-btn trj-btn-ghost clickable', text: 'Limpar',
+      onclick: function () { inCidade.value = ''; inEndId.value = ''; inSite.value = ''; selD.selectedIndex = 0; selE.selectedIndex = 0; selF.selectedIndex = 0; msg.textContent = ''; }
+    });
 
     var form = U.h('div', { class: 'trj-card p-5 mb-5' }, [
-      U.h('h3', { class: 'text-base font-bold mb-3', text: 'Cadastro de Sites' }),
+      U.h('h3', { class: 'text-base font-bold mb-3', text: 'Cadastro manual' }),
       U.h('div', { class: 'grid grid-cols-1 md:grid-cols-2 gap-4' }, [
-        campo('BAIRRO', inBairro),
+        campo('CIDADE', inCidade),
         campo('END_ID', inEndId),
         campo('SITE', inSite, true),
-        campo('RESPONSÁVEL', selResp)
+        campo(headers.D || 'Coluna D', selD),
+        campo(headers.E || 'Coluna E', selE),
+        campo(headers.F || 'Coluna F', selF)
       ]),
       U.h('div', { class: 'flex gap-2 flex-wrap mt-4' }, [btnSalvar, btnLimpar]),
       msg
     ]);
     container.appendChild(form);
-
-    var listaWrap = U.h('div', { class: 'trj-card p-5' });
-    container.appendChild(listaWrap);
-    renderLista();
   };
 })(window.TRJ = window.TRJ || {});
