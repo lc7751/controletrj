@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle TRJ · Dashboard (visualização pública)</title>
+<link rel="icon" href="assets/logo-trj.png">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: { extend: { colors: { bg: '#0a0a0f', card: '#13131a', popover: '#1a1a24', primary: '#ff8c00', fg: '#f0f0f0', muted: '#8a8a93' } } }
+  };
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+<script src="js/config.js"></script>
+<script src="js/constants.js"></script>
+<script src="js/domain.js"></script>
+<script src="js/compute.js"></script>
+<script src="js/ui.js"></script>
+<style>
+body { min-height: 100vh; }
+#root { max-width: 1400px; margin: 0 auto; padding: 22px; position: relative; z-index: 1; }
+
+/* ---- Tela de boas-vindas ---- */
+.welcome-wrap { min-height: 86vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
+.welcome-logo { width: 64px; height: 64px; object-fit: contain; margin-bottom: 18px; filter: drop-shadow(0 0 16px var(--trj-primary)); }
+.welcome-title { font-family: 'Sora', sans-serif; font-size: 30px; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 6px; }
+.welcome-sub { color: var(--trj-muted); font-size: 15px; margin-bottom: 34px; }
+.regiao-grid { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 14px; max-width: 760px; width: 100%; margin-bottom: 16px; }
+@media (max-width: 640px) { .regiao-grid { grid-template-columns: repeat(2, 1fr); } }
+.regiao-btn {
+  position: relative; overflow: hidden; background: var(--trj-card); border: 1px solid var(--trj-border);
+  border-radius: 14px; padding: 22px 14px; cursor: pointer; transition: transform .22s cubic-bezier(.4,0,.2,1), border-color .22s ease, box-shadow .22s ease;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--trj-fg);
+}
+.regiao-btn::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--trj-primary); opacity: 0; transition: opacity .22s ease; }
+.regiao-btn:hover { transform: translateY(-5px); border-color: rgba(255,140,0,.55); box-shadow: 0 18px 38px rgba(0,0,0,.5), 0 0 26px rgba(255,140,0,.18); }
+.regiao-btn:hover::before { opacity: 1; }
+.regiao-btn .ic { font-size: 26px; transition: transform .22s ease; }
+.regiao-btn:hover .ic { transform: scale(1.18) rotate(-3deg); }
+.regiao-btn .nome { font-size: 14px; font-weight: 700; }
+.regiao-btn .qtd { font-size: 11px; color: var(--trj-muted); }
+.visao-geral-btn {
+  width: 100%; max-width: 760px; background: rgba(255,140,0,.06); border: 1px solid rgba(255,140,0,.3);
+  border-radius: 14px; padding: 16px; cursor: pointer; transition: all .22s ease; color: var(--trj-fg);
+  display: flex; align-items: center; justify-content: center; gap: 10px; font-weight: 700; font-size: 14.5px;
+}
+.visao-geral-btn:hover { background: rgba(255,140,0,.12); border-color: var(--trj-primary); box-shadow: 0 10px 28px rgba(255,140,0,.18); transform: translateY(-2px); }
+
+/* ---- barra superior da view de dashboard ---- */
+.pub-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.pub-live { font-size: 11.5px; color: var(--trj-muted); display: flex; align-items: center; gap: 7px; }
+.pub-live .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--trj-green); box-shadow: 0 0 7px var(--trj-green); animation: trjPulseLive 2s infinite; }
+@keyframes trjPulseLive { 0%,100%{opacity:1;} 50%{opacity:.35;} }
+</style>
+</head>
+<body>
+<div id="root"><div class="text-center py-20" style="color:var(--trj-muted)">Carregando dados publicados...</div></div>
+
+<script>
+(function () {
+  var U = TRJ.ui, C = TRJ.constants, D = TRJ.domain, Comp = TRJ.compute;
+  var URL_API = (TRJ.config && TRJ.config.APPS_SCRIPT_URL) || '';
+  var root = document.getElementById('root');
+
+  var raw = { tasksEnriched: [], incidentsEnriched: [] };
+  var savedAt = null;
+  var view = 'welcome';              // 'welcome' | 'dashboard'
+  var state = { regiao: 'TODAS', prioridade: 'TODAS' };
+
+  var REGIAO_ICONS = { INTERIOR: '🌳', BAIXADA: '🏘️', 'GRANDE RJ': '🏙️', 'ZONA OESTE': '🌇', 'ESPIRITO SANTO': '🌊', OTHERS: '📍' };
+
+  // ---------------- Carregamento ----------------
+  async function carregarDados(silencioso) {
+    if (!URL_API) { root.innerHTML = '<div class="text-center py-20" style="color:var(--trj-red)">URL do Apps Script não configurada (js/config.js).</div>'; return; }
+    try {
+      var resp = await fetch(URL_API + '?action=getDashboardSnapshot');
+      var json = await resp.json();
+      if (!json || json.ok === false) throw new Error((json && json.error) || 'Erro ao buscar dados.');
+      if (!json.data) {
+        if (!silencioso) root.innerHTML = '<div class="text-center py-20" style="color:var(--trj-muted)">Ainda não há nenhuma publicação.<br>Abra o Dashboard no painel principal pelo menos uma vez.</div>';
+        return;
+      }
+      raw.tasksEnriched = json.data.tasksEnriched || [];
+      raw.incidentsEnriched = json.data.incidentsEnriched || [];
+      savedAt = json.savedAt || null;
+      renderView();
+    } catch (e) {
+      if (!silencioso) root.innerHTML = '<div class="text-center py-20" style="color:var(--trj-red)">Não foi possível carregar: ' + U.esc(e.message || String(e)) + '</div>';
+    }
+  }
+
+  function renderView() {
+    if (view === 'welcome') renderWelcome(); else renderDashboard();
+  }
+
+  // ---------------- Tela de boas-vindas (escolha de região) ----------------
+  function renderWelcome() {
+    root.innerHTML = '';
+    var contagem = {};
+    raw.incidentsEnriched.forEach(function (i) {
+      if ((i.statusTrat || 'ATIVO').toUpperCase() === 'RESOLVIDO') return;
+      var r = i.regiao || 'OTHERS'; contagem[r] = (contagem[r] || 0) + 1;
+    });
+
+    var wrap = U.h('div', { class: 'welcome-wrap' }, [
+      U.h('img', { src: 'assets/logo-trj.png', alt: '', class: 'welcome-logo' }),
+      U.h('div', { class: 'welcome-title trj-heading', text: 'BEM-VINDO, GESTOR' }),
+      U.h('div', { class: 'welcome-sub', text: 'Escolha sua região para visualização' }),
+      U.h('div', { class: 'regiao-grid' }, C.REGIOES.map(function (r) {
+        return U.h('button', { class: 'regiao-btn', onclick: function () { escolherRegiao(r); } }, [
+          U.h('span', { class: 'ic', text: REGIAO_ICONS[r] || '📍' }),
+          U.h('span', { class: 'nome', text: C.REGIAO_LABELS[r] || r }),
+          U.h('span', { class: 'qtd', text: (contagem[r] || 0) + ' site(s) fora agora' })
+        ]);
+      })),
+      U.h('button', { class: 'visao-geral-btn', onclick: function () { escolherRegiao('TODAS'); } }, [
+        U.h('span', { text: '🌐' }), U.h('span', { text: 'VISÃO GERAL — todas as regiões' })
+      ])
+    ]);
+    root.appendChild(wrap);
+  }
+  function escolherRegiao(r) {
+    state.regiao = r; state.prioridade = 'TODAS'; view = 'dashboard'; renderDashboard();
+  }
+
+  // ---------------- Dashboard (igual ao painel principal, com drills) ----------------
+  function renderDashboard() {
+    root.innerHTML = '';
+    var d = Comp.dashboard(raw.tasksEnriched, raw.incidentsEnriched, state) || {};
+    var f = state;
+    var K = d.kpis || {};
+    var topCidades = d.topCidades || { totalSitesFora: 0, porAnf: [], cidades: [] };
+
+    var topbar = U.h('div', { class: 'pub-topbar' }, [
+      U.h('button', { class: 'trj-btn trj-btn-ghost', text: '🏠 Trocar região', onclick: function () { view = 'welcome'; renderWelcome(); } }),
+      U.h('div', { class: 'pub-live' }, [U.h('span', { class: 'dot' }), U.h('span', { text: 'Atualiza automaticamente · ' + (savedAt ? new Date(savedAt).toLocaleString('pt-BR') : '—') })])
+    ]);
+    root.appendChild(topbar);
+
+    var selReg = U.h('select', { class: 'trj-select', style: { width: 'auto' }, onchange: function () { state.regiao = this.value; renderDashboard(); } },
+      [U.h('option', { value: 'TODAS', text: 'Todas as regiões', selected: f.regiao === 'TODAS' ? 'selected' : null })].concat(C.REGIOES.map(function (r) {
+        return U.h('option', { value: r, text: C.REGIAO_LABELS[r] || r, selected: f.regiao === r ? 'selected' : null });
+      })));
+    var selPri = U.h('select', { class: 'trj-select', style: { width: 'auto' }, onchange: function () { state.prioridade = this.value; renderDashboard(); } },
+      [U.h('option', { value: 'TODAS', text: 'Todas as prioridades' })].concat(C.PRIORIDADES.map(function (p) {
+        return U.h('option', { value: p, text: p, selected: f.prioridade === p ? 'selected' : null });
+      })));
+    var right = U.h('div', { class: 'flex items-center gap-2 flex-wrap' }, [selReg, selPri]);
+    var subtitulo = (f.regiao === 'TODAS' ? 'Visão geral — todas as regiões' : 'Região: ' + (C.REGIAO_LABELS[f.regiao] || f.regiao));
+    root.appendChild(U.pageHeader('Dashboard Operacional', subtitulo, right));
+
+    var kpiDefs = [
+      { label: 'Fora do SLA', value: U.fmtNum(K.foraSla), cor: C.CORES_TRJ.red, spec: { tipo: 'foraSla' }, t: 'Backlog fora do SLA' },
+      { label: 'Backlog Total', value: U.fmtNum(K.backlogTotal), cor: C.CORES_TRJ.orange, spec: { tipo: 'backlogTotal' }, t: 'Backlog total' },
+      { label: 'Backlog Indefinido', value: U.fmtNum(K.backlogIndef), cor: C.CORES_TRJ.red, spec: { tipo: 'backlogIndef' }, t: 'Backlog sem SLA definido' },
+      { label: 'Preditiva', value: U.fmtNum(K.preditiva), cor: C.CORES_TRJ.orange, spec: { tipo: 'preditiva' }, t: 'Atividades preditivas' },
+      { label: 'Produtividade', value: U.fmtNum(K.produtividade), cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, t: 'Concluídas' },
+      { label: 'SLA Geral', value: U.fmtPct(K.slaGeral), cor: C.CORES_TRJ.green, spec: null, t: '' }
+    ];
+    root.appendChild(U.h('div', { class: 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5' }, kpiDefs.map(function (k) {
+      return U.kpiCard({ label: k.label, value: k.value, cor: k.cor, onClick: k.spec ? function () { openDrillTasks(k.spec, f, k.t); } : null });
+    })));
+
+    var aging = U.chartCard('Aging do Backlog');
+    var venc = U.chartCard('Prazos a Vencer');
+    var sites = U.chartCard('Sites Fora por Região');
+    var slaReg = U.chartCard('SLA por Região');
+    var manu = U.chartCard('Atividades Manuais');
+    var prod = U.chartCard('Produtividade Encerramento');
+    root.appendChild(U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5' }, [aging.card, venc.card, sites.card, slaReg.card, manu.card, prod.card]));
+    root.appendChild(buildTopCidades(topCidades));
+
+    var aData = d.aging || [], vData = d.prazosVencimento || [], sfData = d.sitesForaRegiao || [], srData = d.slaPorRegiao || [], amData = d.atividadesManuais || [], pData = d.produtividade || [];
+    U.barChart(aging.canvas, aData, { onBar: function (i) { openDrillTasks({ tipo: 'aging', arg: i }, f, 'Aging: ' + aData[i].label); } });
+    U.hbarChart(venc.canvas, vData, { onBar: function (i) { openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A vencer: ' + vData[i].label); } });
+    U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), { onBar: function (i) { openDrillIncidents({ tipo: 'sitesFora', arg: sfData[i].regiao }, 'Sites fora: ' + sfData[i].label); } });
+    U.stackedChart(slaReg.canvas, srData, { onSeg: function (i, ds) { var r = srData[i]; openDrillTasks({ tipo: 'slaRegiao', arg: r.regiao + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'SLA ' + r.label); } });
+    U.donutChart(manu.canvas, amData, { cores: C.DONUT_CORES, onSlice: function (i) { var nm = amData[i].name; openDrillTasks({ tipo: 'atividades', arg: argAtiv(nm) }, f, nm); } });
+    U.stackedChart(prod.canvas, pData.map(function (p) { return { label: p.categoria, dentro: p.dentro, fora: p.fora, preditiva: p.preditiva }; }), {
+      onSeg: function (i, ds) {
+        var cat = pData[i].categoria;
+        var lado = ds === 2 ? 'preditiva' : (ds === 1 ? 'fora' : 'dentro');
+        openDrillTasks({ tipo: 'produtividadeCat', arg: cat + '|' + lado }, f, 'Produtividade ' + cat + (ds === 2 ? ' — Preditiva' : (ds === 1 ? ' — Fora do SLA' : ' — Dentro do SLA')));
+      }
+    });
+  }
+
+  function argAtiv(name) {
+    if (/WO/i.test(name)) return 'wo';
+    if (/Prevent/i.test(name)) return 'prev';
+    if (/Conjunta/i.test(name)) return 'conj';
+    return 'outras';
+  }
+
+  function buildTopCidades(tc) {
+    var porAnf = tc.porAnf || [], cidades = tc.cidades || [];
+    var anfList = U.h('div', { class: 'flex flex-wrap gap-2 mb-4' }, porAnf.map(function (a) {
+      return U.h('button', { class: 'trj-btn trj-btn-ghost', style: { fontSize: '12px' }, onclick: function () { openDrillIncidents({ tipo: 'anf', arg: a.anfRaw }, a.anf); },
+        html: '<b>' + U.esc(a.anf) + '</b> &nbsp;<span style="color:var(--trj-primary)">' + a.total + '</span> <span style="color:var(--trj-muted)">(' + a.pct + '%)</span>' });
+    }));
+    var maxBars = cidades.slice(0, 15);
+    var bars = U.h('div', { class: 'flex flex-col gap-2' }, maxBars.map(function (c) {
+      return U.h('div', { class: 'cursor-pointer', onclick: function () { openDrillIncidents({ tipo: 'cidade', arg: c.cidade }, c.cidade); } }, [
+        U.h('div', { class: 'flex justify-between text-xs mb-1' }, [U.h('span', { text: c.cidade }), U.h('span', { style: { color: 'var(--trj-primary)' }, text: c.total })]),
+        U.h('div', { style: { background: 'rgba(255,255,255,.06)', borderRadius: '6px', height: '8px' } }, U.h('div', { style: { background: 'var(--trj-primary)', width: c.pct + '%', height: '8px', borderRadius: '6px' } }))
+      ]);
+    }));
+    var total = U.h('div', { class: 'trj-card p-5 flex flex-col items-center justify-center', style: { minWidth: '180px' } }, [
+      U.h('div', { class: 'text-xs uppercase', style: { color: 'var(--trj-muted)' }, text: 'Total Sites Fora' }),
+      U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1' }, text: U.fmtNum(tc.totalSitesFora) })
+    ]);
+    return U.h('div', { class: 'trj-card p-4' }, [
+      U.h('h3', { class: 'text-sm font-bold mb-3', text: 'Top Cidades — Sites Fora' }),
+      U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4' }, [total, U.h('div', { class: 'lg:col-span-2' }, [anfList, bars])])
+    ]);
+  }
+
+  // ---------------- Drills (mesma lógica do painel principal) ----------------
+  function openDrillTasks(spec, filtros, title) {
+    var rows = Comp.drillTasks(raw.tasksEnriched, spec, filtros || {});
+    U.openModal(title || 'Detalhamento', U.taskTable(rows), { onCopy: function () { return U.taskTableCopyText(rows, title); } });
+  }
+  function openDrillIncidents(spec, title) {
+    var rows = Comp.drillIncidents(raw.incidentsEnriched, spec);
+    U.openModal(title || 'Detalhamento', U.incidentTable(rows, raw.tasksEnriched), { onCopy: function () { return U.incidentTableCopyText(rows, title); } });
+  }
+
+  carregarDados();
+  setInterval(function () { carregarDados(true); }, 60000); // atualiza sozinho, sem piscar tela de erro
+})();
+</script>
+</body>
+</html>
