@@ -15,6 +15,11 @@
     var K = d.kpis || {};
     var topCidades = d.topCidades || { totalSitesFora: 0, porAnf: [], cidades: [] };
 
+    // Publica automaticamente uma "foto" SEM FILTROS (visão completa, não
+    // o que o operador estiver filtrando agora) pro link público de
+    // visualização — silencioso, não bloqueia a tela nem mostra erro.
+    publicarSnapshotPublico(data);
+
     // ---- filtros + ações ----
     var selReg = U.h('select', { class: 'trj-select', style: { width: 'auto' }, onchange: function () { state.regiao = this.value; app.render(); } },
       [U.h('option', { value: 'TODAS', text: 'Todas as regiões' })].concat(C.REGIOES.map(function (r) {
@@ -79,6 +84,22 @@
     if (/Prevent/i.test(name)) return 'prev';
     if (/Conjunta/i.test(name)) return 'conj';
     return 'outras';
+  }
+
+  // Publica uma "foto" do Dashboard SEM FILTROS (visão completa da
+  // equipe) pro link público de visualização. Best-effort: nunca trava a
+  // tela nem mostra erro pro operador, e só manda de novo se algo mudou
+  // desde a última publicação (evita gravação repetida sem necessidade).
+  var _ultimoSnapshotJSON = null;
+  function publicarSnapshotPublico(data) {
+    try {
+      var dPub = Comp.dashboard(data.tasksEnriched, data.incidentsEnriched, { regiao: 'TODAS', prioridade: 'TODAS' }) || {};
+      var jsonStr = JSON.stringify(dPub); // comparação SEM timestamp — senão nunca bate
+      if (jsonStr === _ultimoSnapshotJSON) return;
+      _ultimoSnapshotJSON = jsonStr;
+      dPub.atualizadoEm = new Date().toISOString();
+      TRJ.api.saveDashboardSnapshot(dPub).catch(function () {});
+    } catch (e) { /* nunca deixa a publicação quebrar o Dashboard */ }
   }
 
   function buildTopCidades(tc, app) {
