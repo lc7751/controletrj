@@ -51,10 +51,17 @@
       var regiao = D.determinarRegiao(t.filaAtual, t.microarea, v);
       var cidade = (v && v.cidade) || null;
       var sla = D.computeSla(t, prazoMap, now);
+      // "Fim" (encerramento real) costuma vir só com a HORA (ex.: "10:17",
+      // confirmado na planilha real), sem nenhuma informação de data —
+      // precisa ser combinado com a "Data Base" (coluna T) pra virar uma
+      // data completa e poder ser comparado com o vencimento do SLA.
+      var baseParaFim = D.parsePlatformDate(t.dataBase) || D.toDate(t.dataCriacao);
+      var fimCalc = D.parsePlatformDate(t.fim, baseParaFim);
       return Object.assign({}, t, {
         sequenciaId: t.sequenciaId === '' || t.sequenciaId == null ? null : Number(t.sequenciaId),
         regiao: regiao,
         cidade: cidade,
+        fimCalc: fimCalc,
         vencimentoCalc: sla.vencimentoCalc,
         fonteSla: sla.fonteSla,
         statusSla: sla.statusSla
@@ -161,8 +168,8 @@
     var preditiva = tickets.filter(function (t) { return t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA'; });
 
     function encerradaDentro(t) {
-      if (!t.fim || !t.vencimentoCalc) return null;
-      return new Date(t.fim).getTime() <= new Date(t.vencimentoCalc).getTime();
+      if (!t.fimCalc || !t.vencimentoCalc) return null;
+      return new Date(t.fimCalc).getTime() <= new Date(t.vencimentoCalc).getTime();
     }
     var encDentro = 0, encFora = 0;
     concluidas.forEach(function (t) { var r = encerradaDentro(t); if (r === true) encDentro++; else if (r === false) encFora++; });
@@ -415,8 +422,11 @@
     var sep = D.separarTicketsManuais(tasks);
     var tickets = sep.tickets, manuais = sep.manuais;
     var backlog = tickets.filter(function (t) { return D.isBacklogStatus(t.status); });
-    var concluidas = tickets.filter(function (t) { return !D.isBacklogStatus(t.status); });
-    function encDentro(t) { if (!t.fim || !t.vencimentoCalc) return null; return new Date(t.fim).getTime() <= new Date(t.vencimentoCalc).getTime(); }
+    var concluidas = tickets.filter(function (t) {
+      var s = (t.status || '').toUpperCase().trim();
+      return s === 'CONCLUÍDA' || s === 'CONCLUIDA';
+    });
+    function encDentro(t) { if (!t.fimCalc || !t.vencimentoCalc) return null; return new Date(t.fimCalc).getTime() <= new Date(t.vencimentoCalc).getTime(); }
     var now = Date.now();
     var tipo = spec.tipo, arg = spec.arg;
 
@@ -439,6 +449,7 @@
         return backlog.filter(function (t) { return (t.regiao || 'OTHERS') === reg && t.statusSla === (lado === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA'); });
       }
       case 'regiaoBacklog': return backlog.filter(function (t) { return (t.regiao || 'OTHERS') === arg; });
+      case 'regiaoTotal': return tickets.filter(function (t) { return (t.regiao || 'OTHERS') === arg; });
       case 'regiaoSla': {
         var p2 = (arg || '').split('|'); var reg2 = p2[0]; var lado2 = p2[1];
         return tickets.filter(function (t) { return (t.regiao || 'OTHERS') === reg2 && t.statusSla === (lado2 === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA'); });
@@ -450,6 +461,20 @@
         return list.filter(function (t) { return t.statusSla === (lado3 === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA'); });
       }
       case 'atividades': return manuais.filter(function (t) { return D.categoriaManual(t.tipoAtividade) === arg; });
+      case 'cancelCorretiva': {
+        // Mesmo recorte do gráfico "Atividades Manuais": tickets corretiva
+        // cancelados, separados por motivo (Associação de Atividades = não
+        // automático; qualquer outro motivo = automação).
+        var canceladasDrill = tickets.filter(function (t) {
+          var s = (t.status || '').toUpperCase().trim();
+          return s === 'CANCELADA' || s === 'CANCELADO';
+        });
+        return canceladasDrill.filter(function (t) {
+          var motivo = (t.motivoCancelamento || '').toString().toUpperCase();
+          var ehAssoc = motivo.indexOf('ASSOCIA') >= 0;
+          return arg === 'assoc' ? ehAssoc : !ehAssoc;
+        });
+      }
       case 'produtividadeCat': {
         var p4 = (arg || '').split('|'); var cat = p4[0]; var lado4 = p4[1];
         return concluidas.filter(function (t) {
