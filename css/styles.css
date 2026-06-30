@@ -319,3 +319,28 @@ body.trj-sidebar-open #sidebar-toggle-btn { opacity: 0; pointer-events: none; }
 
 /* Ajustes visuais para botões/links que já existem */
 .trj-link.clickable, .trj-btn.clickable { display:inline-flex; align-items:center; }
+
+/* Rodapé "Equipe de Desenvolvimento" — usado tanto no painel principal
+   quanto no dashboard público, pra manter o crédito sempre visível. */
+.trj-dev-footer { margin-top: 40px; padding: 28px 16px 22px; border-top: 1px solid var(--trj-border); text-align: center; }
+.trj-dev-footer-title {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--trj-muted);
+  text-transform: uppercase; margin-bottom: 20px;
+}
+.trj-dev-footer-title::before, .trj-dev-footer-title::after { content: ''; height: 1px; width: 56px; background: linear-gradient(90deg, transparent, var(--trj-border2)); }
+.trj-dev-footer-title::after { background: linear-gradient(90deg, var(--trj-border2), transparent); }
+.trj-dev-cards { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; max-width: 640px; margin: 0 auto; }
+.trj-dev-card {
+  display: flex; align-items: center; gap: 12px; background: var(--trj-card);
+  border: 1px solid var(--trj-border); border-radius: 14px; padding: 14px 20px;
+  text-align: left; min-width: 240px; flex: 1;
+  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.trj-dev-card:hover { transform: translateY(-2px); border-color: var(--trj-border2); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+.trj-dev-avatar { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; color: #fff; flex-shrink: 0; }
+.trj-dev-role { font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+.trj-dev-name { font-size: 14px; font-weight: 700; color: var(--trj-fg); margin: 1px 0; }
+.trj-dev-email { font-size: 12px; color: var(--trj-muted); text-decoration: none; transition: color .15s ease; }
+.trj-dev-email:hover { color: var(--trj-primary); text-decoration: underline; }
+.trj-dev-footer-copy { font-size: 11px; color: var(--trj-muted); margin-top: 18px; opacity: .8; }
