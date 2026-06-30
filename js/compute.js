@@ -430,6 +430,9 @@
     var now = Date.now();
     var tipo = spec.tipo, arg = spec.arg;
 
+    // Prioridade numérica pra ordenação (P1=1 … P5=5, sem prioridade = 999)
+    function priNum(t) { var m = (t.prioridade || '').match(/\d+/); return m ? parseInt(m[0], 10) : 999; }
+
     switch (tipo) {
       case 'foraSla': return backlog.filter(function (t) { return t.statusSla === 'FORA DO SLA'; });
       case 'backlogTotal': return backlog;
@@ -437,22 +440,47 @@
       case 'preditiva': return tickets.filter(function (t) { return t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA'; });
       case 'produtividade': return concluidas;
       case 'aging': {
+        // Cada faixa: ordenar do mais NOVO ao mais PRÓXIMO do limite superior
+        // (ou seja, do menor aging ao maior, dentro do bucket)
         var b = C.AGING_BUCKETS[parseInt(arg, 10)]; if (!b) return [];
-        return backlog.filter(function (t) { if (!t.dataCriacao) return false; var idade = Math.round((now - new Date(t.dataCriacao).getTime()) / 60000); return idade >= b.min && idade < b.max; });
+        return backlog.filter(function (t) {
+          if (!t.dataCriacao) return false;
+          var idade = Math.round((now - new Date(t.dataCriacao).getTime()) / 60000);
+          return idade >= b.min && idade < b.max;
+        }).sort(function (a, b2) {
+          // mais novo (menor aging) primeiro
+          function idadeMin(t) { return Math.round((now - new Date(t.dataCriacao).getTime()) / 60000); }
+          return idadeMin(a) - idadeMin(b2);
+        });
       }
       case 'vencimento': {
+        // Prazos a Vencer: agrupa por região e dentro de cada região por prioridade (P1→P5)
         var vb = C.VENCIMENTO_BUCKETS[parseInt(arg, 10)]; if (!vb) return [];
-        return backlog.filter(function (t) { if (t.statusSla !== 'DENTRO DO SLA' || !t.vencimentoCalc) return false; var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000); return rest >= 0 && rest >= vb.min && rest < vb.max; });
+        var rows = backlog.filter(function (t) {
+          if (t.statusSla !== 'DENTRO DO SLA' || !t.vencimentoCalc) return false;
+          var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
+          return rest >= 0 && rest >= vb.min && rest < vb.max;
+        });
+        return rows.sort(function (a, b2) {
+          var ra = a.regiao || 'OTHERS', rb = b2.regiao || 'OTHERS';
+          if (ra !== rb) return ra.localeCompare(rb);
+          return priNum(a) - priNum(b2);
+        });
       }
       case 'slaRegiao': {
+        // SLA por Região: dentro de cada região, ordenar por prioridade P1→P5
         var parts = (arg || '').split('|'); var reg = parts[0]; var lado = parts[1];
-        return backlog.filter(function (t) { return (t.regiao || 'OTHERS') === reg && t.statusSla === (lado === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA'); });
+        return backlog.filter(function (t) {
+          return (t.regiao || 'OTHERS') === reg && t.statusSla === (lado === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA');
+        }).sort(function (a, b2) { return priNum(a) - priNum(b2); });
       }
       case 'regiaoBacklog': return backlog.filter(function (t) { return (t.regiao || 'OTHERS') === arg; });
       case 'regiaoTotal': return tickets.filter(function (t) { return (t.regiao || 'OTHERS') === arg; });
       case 'regiaoSla': {
         var p2 = (arg || '').split('|'); var reg2 = p2[0]; var lado2 = p2[1];
-        return tickets.filter(function (t) { return (t.regiao || 'OTHERS') === reg2 && t.statusSla === (lado2 === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA'); });
+        return tickets.filter(function (t) {
+          return (t.regiao || 'OTHERS') === reg2 && t.statusSla === (lado2 === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA');
+        }).sort(function (a, b2) { return priNum(a) - priNum(b2); });
       }
       case 'prioridadeSla': {
         var p3 = (arg || '').split('|'); var prio = p3[0]; var lado3 = p3[1];
@@ -462,9 +490,6 @@
       }
       case 'atividades': return manuais.filter(function (t) { return D.categoriaManual(t.tipoAtividade) === arg; });
       case 'cancelCorretiva': {
-        // Mesmo recorte do gráfico "Atividades Manuais": tickets corretiva
-        // cancelados, separados por motivo (Associação de Atividades = não
-        // automático; qualquer outro motivo = automação).
         var canceladasDrill = tickets.filter(function (t) {
           var s = (t.status || '').toUpperCase().trim();
           return s === 'CANCELADA' || s === 'CANCELADO';
@@ -481,7 +506,7 @@
           if (cat !== 'Geral' && D.classificarCciCampo(t.filaAtual) !== cat) return false;
           var ehPreditiva = (t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA');
           if (lado4 === 'preditiva') return ehPreditiva;
-          if (ehPreditiva) return false; // preditiva não entra em dentro/fora
+          if (ehPreditiva) return false;
           var r = encDentro(t); if (r === null) return false;
           return lado4 === 'fora' ? r === false : r === true;
         });
@@ -492,10 +517,17 @@
 
   function drillIncidents(incidentsEnriched, spec) {
     var ativos = incidentsEnriched.filter(function (i) { return up(i.statusTrat) !== 'RESOLVIDO'; });
-    if (spec.tipo === 'sitesFora') return ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; });
-    if (spec.tipo === 'anf') return ativos.filter(function (i) { return (i.anf || '').toString().trim() === spec.arg; });
-    if (spec.tipo === 'cidade') return ativos.filter(function (i) { return up(i.cidade) === up(spec.arg); });
-    return [];
+    var filtrado;
+    if (spec.tipo === 'sitesFora') filtrado = ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; });
+    else if (spec.tipo === 'sitesForaAgrupado') {
+      // agrupado por END_ID (1 linha por END_ID) — filtrado por região
+      filtrado = ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; });
+      filtrado = agruparIncidentesPorEndId(filtrado);
+    }
+    else if (spec.tipo === 'anf') filtrado = ativos.filter(function (i) { return (i.anf || '').toString().trim() === spec.arg; });
+    else if (spec.tipo === 'cidade') filtrado = ativos.filter(function (i) { return up(i.cidade) === up(spec.arg); });
+    else filtrado = [];
+    return filtrado;
   }
 
   // ---- Agrupa incidentes com o mesmo END_ID em uma única linha ----
