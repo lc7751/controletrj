@@ -251,7 +251,10 @@
 
   F.pickFolder = async function () {
     if (!F.supportsDirectoryPicker()) throw new Error('Seu navegador não permite conectar pastas. Use Chrome/Edge, ou utilize o upload manual.');
-    var handle = await window.showDirectoryPicker({ id: 'trj-downloads', mode: 'read', startIn: 'downloads' });
+    // 'readwrite' (não só 'read'): depois de cada leitura, os arquivos lidos
+    // (agendada + não-agendada) são movidos para a subpasta "Importados",
+    // pra não embolar com os próximos downloads que caírem na pasta.
+    var handle = await window.showDirectoryPicker({ id: 'trj-downloads', mode: 'readwrite', startIn: 'downloads' });
     await idbSet(IDB_KEY, handle);
     return handle.name;
   };
@@ -259,11 +262,13 @@
   F.forgetFolder = function () { return idbDel(IDB_KEY); };
 
   async function ensurePermission(handle) {
-    var opts = { mode: 'read' };
+    var opts = { mode: 'readwrite' };
     if ((await handle.queryPermission(opts)) === 'granted') return true;
     if ((await handle.requestPermission(opts)) === 'granted') return true;
     return false;
   }
+
+  var SUBPASTA_IMPORTADOS = 'Importados';
 
   async function loadFromMatches(matches, origem, signature, onProgress) {
     var ag = matches.filter(function (m) { return !m.naoAgendada; }).sort(function (a, b) { return b.key - a.key; });
@@ -283,7 +288,46 @@
       arquivos.push({ nome: chosen[i].name, qtd: parsed.length });
     }
     setTasks(tasks, { origem: origem, arquivos: arquivos, em: new Date().toISOString(), signature: signature || buildSignature(matches) });
-    return { total: tasks.length, arquivos: arquivos };
+    // devolve também quais arquivos foram realmente usados (chosenMatches),
+    // pra quem chamou (scanFolder) poder arquivá-los na subpasta depois.
+    return { total: tasks.length, arquivos: arquivos, chosenMatches: chosen };
+  }
+
+  // Acha um nome livre dentro da subpasta de destino — se já existir um
+  // arquivo com esse nome (ex.: duas leituras no mesmo dia), acrescenta um
+  // sufixo de data/hora em vez de sobrescrever.
+  async function nomeDisponivel(dir, nome) {
+    var existe = true;
+    try { await dir.getFileHandle(nome); } catch (e) { existe = false; }
+    if (!existe) return nome;
+    var ts = new Date().toISOString().replace(/[:.]/g, '-');
+    var dot = nome.lastIndexOf('.');
+    return dot >= 0 ? (nome.slice(0, dot) + '_' + ts + nome.slice(dot)) : (nome + '_' + ts);
+  }
+
+  // Move os arquivos que acabaram de ser lidos (agendada + não-agendada)
+  // para a subpasta "Importados" dentro da pasta conectada — assim a
+  // próxima verificação não confunde com downloads novos, e fica fácil
+  // ver visualmente o que já foi processado. Best-effort: se a pasta não
+  // tiver permissão de escrita ou algo falhar, não invalida a importação
+  // que já foi concluída e salva antes desse passo rodar.
+  async function arquivarImportados(handle, chosen) {
+    if (!chosen || !chosen.length) return;
+    var sub;
+    try { sub = await handle.getDirectoryHandle(SUBPASTA_IMPORTADOS, { create: true }); }
+    catch (e) { return; }
+    for (var i = 0; i < chosen.length; i++) {
+      var m = chosen[i];
+      try {
+        var buf = await m.file.arrayBuffer();
+        var destName = await nomeDisponivel(sub, m.name);
+        var fh = await sub.getFileHandle(destName, { create: true });
+        var w = await fh.createWritable();
+        await w.write(buf);
+        await w.close();
+        await handle.removeEntry(m.name);
+      } catch (e) { /* segue tentando os outros arquivos, não interrompe */ }
+    }
   }
 
   // Relê a pasta conectada e carrega os arquivos mais recentes.
@@ -292,15 +336,26 @@
     if (onProgress) onProgress('Verificando pasta conectada...');
     var handle = await idbGet(IDB_KEY);
     if (!handle) throw new Error('Nenhuma pasta conectada. Clique em "Conectar pasta de Downloads".');
-    if (!(await ensurePermission(handle))) throw new Error('Permissão para ler a pasta foi negada.');
+    if (!(await ensurePermission(handle))) throw new Error('Permissão de leitura/escrita da pasta foi negada.');
     if (onProgress) onProgress('Procurando arquivos na pasta...');
     var matches = await collectMatches(handle);
-    if (!matches.length) throw new Error('Nenhum arquivo "Atividades-TRJ_FMMT" foi encontrado na pasta conectada.');
+    if (!matches.length) {
+      // os arquivos já foram movidos pra "Importados" numa verificação
+      // anterior — não é erro, só não tem nada novo desde então.
+      if (mem.tasks.length) return { total: mem.tasks.length, arquivos: (mem.meta && mem.meta.tasks && mem.meta.tasks.arquivos) || [], unchanged: true };
+      throw new Error('Nenhum arquivo "Atividades-TRJ_FMMT" foi encontrado na pasta conectada (confira se já não foram movidos para a subpasta "Importados").');
+    }
     var sig = buildSignature(matches);
     if (sig && sig === monitor.lastSignature) {
       return { total: mem.tasks.length, arquivos: (mem.meta && mem.meta.tasks && mem.meta.tasks.arquivos) || [], unchanged: true };
     }
-    return await loadFromMatches(matches, 'pasta', sig, onProgress);
+    var resultado = await loadFromMatches(matches, 'pasta', sig, onProgress);
+    try {
+      if (onProgress) onProgress('Organizando arquivos na subpasta "Importados"...');
+      await arquivarImportados(handle, resultado.chosenMatches);
+    } catch (e) { /* não invalida a importação já concluída */ }
+    delete resultado.chosenMatches; // detalhe interno, não precisa vazar pra UI
+    return resultado;
   };
 
   // ------------------------------------------------------------------
@@ -346,6 +401,11 @@
     monitor.timer = null;
     monitor.busy = false;
   };
+
+  // Intervalo atual do monitoramento automático, em milissegundos —
+  // usado pela página Importar pra mostrar "verifica a cada Ns" sem
+  // duplicar o número em dois lugares.
+  F.getMonitorIntervalMs = function () { return monitor.interval; };
 
   F.previewFile = async function (file) {
     var buf = await file.arrayBuffer();
