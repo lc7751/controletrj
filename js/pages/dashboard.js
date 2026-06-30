@@ -107,9 +107,35 @@
   // Best-effort: nunca trava a tela nem mostra erro pro operador, e só
   // manda de novo se algo mudou desde a última publicação.
   var _ultimoSnapshotJSON = null;
+
+  // Reduz cada tarefa enriquecida a só os campos que o dashboard público
+  // (compute.js + ui.js, rodando de novo do zero em cima do snapshot)
+  // realmente lê. Sem isso, o JSON publicado vinha gigante: testei com
+  // 270 tarefas reais e deu ~770KB só de tasksEnriched — boa parte disso
+  // é a coluna "Diário de Trabalho" (motivoCancelamento), que pode ter
+  // até ~10 mil caracteres em uma única tarefa cancelada. Como só
+  // importa saber se contém "ASSOCIAÇÃO DE ATIVIDADES" ou não, mantemos
+  // o MESMO nome de campo (pra não mudar nada em compute.js) só que com
+  // o texto cortado pro essencial.
+  function slimTaskForPublish(t) {
+    var motivo = (t.motivoCancelamento || '').toString();
+    var motivoSlim = /ASSOCIA/i.test(motivo) ? 'ASSOCIAÇÃO DE ATIVIDADES' : (motivo ? 'AUTOMACAO' : '');
+    return {
+      osNumero: t.osNumero, sequenciaId: t.sequenciaId, tipoAtividade: t.tipoAtividade,
+      status: t.status, filaAtual: t.filaAtual, prioridade: t.prioridade,
+      dataCriacao: t.dataCriacao, enderecoId: t.enderecoId, siteId: t.siteId,
+      cidade: t.cidade, regiao: t.regiao, tipoFalha: t.tipoFalha,
+      vencimentoCalc: t.vencimentoCalc, fimCalc: t.fimCalc,
+      statusSla: t.statusSla, fonteSla: t.fonteSla, motivoCancelamento: motivoSlim
+    };
+  }
+
   function publicarSnapshotPublico(data) {
     try {
-      var payload = { tasksEnriched: data.tasksEnriched || [], incidentsEnriched: data.incidentsEnriched || [] };
+      var payload = {
+        tasksEnriched: (data.tasksEnriched || []).map(slimTaskForPublish),
+        incidentsEnriched: data.incidentsEnriched || []
+      };
       var jsonStr = JSON.stringify(payload);
       if (jsonStr === _ultimoSnapshotJSON) return;
       _ultimoSnapshotJSON = jsonStr;
