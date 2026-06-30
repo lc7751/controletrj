@@ -602,4 +602,28 @@
   };
 
   TRJ.ui = U;
+  // ---------- Rodapé "Equipe de Desenvolvimento" ----------
+  // Reaproveitado tanto no painel principal (app.js) quanto no dashboard
+  // público (dashboard-publico.html), pra manter o crédito sempre visível.
+  U.devFooter = function () {
+    function card(initials, cor, role, name, email) {
+      return h('div', { class: 'trj-dev-card' }, [
+        h('div', { class: 'trj-dev-avatar', style: { background: cor }, text: initials }),
+        h('div', null, [
+          h('div', { class: 'trj-dev-role', style: { color: cor }, text: role }),
+          h('div', { class: 'trj-dev-name', text: name }),
+          h('a', { class: 'trj-dev-email', href: 'mailto:' + email, text: email })
+        ])
+      ]);
+    }
+    return h('div', { class: 'trj-dev-footer' }, [
+      h('div', { class: 'trj-dev-footer-title', text: 'Equipe de Desenvolvimento' }),
+      h('div', { class: 'trj-dev-cards' }, [
+        card('LI', 'var(--trj-primary)', 'Desenvolvedor', 'Lucas Infante', 'lucas.esao7751@gmail.com'),
+        card('BA', 'var(--trj-blue)', 'Idealizador', 'Bruno Augusto', 'bruno.augusto.bafs@gmail.com')
+      ]),
+      h('div', { class: 'trj-dev-footer-copy', text: 'Controle operacional TIM - TLP  ·  Todos os direitos reservados' })
+    ]);
+  };
+
 })(window.TRJ = window.TRJ || {});
