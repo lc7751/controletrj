@@ -119,6 +119,18 @@ body::before {
 /* Cartão de gráfico: cabeçalho com "pulso" + hover de borda/sombra */
 .trj-chart-card { transition: border-color .25s ease, box-shadow .25s ease; }
 .trj-chart-card:hover { border-color: rgba(255,140,0,.4); box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+
+/* Tile de métrica clicável (Visão Regional e similares) */
+.trj-metric-tile {
+  cursor: pointer; padding: 10px 12px; border-radius: 10px;
+  background: rgba(255,255,255,.02); border: 1px solid transparent;
+  transition: background .2s ease, border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+.trj-metric-tile:hover {
+  background: rgba(255,140,0,.08); border-color: rgba(255,140,0,.35);
+  transform: translateY(-3px); box-shadow: 0 8px 18px rgba(0,0,0,.35);
+}
+.trj-metric-tile .ic { font-size: 15px; opacity: .85; }
 .trj-chart-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--trj-primary); box-shadow: 0 0 10px var(--trj-primary); flex-shrink: 0; }
 
 /* Dropzone reutilizável (upload de arquivos) */
