@@ -30,7 +30,22 @@
         return U.h('option', { value: p, text: p, selected: f.prioridade === p ? 'selected' : null });
       })));
     var btnWa = U.h('button', { class: 'trj-btn trj-btn-ghost', text: '📱 Copiar resumo', onclick: function () { copiarResumo(d); } });
-    var btnExcel = U.h('button', { class: 'trj-btn trj-btn-ghost', text: '📊 Extrair Excel', onclick: function () { exportarExcelDashboard(d, data); } });
+    var btnExcel = U.h('button', {
+      class: 'trj-btn clickable',
+      style: { background: 'rgba(33,115,70,.18)', color: '#2e7d46', border: '1px solid rgba(33,115,70,.4)', fontWeight: '700', gap: '6px', transition: 'all .2s ease' },
+      onclick: function () { exportarExcelDashboard(d, data); },
+      onmouseenter: function (ev) { ev.currentTarget.style.background = 'rgba(33,115,70,.35)'; ev.currentTarget.style.borderColor = '#2e7d46'; ev.currentTarget.style.boxShadow = '0 4px 14px rgba(33,115,70,.3)'; },
+      onmouseleave: function (ev) { ev.currentTarget.style.background = 'rgba(33,115,70,.18)'; ev.currentTarget.style.borderColor = 'rgba(33,115,70,.4)'; ev.currentTarget.style.boxShadow = ''; }
+    }, [
+      // Ícone SVG do Excel (X estilizado no verde Microsoft)
+      U.h('svg', { width: '16', height: '16', viewBox: '0 0 24 24', fill: 'currentColor', style: { flexShrink: '0' } }, [
+        U.h('path', { d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' }),
+        U.h('polyline', { fill: 'none', stroke: 'rgba(33,115,70,.18)', 'stroke-width': '1.5', points: '14 2 14 8 20 8' }),
+        U.h('line', { fill: 'none', stroke: '#fff', 'stroke-width': '1.5', x1: '8', y1: '13', x2: '16', y2: '21' }),
+        U.h('line', { fill: 'none', stroke: '#fff', 'stroke-width': '1.5', x1: '16', y1: '13', x2: '8', y2: '21' })
+      ]),
+      U.h('span', { text: 'Extrair Excel' })
+    ]);
     var btnRef = U.h('button', { class: 'trj-btn trj-btn-primary', html: app.icon('refresh') + ' Atualizar', onclick: function () { app.refresh(); } });
     var right = U.h('div', { class: 'flex items-center gap-2 flex-wrap' }, [selReg, selPri, btnWa, btnExcel, btnRef]);
     var atualizadoEm = d.atualizadoEm ? new Date(d.atualizadoEm).toLocaleString('pt-BR') : new Date().toLocaleString('pt-BR');
@@ -53,7 +68,12 @@
     // ---- charts grid ----
     var aging = U.chartCard('Aging do Backlog');
     var venc = U.chartCard('Prazos a Vencer');
-    var sites = U.chartCard('Sites Fora por Região');
+
+    // Sites Fora por Região — com toggle de agrupamento por END_ID
+    var sfAgrupar = { value: false };
+    var switchSf = U.switch(false, 'Por END_ID', function (v) { sfAgrupar.value = v; });
+    switchSf.style.cssText += 'font-size:11px;';
+    var sites = U.chartCard('Sites Fora por Região', { hint: switchSf });
     var slaReg = U.chartCard('SLA por Região');
     var manu = U.chartCard('Atividades Manuais', { hint: 'inclui cancelamentos' });
     var prod = U.chartCard('Produtividade — Encerradas Dentro/Fora do SLA');
@@ -67,25 +87,33 @@
     var aData = d.aging || [], vData = d.prazosVencimento || [], sfData = d.sitesForaRegiao || [], srData = d.slaPorRegiao || [], amData = d.atividadesManuais || [], pData = d.produtividade || [];
     U.barChart(aging.canvas, aData, { onBar: function (i) { app.openDrillTasks({ tipo: 'aging', arg: i }, f, 'Aging: ' + aData[i].label); } });
     U.hbarChart(venc.canvas, vData, { onBar: function (i) { app.openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A vencer: ' + vData[i].label); } });
-    U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), { onBar: function (i) { app.openDrillIncidents({ tipo: 'sitesFora', arg: sfData[i].regiao }, 'Sites fora: ' + sfData[i].label); } });
+    U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), {
+      onBar: function (i) {
+        var tipo = sfAgrupar.value ? 'sitesForaAgrupado' : 'sitesFora';
+        var titulo = 'Sites fora' + (sfAgrupar.value ? ' (agrupado)' : '') + ': ' + sfData[i].label;
+        app.openDrillIncidents({ tipo: tipo, arg: sfData[i].regiao }, titulo);
+      }
+    });
     U.stackedChart(slaReg.canvas, srData, { onSeg: function (i, ds) { var r = srData[i]; app.openDrillTasks({ tipo: 'slaRegiao', arg: r.regiao + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'SLA ' + r.label); } });
     U.donutChart(manu.canvas, amData, {
       cores: C.DONUT_CORES,
       onSlice: function (i) {
         var nm = amData[i].name;
-        // as 2 fatias de cancelamento vêm de um recorte diferente (TSKs
-        // corretiva canceladas), não da lista "manuais" — rota separada.
-        var spec = nm.indexOf('Cancel.') === 0
+        var ehCancel = nm.indexOf('Cancel.') === 0;
+        var spec = ehCancel
           ? { tipo: 'cancelCorretiva', arg: nm.indexOf('Associa') >= 0 ? 'assoc' : 'auto' }
           : { tipo: 'atividades', arg: argAtiv(nm) };
-        app.openDrillTasks(spec, f, nm);
+        // canceladas: mostrar "Dentro SLA / Fora SLA", não "Vence em"
+        app.openDrillTasks(spec, f, nm, ehCancel ? { modoResultado: true } : {});
       }
     });
     U.stackedChart(prod.canvas, pData.map(function (p) { return { label: p.categoria, dentro: p.dentro, fora: p.fora, preditiva: p.preditiva }; }), {
       onSeg: function (i, ds) {
         var cat = pData[i].categoria;
         var lado = ds === 2 ? 'preditiva' : (ds === 1 ? 'fora' : 'dentro');
-        app.openDrillTasks({ tipo: 'produtividadeCat', arg: cat + '|' + lado }, f, 'Produtividade ' + cat + (ds === 2 ? ' — Preditiva' : (ds === 1 ? ' — Fora do SLA' : ' — Dentro do SLA')));
+        var titulo = 'Produtividade ' + cat + (ds === 2 ? ' — Preditiva' : (ds === 1 ? ' — Fora do SLA' : ' — Dentro do SLA'));
+        // produtividade: mostrar "Dentro SLA / Fora SLA", não "Vence em"
+        app.openDrillTasks({ tipo: 'produtividadeCat', arg: cat + '|' + lado }, f, titulo, { modoResultado: true });
       }
     });
   };
@@ -221,9 +249,179 @@
   function exportarExcelDashboard(d, pageData) {
     if (typeof XLSX === 'undefined') { U.toast('Biblioteca de Excel não carregou. Recarregue a página.', 'err'); return; }
     var wb = XLSX.utils.book_new();
-    var C2 = TRJ.constants;
     var dom = TRJ.domain;
     var now = new Date();
+    var K = d.kpis || {};
+    var tc = d.topCidades || {};
+
+    // ---- helpers de formatação ----
+    var LARANJA = { patternType: 'solid', fgColor: { rgb: 'FF8C00' } };
+    var VERDE_ESCURO = { patternType: 'solid', fgColor: { rgb: '1A4731' } };
+    var AZUL_ESCURO = { patternType: 'solid', fgColor: { rgb: '1A2B4A' } };
+    var VERMELHO_ESCURO = { patternType: 'solid', fgColor: { rgb: '4A1A1A' } };
+    var ROXO_ESCURO = { patternType: 'solid', fgColor: { rgb: '3A1A4A' } };
+    var CINZA = { patternType: 'solid', fgColor: { rgb: '1A1A24' } };
+
+    function estilo(fill, bold, fontSize, fontColor) {
+      return {
+        fill: fill || { patternType: 'none' },
+        font: { bold: !!bold, sz: fontSize || 11, color: { rgb: fontColor || 'F0F0F0' } },
+        alignment: { vertical: 'center', horizontal: 'left', wrapText: false },
+        border: {
+          top: { style: 'thin', color: { rgb: '333344' } },
+          bottom: { style: 'thin', color: { rgb: '333344' } },
+          left: { style: 'thin', color: { rgb: '333344' } },
+          right: { style: 'thin', color: { rgb: '333344' } }
+        }
+      };
+    }
+
+    function hdrStyle(fill) { return estilo(fill, true, 11, 'FFFFFF'); }
+    function rowStyle(alt) { return estilo({ patternType: 'solid', fgColor: { rgb: alt ? '16162A' : '0A0A1A' } }, false, 10, 'E0E0E0'); }
+    function cellStyle(hex) { return estilo({ patternType: 'solid', fgColor: { rgb: hex || '0A0A1A' } }, false, 10, 'F0F0F0'); }
+
+    // Cria uma aba formatada com cabeçalho colorido e alternância de linhas
+    function abaFormatada(nome, hdrFill, colunas, linhas) {
+      var aoa = [colunas.map(function (c) { return c.h; })].concat(linhas);
+      var ws = XLSX.utils.aoa_to_sheet(aoa);
+
+      // Larguras de coluna
+      ws['!cols'] = colunas.map(function (c) { return { wch: c.w || 18 }; });
+
+      // Estilos
+      var range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      for (var R = range.s.r; R <= range.e.r; R++) {
+        for (var C2 = range.s.c; C2 <= range.e.c; C2++) {
+          var addr = XLSX.utils.encode_cell({ r: R, c: C2 });
+          if (!ws[addr]) ws[addr] = { t: 's', v: '' };
+          ws[addr].s = R === 0 ? hdrStyle(hdrFill) : rowStyle(R % 2 === 0);
+        }
+      }
+      // Congelar cabeçalho
+      ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+      XLSX.utils.book_append_sheet(wb, ws, nome.slice(0, 31));
+    }
+
+    function formatarData(val) {
+      if (!val) return '';
+      var d2 = val instanceof Date ? val : new Date(val);
+      if (isNaN(d2.getTime())) return String(val);
+      return d2.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    // ---- Aba 1: Dashboard (KPIs + resumos num só lugar) ----
+    abaFormatada('Dashboard', LARANJA, [
+      { h: 'INDICADOR', w: 35 }, { h: 'VALOR', w: 16 }, { h: 'DETALHE', w: 45 }
+    ], [
+      ['Extraído em', now.toLocaleString('pt-BR'), ''],
+      ['', '', ''],
+      ['═ BACKLOG', '', ''],
+      ['Fora do SLA', K.foraSla || 0, 'TSKs corretiva com prazo expirado (backlog ativo)'],
+      ['Backlog Total', K.backlogTotal || 0, 'Total de TSKs corretiva em aberto'],
+      ['Backlog Indefinido', K.backlogIndef || 0, 'TSKs sem SLA calculado (sem data de criação ou prioridade)'],
+      ['Preditiva', K.preditiva || 0, 'TSKs preventivas classificadas como corretiva'],
+      ['SLA Geral', (K.slaGeral || 0) + '%', 'Das TSKs concluídas, % que foi concluída dentro do SLA'],
+      ['', '', ''],
+      ['═ PRODUTIVIDADE', '', ''],
+      ['Concluídas (total)', K.produtividade || 0, 'TSKs encerradas no período'],
+      ['', '', ''],
+      ['═ SITES FORA', '', ''],
+      ['Total Sites Fora', tc.totalSitesFora || 0, 'Incidentes ativos no painel G.E.N.E.S.I.S'],
+      ['', '', ''],
+      ['═ PRODUTIVIDADE POR CATEGORIA', '', ''],
+    ].concat((d.produtividade || []).map(function (p) {
+      return [p.categoria, 'Dentro: ' + p.dentro + ' / Fora: ' + p.fora + (p.preditiva ? ' / Preditiva: ' + p.preditiva : ''), ''];
+    })).concat([
+      ['', '', ''],
+      ['═ SLA POR REGIÃO', '', ''],
+    ]).concat((d.slaPorRegiao || []).filter(function (r) { return r.dentro + r.fora > 0; }).map(function (r) {
+      var tot = r.dentro + r.fora;
+      return [r.label, 'Dentro: ' + r.dentro + ' / Fora: ' + r.fora, tot > 0 ? Math.round(r.dentro / tot * 1000) / 10 + '% dentro do SLA' : '—'];
+    })).concat([
+      ['', '', ''],
+      ['═ TOP CIDADES (Sites Fora)', '', ''],
+    ]).concat((tc.cidades || []).slice(0, 20).map(function (c) { return [c.cidade, c.total, c.pct + '%']; })));
+
+    // ---- Aba 2: Backlog ----
+    var tasksE = (pageData && pageData.tasksEnriched) || [];
+    var incE = (pageData && pageData.incidentsEnriched) || [];
+    var sep = dom.separarTicketsManuais(tasksE);
+    var ticketsCorretiva = sep.tickets, manuaisFull = sep.manuais;
+    var backlogRows = tasksE.filter(function (t) { return dom.isBacklogStatus(t.status); });
+
+    var backlogCols = [
+      { h: 'TSK', w: 22 }, { h: 'Status', w: 16 }, { h: 'Prioridade', w: 12 },
+      { h: 'Status SLA', w: 16 }, { h: 'Região', w: 18 }, { h: 'Cidade', w: 20 },
+      { h: 'END_ID', w: 18 }, { h: 'Site', w: 22 }, { h: 'Falha', w: 24 },
+      { h: 'Fila', w: 30 }, { h: 'Criação', w: 18 }, { h: 'Vencimento SLA', w: 18 }
+    ];
+    abaFormatada('Backlog', VERMELHO_ESCURO, backlogCols, backlogRows.sort(function (a, b2) {
+      var pa = (a.prioridade || '').match(/\d+/); var pb = (b2.prioridade || '').match(/\d+/);
+      return (pa ? parseInt(pa[0]) : 999) - (pb ? parseInt(pb[0]) : 999);
+    }).map(function (t) {
+      return [t.osNumero || '', t.status || '', t.prioridade || '', t.statusSla || '',
+              t.regiao || '', t.cidade || '', t.enderecoId || '', t.siteId || '',
+              t.tipoFalha || '', t.filaAtual || '', formatarData(t.dataCriacao), formatarData(t.vencimentoCalc)];
+    }));
+
+    // ---- Aba 3: Concluídas ----
+    var concluidasRows = ticketsCorretiva.filter(function (t) {
+      var s = (t.status || '').toUpperCase().trim(); return s === 'CONCLUÍDA' || s === 'CONCLUIDA';
+    });
+    abaFormatada('Concluidas', VERDE_ESCURO, [
+      { h: 'TSK', w: 22 }, { h: 'Status', w: 16 }, { h: 'Prioridade', w: 12 }, { h: 'Status SLA', w: 16 },
+      { h: 'Região', w: 18 }, { h: 'Cidade', w: 20 }, { h: 'END_ID', w: 18 }, { h: 'Site', w: 22 },
+      { h: 'Falha', w: 24 }, { h: 'Fila', w: 30 }, { h: 'Criação', w: 18 }, { h: 'Encerramento', w: 18 }, { h: 'Venc. SLA', w: 18 }
+    ], concluidasRows.map(function (t) {
+      return [t.osNumero || '', t.status || '', t.prioridade || '', t.statusSla || '',
+              t.regiao || '', t.cidade || '', t.enderecoId || '', t.siteId || '',
+              t.tipoFalha || '', t.filaAtual || '', formatarData(t.dataCriacao), formatarData(t.fimCalc), formatarData(t.vencimentoCalc)];
+    }));
+
+    // ---- Aba 4: Canceladas ----
+    var canceladasRows = ticketsCorretiva.filter(function (t) {
+      var s = (t.status || '').toUpperCase().trim(); return s === 'CANCELADA' || s === 'CANCELADO';
+    }).map(function (t) {
+      var m = (t.motivoCancelamento || '').toString().toUpperCase();
+      return Object.assign({}, t, { tipoCancelamento: m.indexOf('ASSOCIA') >= 0 ? 'Associação' : 'Automação' });
+    });
+    abaFormatada('Canceladas', ROXO_ESCURO, [
+      { h: 'TSK', w: 22 }, { h: 'Tipo Cancelamento', w: 20 }, { h: 'Prioridade', w: 12 },
+      { h: 'Região', w: 18 }, { h: 'Cidade', w: 20 }, { h: 'END_ID', w: 18 }, { h: 'Site', w: 22 },
+      { h: 'Falha', w: 24 }, { h: 'Fila', w: 30 }, { h: 'Criação', w: 18 }
+    ], canceladasRows.map(function (t) {
+      return [t.osNumero || '', t.tipoCancelamento || '', t.prioridade || '',
+              t.regiao || '', t.cidade || '', t.enderecoId || '', t.siteId || '',
+              t.tipoFalha || '', t.filaAtual || '', formatarData(t.dataCriacao)];
+    }));
+
+    // ---- Aba 5: Atividades Manuais ----
+    abaFormatada('Atividades Manuais', CINZA, [
+      { h: 'TSK', w: 22 }, { h: 'Tipo Atividade', w: 28 }, { h: 'Status', w: 16 },
+      { h: 'Região', w: 18 }, { h: 'Cidade', w: 20 }, { h: 'END_ID', w: 18 }, { h: 'Site', w: 22 },
+      { h: 'Fila', w: 30 }, { h: 'Criação', w: 18 }
+    ], manuaisFull.map(function (t) {
+      return [t.osNumero || '', t.tipoAtividade || '', t.status || '',
+              t.regiao || '', t.cidade || '', t.enderecoId || '', t.siteId || '',
+              t.filaAtual || '', formatarData(t.dataCriacao)];
+    }));
+
+    // ---- Aba 6: Sites Fora (incidentes) ----
+    var incAtivos = incE.filter(function (i) { return (i.statusTrat || 'ATIVO').toUpperCase() !== 'RESOLVIDO'; });
+    abaFormatada('Sites Fora', VERMELHO_ESCURO, [
+      { h: 'Horário', w: 16 }, { h: 'Duração', w: 10 }, { h: 'Site', w: 28 }, { h: 'END_ID', w: 18 },
+      { h: 'ANF', w: 8 }, { h: 'Cidade/UF', w: 22 }, { h: 'Região', w: 18 }, { h: 'Causa', w: 30 },
+      { h: 'Causa (grupo)', w: 18 }, { h: 'Previsão', w: 16 }, { h: 'Detalhe', w: 50 }, { h: 'Status', w: 16 }
+    ], incAtivos.map(function (i) {
+      return [i.horario || '', i.downtime || '', i.site || '', i.enderecoId || '',
+              i.anf || '', i.cidadeUf || '', i.regiao || '', i.causa || '',
+              i.causaGrupo || '', i.previsao || '', i.detalhe || '', i.statusTrat || ''];
+    }));
+
+    var ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    XLSX.writeFile(wb, 'Dashboard_TRJ_' + ts + '.xlsx');
+    U.toast('Excel exportado! ' + (tasksE.length + incE.length) + ' registros em ' + wb.SheetNames.length + ' abas.', 'ok');
+  }
 
     function aba(nome, aoa) {
       var ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -304,23 +502,4 @@
       { k: 'regiao', h: 'Região' }, { k: 'causa', h: 'Causa' }, { k: 'causaGrupo', h: 'Causa (grupo)' },
       { k: 'previsao', h: 'Previsão' }, { k: 'detalhe', h: 'Detalhe' }, { k: 'statusTrat', h: 'Status Trat.' }
     ]);
-
-    // ---- Aging resumo (gráfico) ----
-    abaLista('Aging Resumo', d.aging, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
-    abaLista('Prazos a Vencer', d.prazosVencimento, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
-    abaLista('SLA por Regiao', d.slaPorRegiao, [{ k: 'label', h: 'Região' }, { k: 'dentro', h: 'Dentro SLA' }, { k: 'fora', h: 'Fora SLA' }]);
-    abaLista('Sites Fora por Regiao', d.sitesForaRegiao, [{ k: 'label', h: 'Região' }, { k: 'total', h: 'Total' }]);
-    abaLista('Sites Fora por ANF', tc.porAnf, [{ k: 'anf', h: 'ANF' }, { k: 'total', h: 'Total' }, { k: 'pct', h: '%' }]);
-    abaLista('Top Cidades', tc.cidades, [{ k: 'cidade', h: 'Cidade' }, { k: 'total', h: 'Total' }]);
-    abaLista('Atividades Manuais (resumo)', d.atividadesManuais, [{ k: 'name', h: 'Tipo' }, { k: 'value', h: 'Total' }]);
-    abaLista('Produtividade (resumo)', d.produtividade, [
-      { k: 'categoria', h: 'Categoria' }, { k: 'dentro', h: 'Dentro SLA' },
-      { k: 'fora', h: 'Fora SLA' }, { k: 'preditiva', h: 'Preditiva' }
-    ]);
-
-    var ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    XLSX.writeFile(wb, 'Dashboard_TRJ_' + ts + '.xlsx');
-    var totalLinhas = tasksE.length + incE.length;
-    U.toast('Excel exportado com ' + totalLinhas + ' registros em ' + wb.SheetNames.length + ' abas!', 'ok');
-  }
 })(window.TRJ = window.TRJ || {});
