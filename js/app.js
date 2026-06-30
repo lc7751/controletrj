@@ -181,7 +181,7 @@
       a.addEventListener('click', closeSidebarNow);
     });
     var page = U.h('div', { id: 'page', class: 'p-4 lg:p-6', style: { paddingTop: '54px' } });
-    var main = U.h('div', { style: { flex: '1', minWidth: '0', width: '100%' } }, [page]);
+    var main = U.h('div', { style: { flex: '1', minWidth: '0', width: '100%' } }, [page, U.devFooter()]);
     shell.appendChild(sidebar);
     shell.appendChild(main);
     setActiveLink();
