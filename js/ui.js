@@ -461,11 +461,25 @@
     return result;
   };
 
+  // ---------- Badge visual de vencimento (mais "alto nível" que texto puro) ----------
+  // Pílula colorida com ícone — relógio se ainda dentro do prazo, alerta se
+  // vencido — e um ponto pulsante quando já venceu, pra chamar atenção.
+  U.vencimentoBadge = function (vencimentoCalc) {
+    var venc = D.formatarVencimentoSimples(vencimentoCalc);
+    if (!venc.cor) return h('span', { style: { color: 'var(--trj-muted)' }, text: '—' });
+    var bg = venc.venceu ? 'rgba(231,76,60,.16)' : 'rgba(46,204,113,.16)';
+    var icone = venc.venceu ? '⚠️' : '⏱';
+    var bits = [h('span', { text: icone }), h('span', { text: venc.texto })];
+    if (venc.venceu) bits.unshift(h('span', { class: 'trj-pulse-dot' }));
+    return h('span', {
+      class: 'trj-badge', style: { background: bg, color: venc.cor, fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' }
+    }, bits);
+  };
+
   // ---------- Tabela de tasks (drill) — mesmas colunas da BASE_METRICAS original ----------
   U.taskTable = function (rows) {
     var thead = h('thead', null, h('tr', null, ['Região', 'TSK', 'Site', 'Cidade', 'Falha', 'P', 'Criação', 'Vencimento'].map(function (t) { return h('th', { text: t }); })));
     var body = rows.slice(0, 1000).map(function (t) {
-      var venc = D.formatarVencimentoSimples(t.vencimentoCalc);
       return h('tr', null, [
         h('td', { text: C.REGIAO_LABELS[t.regiao] || t.regiao || '—' }),
         h('td', { text: t.osNumero || '—' }),
@@ -474,7 +488,7 @@
         h('td', { text: t.tipoFalha || '—' }),
         h('td', { text: t.prioridade || '—' }),
         h('td', { text: t.dataCriacao ? D.formatarDataCompacta(t.dataCriacao) : '—' }),
-        h('td', { style: { color: venc.cor || 'inherit', fontWeight: venc.cor ? '700' : 'normal' }, text: venc.texto })
+        h('td', null, U.vencimentoBadge(t.vencimentoCalc))
       ]);
     });
     var tbl = h('table', { class: 'trj-table' }, [thead, h('tbody', null, body)]);
