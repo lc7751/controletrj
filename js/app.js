@@ -252,10 +252,13 @@
   };
 
   // ---------------- DRILL ----------------
-  App.openDrillTasks = function (spec, filtros, title) {
+  App.openDrillTasks = function (spec, filtros, title, opts) {
     if (!App.data) return;
     var rows = Comp.drillTasks(App.data.tasksEnriched, spec, filtros || {});
-    U.openModal(title || 'Detalhamento', U.taskTable(rows), { onCopy: function () { return U.taskTableCopyText(rows, title); } });
+    // modoResultado: drills de canceladas e produtividade (tarefas já encerradas)
+    // mostram "Dentro SLA / Fora SLA" em vez de "Vence em / Vencido a"
+    var tableOpts = opts || {};
+    U.openModal(title || 'Detalhamento', U.taskTable(rows, tableOpts), { onCopy: function () { return U.taskTableCopyText(rows, title); } });
   };
   App.openDrillIncidents = function (spec, title) {
     if (!App.data) return;
