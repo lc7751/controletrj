@@ -42,8 +42,8 @@
       { label: 'Backlog Total', value: U.fmtNum(K.backlogTotal), cor: C.CORES_TRJ.orange, spec: { tipo: 'backlogTotal' }, t: 'Backlog total' },
       { label: 'Backlog Indefinido', value: U.fmtNum(K.backlogIndef), cor: C.CORES_TRJ.red, spec: { tipo: 'backlogIndef' }, t: 'Backlog sem SLA definido' },
       { label: 'Preditiva', value: U.fmtNum(K.preditiva), cor: C.CORES_TRJ.orange, spec: { tipo: 'preditiva' }, t: 'Atividades preditivas' },
-      { label: 'Produtividade', value: U.fmtNum(K.produtividade), cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, t: 'Concluídas' },
-      { label: 'SLA Geral', value: U.fmtPct(K.slaGeral), cor: C.CORES_TRJ.green, spec: null, t: '' }
+      { label: 'Produtividade (Concluídas)', value: U.fmtNum(K.produtividade), cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, t: 'TSKs concluídas' },
+      { label: 'SLA Geral (Concluídas)', value: U.fmtPct(K.slaGeral), cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, t: 'TSKs concluídas — % dentro do prazo' }
     ];
     var kpiGrid = U.h('div', { class: 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5' }, kpiDefs.map(function (k) {
       return U.kpiCard({ label: k.label, value: k.value, cor: k.cor, onClick: k.spec ? function () { app.openDrillTasks(k.spec, f, k.t); } : null });
@@ -55,8 +55,8 @@
     var venc = U.chartCard('Prazos a Vencer');
     var sites = U.chartCard('Sites Fora por Região');
     var slaReg = U.chartCard('SLA por Região');
-    var manu = U.chartCard('Atividades Manuais');
-    var prod = U.chartCard('Produtividade Encerramento');
+    var manu = U.chartCard('Atividades Manuais', { hint: 'inclui cancelamentos' });
+    var prod = U.chartCard('Produtividade — Encerradas Dentro/Fora do SLA');
     var grid = U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5' }, [aging.card, venc.card, sites.card, slaReg.card, manu.card, prod.card]);
     container.appendChild(grid);
 
@@ -69,7 +69,18 @@
     U.hbarChart(venc.canvas, vData, { onBar: function (i) { app.openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A vencer: ' + vData[i].label); } });
     U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), { onBar: function (i) { app.openDrillIncidents({ tipo: 'sitesFora', arg: sfData[i].regiao }, 'Sites fora: ' + sfData[i].label); } });
     U.stackedChart(slaReg.canvas, srData, { onSeg: function (i, ds) { var r = srData[i]; app.openDrillTasks({ tipo: 'slaRegiao', arg: r.regiao + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'SLA ' + r.label); } });
-    U.donutChart(manu.canvas, amData, { cores: C.DONUT_CORES, onSlice: function (i) { var nm = amData[i].name; app.openDrillTasks({ tipo: 'atividades', arg: argAtiv(nm) }, f, nm); } });
+    U.donutChart(manu.canvas, amData, {
+      cores: C.DONUT_CORES,
+      onSlice: function (i) {
+        var nm = amData[i].name;
+        // as 2 fatias de cancelamento vêm de um recorte diferente (TSKs
+        // corretiva canceladas), não da lista "manuais" — rota separada.
+        var spec = nm.indexOf('Cancel.') === 0
+          ? { tipo: 'cancelCorretiva', arg: nm.indexOf('Associa') >= 0 ? 'assoc' : 'auto' }
+          : { tipo: 'atividades', arg: argAtiv(nm) };
+        app.openDrillTasks(spec, f, nm);
+      }
+    });
     U.stackedChart(prod.canvas, pData.map(function (p) { return { label: p.categoria, dentro: p.dentro, fora: p.fora, preditiva: p.preditiva }; }), {
       onSeg: function (i, ds) {
         var cat = pData[i].categoria;
@@ -169,8 +180,8 @@
       'Backlog Total: ' + (K.backlogTotal || 0),
       'Backlog Indef.: ' + (K.backlogIndef || 0),
       'Preditiva: ' + (K.preditiva || 0),
-      'Concluídas: ' + (K.produtividade || 0),
-      'SLA Geral: ' + (K.slaGeral || 0) + '%',
+      'Produtividade (Concluídas): ' + (K.produtividade || 0),
+      'SLA Geral (Concluídas): ' + (K.slaGeral || 0) + '%',
       'Sites fora: ' + (tc.totalSitesFora || 0),
       'Atualizado: ' + new Date(d.atualizadoEm || Date.now()).toLocaleString('pt-BR')
     ];
@@ -218,6 +229,8 @@
     var rawInc = TRJ.files ? TRJ.files.getIncidents() : [];
     var tasksE = (window.App && App.data && App.data.tasksEnriched) || [];
     var incE = (window.App && App.data && App.data.incidentsEnriched) || [];
+    var sep = dom.separarTicketsManuais(tasksE);
+    var ticketsCorretiva = sep.tickets, manuaisFull = sep.manuais;
 
     abaLista('Backlog', tasksE.filter(function (t) { return dom.isBacklogStatus(t.status); }), [
       { k: 'osNumero', h: 'TSK' }, { k: 'status', h: 'Status' }, { k: 'prioridade', h: 'Prioridade' },
@@ -228,15 +241,36 @@
     ]);
 
     // ---- Concluídas ----
-    abaLista('Concluidas', tasksE.filter(function (t) {
+    abaLista('Concluidas', ticketsCorretiva.filter(function (t) {
       var s = (t.status || '').toUpperCase().trim();
       return s === 'CONCLUÍDA' || s === 'CONCLUIDA';
     }), [
       { k: 'osNumero', h: 'TSK' }, { k: 'status', h: 'Status' }, { k: 'prioridade', h: 'Prioridade' },
       { k: 'regiao', h: 'Região' }, { k: 'cidade', h: 'Cidade' }, { k: 'enderecoId', h: 'END_ID' },
       { k: 'siteId', h: 'Site' }, { k: 'tipoFalha', h: 'Falha' }, { k: 'filaAtual', h: 'Fila' },
-      { k: 'dataCriacao', h: 'Criação' }, { k: 'fim', h: 'Encerramento' },
+      { k: 'dataCriacao', h: 'Criação' }, { k: 'fimCalc', h: 'Encerramento' },
       { k: 'vencimentoCalc', h: 'Vencimento SLA' }, { k: 'statusSla', h: 'Status SLA' }
+    ]);
+
+    // ---- Canceladas (corretiva) — com motivo, separadas por automação/associação ----
+    abaLista('Canceladas', ticketsCorretiva.filter(function (t) {
+      var s = (t.status || '').toUpperCase().trim();
+      return s === 'CANCELADA' || s === 'CANCELADO';
+    }).map(function (t) {
+      var motivo = (t.motivoCancelamento || '').toString().toUpperCase();
+      return Object.assign({}, t, { tipoCancelamento: motivo.indexOf('ASSOCIA') >= 0 ? 'Associação' : 'Automação' });
+    }), [
+      { k: 'osNumero', h: 'TSK' }, { k: 'tipoCancelamento', h: 'Tipo Cancelamento' }, { k: 'prioridade', h: 'Prioridade' },
+      { k: 'regiao', h: 'Região' }, { k: 'cidade', h: 'Cidade' }, { k: 'enderecoId', h: 'END_ID' },
+      { k: 'siteId', h: 'Site' }, { k: 'tipoFalha', h: 'Falha' }, { k: 'filaAtual', h: 'Fila' },
+      { k: 'dataCriacao', h: 'Criação' }
+    ]);
+
+    // ---- Atividades manuais (WO/Preventiva/Conjunta/Outras) ----
+    abaLista('Atividades Manuais (detalhe)', manuaisFull, [
+      { k: 'osNumero', h: 'TSK' }, { k: 'tipoAtividade', h: 'Tipo Atividade' }, { k: 'status', h: 'Status' },
+      { k: 'regiao', h: 'Região' }, { k: 'cidade', h: 'Cidade' }, { k: 'enderecoId', h: 'END_ID' },
+      { k: 'siteId', h: 'Site' }, { k: 'filaAtual', h: 'Fila' }, { k: 'dataCriacao', h: 'Criação' }
     ]);
 
     // ---- Sites Fora (incidentes) ----
@@ -249,17 +283,20 @@
 
     // ---- Aging resumo (gráfico) ----
     abaLista('Aging Resumo', d.aging, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
+    abaLista('Prazos a Vencer', d.prazosVencimento, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
     abaLista('SLA por Regiao', d.slaPorRegiao, [{ k: 'label', h: 'Região' }, { k: 'dentro', h: 'Dentro SLA' }, { k: 'fora', h: 'Fora SLA' }]);
     abaLista('Sites Fora por Regiao', d.sitesForaRegiao, [{ k: 'label', h: 'Região' }, { k: 'total', h: 'Total' }]);
+    abaLista('Sites Fora por ANF', tc.porAnf, [{ k: 'anf', h: 'ANF' }, { k: 'total', h: 'Total' }, { k: 'pct', h: '%' }]);
     abaLista('Top Cidades', tc.cidades, [{ k: 'cidade', h: 'Cidade' }, { k: 'total', h: 'Total' }]);
-    abaLista('Atividades Manuais', d.atividadesManuais, [{ k: 'name', h: 'Tipo' }, { k: 'value', h: 'Total' }]);
-    abaLista('Produtividade', d.produtividade, [
+    abaLista('Atividades Manuais (resumo)', d.atividadesManuais, [{ k: 'name', h: 'Tipo' }, { k: 'value', h: 'Total' }]);
+    abaLista('Produtividade (resumo)', d.produtividade, [
       { k: 'categoria', h: 'Categoria' }, { k: 'dentro', h: 'Dentro SLA' },
       { k: 'fora', h: 'Fora SLA' }, { k: 'preditiva', h: 'Preditiva' }
     ]);
 
     var ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     XLSX.writeFile(wb, 'Dashboard_TRJ_' + ts + '.xlsx');
-    U.toast('Excel exportado com ' + (tasksE.length + incE.length) + ' registros!', 'ok');
+    var totalLinhas = tasksE.length + incE.length;
+    U.toast('Excel exportado com ' + totalLinhas + ' registros em ' + wb.SheetNames.length + ' abas!', 'ok');
   }
 })(window.TRJ = window.TRJ || {});
