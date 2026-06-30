@@ -108,23 +108,51 @@
 
   function buildTopCidades(tc, app) {
     var porAnf = tc.porAnf || [], cidades = tc.cidades || [];
+
     var anfList = U.h('div', { class: 'flex flex-wrap gap-2 mb-4' }, porAnf.map(function (a) {
-      return U.h('button', { class: 'trj-btn trj-btn-ghost', style: { fontSize: '12px' }, onclick: function () { app.openDrillIncidents({ tipo: 'anf', arg: a.anfRaw }, a.anf); },
-        html: '<b>' + U.esc(a.anf) + '</b> &nbsp;<span style="color:var(--trj-primary)">' + a.total + '</span> <span style="color:var(--trj-muted)">(' + a.pct + '%)</span>' });
-    }));
-    var maxBars = cidades.slice(0, 15);
-    var bars = U.h('div', { class: 'flex flex-col gap-2' }, maxBars.map(function (c) {
-      return U.h('div', { class: 'cursor-pointer', onclick: function () { app.openDrillIncidents({ tipo: 'cidade', arg: c.cidade }, c.cidade); } }, [
-        U.h('div', { class: 'flex justify-between text-xs mb-1' }, [U.h('span', { text: c.cidade }), U.h('span', { style: { color: 'var(--trj-primary)' }, text: c.total })]),
-        U.h('div', { style: { background: 'rgba(255,255,255,.06)', borderRadius: '6px', height: '8px' } }, U.h('div', { style: { background: 'var(--trj-primary)', width: c.pct + '%', height: '8px', borderRadius: '6px' } }))
+      var chip = U.h('button', {
+        class: 'trj-btn trj-btn-ghost',
+        style: { fontSize: '12px', transition: 'all .2s ease' },
+        onclick: function () { app.openDrillIncidents({ tipo: 'anf', arg: a.anfRaw }, a.anf); }
+      }, [
+        U.h('span', { class: 'font-bold', text: a.anf }),
+        U.h('span', { style: { color: 'var(--trj-primary)', marginLeft: '6px' }, text: String(a.total) }),
+        U.h('span', { style: { color: 'var(--trj-muted)', marginLeft: '4px', fontSize: '11px' }, text: '(' + a.pct + '%)' })
       ]);
+      chip.addEventListener('mouseenter', function () { chip.style.transform = 'translateY(-2px)'; chip.style.borderColor = 'rgba(255,140,0,.6)'; chip.style.boxShadow = '0 6px 16px rgba(255,140,0,.2)'; });
+      chip.addEventListener('mouseleave', function () { chip.style.transform = ''; chip.style.borderColor = ''; chip.style.boxShadow = ''; });
+      return chip;
     }));
+
+    var bars = U.h('div', { class: 'flex flex-col gap-1' }, cidades.slice(0, 15).map(function (c) {
+      var barra = U.h('div', { style: { width: c.pct + '%', height: '8px', borderRadius: '6px', background: 'var(--trj-primary)', transition: 'all .2s ease' } });
+      var item = U.h('div', { style: { cursor: 'pointer', padding: '5px 8px', borderRadius: '8px', transition: 'background .18s ease' } }, [
+        U.h('div', { class: 'flex justify-between text-xs mb-1' }, [
+          U.h('span', { style: { fontWeight: '600' }, text: c.cidade }),
+          U.h('span', { style: { color: 'var(--trj-primary)', fontWeight: '700' }, text: String(c.total) })
+        ]),
+        U.h('div', { style: { background: 'rgba(255,255,255,.07)', borderRadius: '6px', height: '8px', overflow: 'hidden' } }, barra)
+      ]);
+      item.addEventListener('mouseenter', function () {
+        item.style.background = 'rgba(255,140,0,.1)';
+        barra.style.background = 'var(--trj-primary2)';
+        barra.style.boxShadow = '0 0 10px rgba(255,140,0,.5)';
+      });
+      item.addEventListener('mouseleave', function () { item.style.background = ''; barra.style.background = 'var(--trj-primary)'; barra.style.boxShadow = ''; });
+      item.addEventListener('click', function () { app.openDrillIncidents({ tipo: 'cidade', arg: c.cidade }, c.cidade); });
+      return item;
+    }));
+
     var total = U.h('div', { class: 'trj-card p-5 flex flex-col items-center justify-center', style: { minWidth: '180px' } }, [
       U.h('div', { class: 'text-xs uppercase', style: { color: 'var(--trj-muted)' }, text: 'Total Sites Fora' }),
-      U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1' }, text: U.fmtNum(tc.totalSitesFora) })
+      U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1', textShadow: '0 0 20px rgba(231,76,60,.4)' }, text: U.fmtNum(tc.totalSitesFora) })
     ]);
     return U.h('div', { class: 'trj-card p-4' }, [
-      U.h('h3', { class: 'text-sm font-bold mb-3', text: 'Top Cidades — Sites Fora' }),
+      U.h('div', { class: 'flex items-center gap-2 mb-3' }, [
+        U.h('span', { class: 'trj-chart-dot' }),
+        U.h('h3', { class: 'text-sm font-bold', text: 'Top Cidades — Sites Fora' }),
+        U.h('span', { class: 'text-xs font-normal', style: { color: 'var(--trj-muted)' }, text: '(clique em qualquer cidade ou ANF para detalhar)' })
+      ]),
       U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4' }, [
         total,
         U.h('div', { class: 'lg:col-span-2' }, [anfList, bars])
@@ -155,13 +183,14 @@
   // arquivo Excel, uma aba por bloco — pra quem preferir analisar fora do site.
   function exportarExcelDashboard(d) {
     if (typeof XLSX === 'undefined') { U.toast('Biblioteca de Excel não carregou. Recarregue a página.', 'err'); return; }
-    var K = d.kpis || {};
-    var tc = d.topCidades || {};
     var wb = XLSX.utils.book_new();
+    var C2 = TRJ.constants;
+    var dom = TRJ.domain;
+    var now = new Date();
 
     function aba(nome, aoa) {
       var ws = XLSX.utils.aoa_to_sheet(aoa);
-      XLSX.utils.book_append_sheet(wb, ws, nome.slice(0, 31)); // limite de 31 chars do Excel
+      XLSX.utils.book_append_sheet(wb, ws, nome.slice(0, 31));
     }
     function abaLista(nome, rows, cols) {
       var aoa = [cols.map(function (c) { return c.h; })];
@@ -169,28 +198,68 @@
       aba(nome, aoa);
     }
 
+    // ---- KPIs ----
+    var K = d.kpis || {};
+    var tc = d.topCidades || {};
     aba('KPIs', [
       ['Indicador', 'Valor'],
       ['Fora do SLA', K.foraSla || 0],
       ['Backlog Total', K.backlogTotal || 0],
       ['Backlog Indefinido', K.backlogIndef || 0],
       ['Preditiva', K.preditiva || 0],
-      ['Produtividade (total encerradas)', K.produtividade || 0],
+      ['Produtividade (concluídas)', K.produtividade || 0],
       ['SLA Geral (%)', K.slaGeral || 0],
       ['Sites Fora (total)', tc.totalSitesFora || 0],
-      ['Atualizado em', new Date(d.atualizadoEm || Date.now()).toLocaleString('pt-BR')]
+      ['Extraído em', now.toLocaleString('pt-BR')]
     ]);
-    abaLista('Aging do Backlog', d.aging, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
-    abaLista('Prazos a Vencer', d.prazosVencimento, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
-    abaLista('Sites Fora por Regiao', d.sitesForaRegiao, [{ k: 'label', h: 'Região' }, { k: 'total', h: 'Total' }]);
+
+    // ---- Backlog completo (tarefas em aberto) ----
+    var data = TRJ.files ? TRJ.files.getTasks() : [];
+    var rawInc = TRJ.files ? TRJ.files.getIncidents() : [];
+    var tasksE = (window.App && App.data && App.data.tasksEnriched) || [];
+    var incE = (window.App && App.data && App.data.incidentsEnriched) || [];
+
+    abaLista('Backlog', tasksE.filter(function (t) { return dom.isBacklogStatus(t.status); }), [
+      { k: 'osNumero', h: 'TSK' }, { k: 'status', h: 'Status' }, { k: 'prioridade', h: 'Prioridade' },
+      { k: 'regiao', h: 'Região' }, { k: 'cidade', h: 'Cidade' }, { k: 'enderecoId', h: 'END_ID' },
+      { k: 'siteId', h: 'Site' }, { k: 'tipoFalha', h: 'Falha' }, { k: 'filaAtual', h: 'Fila' },
+      { k: 'dataCriacao', h: 'Criação' }, { k: 'vencimentoCalc', h: 'Vencimento SLA' },
+      { k: 'statusSla', h: 'Status SLA' }, { k: 'agingMinutos', h: 'Aging (min)' }
+    ]);
+
+    // ---- Concluídas ----
+    abaLista('Concluidas', tasksE.filter(function (t) {
+      var s = (t.status || '').toUpperCase().trim();
+      return s === 'CONCLUÍDA' || s === 'CONCLUIDA';
+    }), [
+      { k: 'osNumero', h: 'TSK' }, { k: 'status', h: 'Status' }, { k: 'prioridade', h: 'Prioridade' },
+      { k: 'regiao', h: 'Região' }, { k: 'cidade', h: 'Cidade' }, { k: 'enderecoId', h: 'END_ID' },
+      { k: 'siteId', h: 'Site' }, { k: 'tipoFalha', h: 'Falha' }, { k: 'filaAtual', h: 'Fila' },
+      { k: 'dataCriacao', h: 'Criação' }, { k: 'fim', h: 'Encerramento' },
+      { k: 'vencimentoCalc', h: 'Vencimento SLA' }, { k: 'statusSla', h: 'Status SLA' }
+    ]);
+
+    // ---- Sites Fora (incidentes) ----
+    abaLista('Sites Fora', incE.filter(function (i) { return (i.statusTrat || 'ATIVO').toUpperCase() !== 'RESOLVIDO'; }), [
+      { k: 'horario', h: 'Horário' }, { k: 'downtime', h: 'Duração' }, { k: 'site', h: 'Site' },
+      { k: 'enderecoId', h: 'END_ID' }, { k: 'anf', h: 'ANF' }, { k: 'cidadeUf', h: 'Cidade/UF' },
+      { k: 'regiao', h: 'Região' }, { k: 'causa', h: 'Causa' }, { k: 'causaGrupo', h: 'Causa (grupo)' },
+      { k: 'previsao', h: 'Previsão' }, { k: 'detalhe', h: 'Detalhe' }, { k: 'statusTrat', h: 'Status Trat.' }
+    ]);
+
+    // ---- Aging resumo (gráfico) ----
+    abaLista('Aging Resumo', d.aging, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
     abaLista('SLA por Regiao', d.slaPorRegiao, [{ k: 'label', h: 'Região' }, { k: 'dentro', h: 'Dentro SLA' }, { k: 'fora', h: 'Fora SLA' }]);
-    abaLista('Atividades Manuais', d.atividadesManuais, [{ k: 'name', h: 'Tipo' }, { k: 'value', h: 'Total' }]);
-    abaLista('Produtividade', d.produtividade, [{ k: 'categoria', h: 'Categoria' }, { k: 'dentro', h: 'Dentro SLA' }, { k: 'fora', h: 'Fora SLA' }, { k: 'preditiva', h: 'Preditiva' }]);
+    abaLista('Sites Fora por Regiao', d.sitesForaRegiao, [{ k: 'label', h: 'Região' }, { k: 'total', h: 'Total' }]);
     abaLista('Top Cidades', tc.cidades, [{ k: 'cidade', h: 'Cidade' }, { k: 'total', h: 'Total' }]);
-    abaLista('Sites Fora por ANF', tc.porAnf, [{ k: 'anf', h: 'ANF' }, { k: 'total', h: 'Total' }, { k: 'pct', h: '%' }]);
+    abaLista('Atividades Manuais', d.atividadesManuais, [{ k: 'name', h: 'Tipo' }, { k: 'value', h: 'Total' }]);
+    abaLista('Produtividade', d.produtividade, [
+      { k: 'categoria', h: 'Categoria' }, { k: 'dentro', h: 'Dentro SLA' },
+      { k: 'fora', h: 'Fora SLA' }, { k: 'preditiva', h: 'Preditiva' }
+    ]);
 
     var ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     XLSX.writeFile(wb, 'Dashboard_TRJ_' + ts + '.xlsx');
-    U.toast('Excel exportado!', 'ok');
+    U.toast('Excel exportado com ' + (tasksE.length + incE.length) + ' registros!', 'ok');
   }
 })(window.TRJ = window.TRJ || {});
