@@ -181,10 +181,10 @@
     if (!FS.supportsDirectoryPicker()) {
       pastaCard.appendChild(U.h('p', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, html: 'Disponível só no <b>Chrome</b> ou <b>Edge</b>. Use o upload manual ao lado.' }));
     } else {
-      var statusPasta = U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: 'Verificando pasta conectada...' });
+      var statusPasta = U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: 'Buscando pasta conectada...' });
       pastaCard.appendChild(statusPasta);
       FS.folderName().then(function (nome) {
-        statusPasta.textContent = nome ? ('📁 ' + nome) : 'Nenhuma pasta conectada ainda.';
+        statusPasta.textContent = nome ? ('📁 ' + nome + ' — pronta para leitura') : 'Nenhuma pasta conectada ainda. Clique em "Conectar outra pasta..." para começar.';
         statusPasta.style.color = nome ? 'var(--trj-green)' : 'var(--trj-muted)';
       });
       var btnVerificar = U.h('button', {
