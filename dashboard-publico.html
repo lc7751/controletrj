@@ -159,8 +159,8 @@ body { min-height: 100vh; }
       { label: 'Backlog Total', value: U.fmtNum(K.backlogTotal), cor: C.CORES_TRJ.orange, spec: { tipo: 'backlogTotal' }, t: 'Backlog total' },
       { label: 'Backlog Indefinido', value: U.fmtNum(K.backlogIndef), cor: C.CORES_TRJ.red, spec: { tipo: 'backlogIndef' }, t: 'Backlog sem SLA definido' },
       { label: 'Preditiva', value: U.fmtNum(K.preditiva), cor: C.CORES_TRJ.orange, spec: { tipo: 'preditiva' }, t: 'Atividades preditivas' },
-      { label: 'Produtividade', value: U.fmtNum(K.produtividade), cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, t: 'Concluídas' },
-      { label: 'SLA Geral', value: U.fmtPct(K.slaGeral), cor: C.CORES_TRJ.green, spec: null, t: '' }
+      { label: 'Produtividade (Concluídas)', value: U.fmtNum(K.produtividade), cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, t: 'TSKs concluídas' },
+      { label: 'SLA Geral (Concluídas)', value: U.fmtPct(K.slaGeral), cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, t: 'TSKs concluídas — % dentro do prazo' }
     ];
     root.appendChild(U.h('div', { class: 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5' }, kpiDefs.map(function (k) {
       return U.kpiCard({ label: k.label, value: k.value, cor: k.cor, onClick: k.spec ? function () { openDrillTasks(k.spec, f, k.t); } : null });
@@ -170,8 +170,8 @@ body { min-height: 100vh; }
     var venc = U.chartCard('Prazos a Vencer');
     var sites = U.chartCard('Sites Fora por Região');
     var slaReg = U.chartCard('SLA por Região');
-    var manu = U.chartCard('Atividades Manuais');
-    var prod = U.chartCard('Produtividade Encerramento');
+    var manu = U.chartCard('Atividades Manuais', { hint: 'inclui cancelamentos' });
+    var prod = U.chartCard('Produtividade — Encerradas Dentro/Fora do SLA');
     root.appendChild(U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5' }, [aging.card, venc.card, sites.card, slaReg.card, manu.card, prod.card]));
     root.appendChild(buildTopCidades(topCidades));
 
@@ -180,7 +180,16 @@ body { min-height: 100vh; }
     U.hbarChart(venc.canvas, vData, { onBar: function (i) { openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A vencer: ' + vData[i].label); } });
     U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), { onBar: function (i) { openDrillIncidents({ tipo: 'sitesFora', arg: sfData[i].regiao }, 'Sites fora: ' + sfData[i].label); } });
     U.stackedChart(slaReg.canvas, srData, { onSeg: function (i, ds) { var r = srData[i]; openDrillTasks({ tipo: 'slaRegiao', arg: r.regiao + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'SLA ' + r.label); } });
-    U.donutChart(manu.canvas, amData, { cores: C.DONUT_CORES, onSlice: function (i) { var nm = amData[i].name; openDrillTasks({ tipo: 'atividades', arg: argAtiv(nm) }, f, nm); } });
+    U.donutChart(manu.canvas, amData, {
+      cores: C.DONUT_CORES,
+      onSlice: function (i) {
+        var nm = amData[i].name;
+        var spec = nm.indexOf('Cancel.') === 0
+          ? { tipo: 'cancelCorretiva', arg: nm.indexOf('Associa') >= 0 ? 'assoc' : 'auto' }
+          : { tipo: 'atividades', arg: argAtiv(nm) };
+        openDrillTasks(spec, f, nm);
+      }
+    });
     U.stackedChart(prod.canvas, pData.map(function (p) { return { label: p.categoria, dentro: p.dentro, fora: p.fora, preditiva: p.preditiva }; }), {
       onSeg: function (i, ds) {
         var cat = pData[i].categoria;
@@ -199,23 +208,51 @@ body { min-height: 100vh; }
 
   function buildTopCidades(tc) {
     var porAnf = tc.porAnf || [], cidades = tc.cidades || [];
+
     var anfList = U.h('div', { class: 'flex flex-wrap gap-2 mb-4' }, porAnf.map(function (a) {
-      return U.h('button', { class: 'trj-btn trj-btn-ghost', style: { fontSize: '12px' }, onclick: function () { openDrillIncidents({ tipo: 'anf', arg: a.anfRaw }, a.anf); },
-        html: '<b>' + U.esc(a.anf) + '</b> &nbsp;<span style="color:var(--trj-primary)">' + a.total + '</span> <span style="color:var(--trj-muted)">(' + a.pct + '%)</span>' });
-    }));
-    var maxBars = cidades.slice(0, 15);
-    var bars = U.h('div', { class: 'flex flex-col gap-2' }, maxBars.map(function (c) {
-      return U.h('div', { class: 'cursor-pointer', onclick: function () { openDrillIncidents({ tipo: 'cidade', arg: c.cidade }, c.cidade); } }, [
-        U.h('div', { class: 'flex justify-between text-xs mb-1' }, [U.h('span', { text: c.cidade }), U.h('span', { style: { color: 'var(--trj-primary)' }, text: c.total })]),
-        U.h('div', { style: { background: 'rgba(255,255,255,.06)', borderRadius: '6px', height: '8px' } }, U.h('div', { style: { background: 'var(--trj-primary)', width: c.pct + '%', height: '8px', borderRadius: '6px' } }))
+      var chip = U.h('button', {
+        class: 'trj-btn trj-btn-ghost',
+        style: { fontSize: '12px', transition: 'all .2s ease' },
+        onclick: function () { openDrillIncidents({ tipo: 'anf', arg: a.anfRaw }, a.anf); }
+      }, [
+        U.h('span', { class: 'font-bold', text: a.anf }),
+        U.h('span', { style: { color: 'var(--trj-primary)', marginLeft: '6px' }, text: String(a.total) }),
+        U.h('span', { style: { color: 'var(--trj-muted)', marginLeft: '4px', fontSize: '11px' }, text: '(' + a.pct + '%)' })
       ]);
+      chip.addEventListener('mouseenter', function () { chip.style.transform = 'translateY(-2px)'; chip.style.borderColor = 'rgba(255,140,0,.6)'; chip.style.boxShadow = '0 6px 16px rgba(255,140,0,.2)'; });
+      chip.addEventListener('mouseleave', function () { chip.style.transform = ''; chip.style.borderColor = ''; chip.style.boxShadow = ''; });
+      return chip;
     }));
+
+    var bars = U.h('div', { class: 'flex flex-col gap-1' }, cidades.slice(0, 15).map(function (c) {
+      var barra = U.h('div', { style: { width: c.pct + '%', height: '8px', borderRadius: '6px', background: 'var(--trj-primary)', transition: 'all .2s ease' } });
+      var item = U.h('div', { style: { cursor: 'pointer', padding: '5px 8px', borderRadius: '8px', transition: 'background .18s ease' } }, [
+        U.h('div', { class: 'flex justify-between text-xs mb-1' }, [
+          U.h('span', { style: { fontWeight: '600' }, text: c.cidade }),
+          U.h('span', { style: { color: 'var(--trj-primary)', fontWeight: '700' }, text: String(c.total) })
+        ]),
+        U.h('div', { style: { background: 'rgba(255,255,255,.07)', borderRadius: '6px', height: '8px', overflow: 'hidden' } }, barra)
+      ]);
+      item.addEventListener('mouseenter', function () {
+        item.style.background = 'rgba(255,140,0,.1)';
+        barra.style.background = 'var(--trj-primary2)';
+        barra.style.boxShadow = '0 0 10px rgba(255,140,0,.5)';
+      });
+      item.addEventListener('mouseleave', function () { item.style.background = ''; barra.style.background = 'var(--trj-primary)'; barra.style.boxShadow = ''; });
+      item.addEventListener('click', function () { openDrillIncidents({ tipo: 'cidade', arg: c.cidade }, c.cidade); });
+      return item;
+    }));
+
     var total = U.h('div', { class: 'trj-card p-5 flex flex-col items-center justify-center', style: { minWidth: '180px' } }, [
       U.h('div', { class: 'text-xs uppercase', style: { color: 'var(--trj-muted)' }, text: 'Total Sites Fora' }),
-      U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1' }, text: U.fmtNum(tc.totalSitesFora) })
+      U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1', textShadow: '0 0 20px rgba(231,76,60,.4)' }, text: U.fmtNum(tc.totalSitesFora) })
     ]);
     return U.h('div', { class: 'trj-card p-4' }, [
-      U.h('h3', { class: 'text-sm font-bold mb-3', text: 'Top Cidades — Sites Fora' }),
+      U.h('div', { class: 'flex items-center gap-2 mb-3' }, [
+        U.h('span', { class: 'trj-chart-dot' }),
+        U.h('h3', { class: 'text-sm font-bold', text: 'Top Cidades — Sites Fora' }),
+        U.h('span', { class: 'text-xs font-normal', style: { color: 'var(--trj-muted)' }, text: '(clique em qualquer cidade ou ANF para detalhar)' })
+      ]),
       U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4' }, [total, U.h('div', { class: 'lg:col-span-2' }, [anfList, bars])])
     ]);
   }
