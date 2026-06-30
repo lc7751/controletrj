@@ -149,6 +149,22 @@
       var d = new Date(yy, mes - 1, dia, hh, mi, ss);
       if (!isNaN(d.getTime())) return d;
     }
+    // Data SEM horário, ex.: "28/06/26" — é o formato da coluna "Data Base"
+    // da planilha, que serve de data-base pra combinar com campos que só
+    // trazem a hora (ex.: "Fim"/encerramento, que costuma vir só "10:17").
+    var mDate = s.match(/^(\d{1,2})[/\-](\d{1,2})(?:[/\-](\d{2,4}))?$/);
+    if (mDate) {
+      var dp1 = parseInt(mDate[1], 10);
+      var dp2 = parseInt(mDate[2], 10);
+      var dyy = mDate[3] ? parseInt(mDate[3], 10) : (baseDate || new Date()).getFullYear();
+      if (dyy < 100) dyy += 2000;
+      var ddia, dmes;
+      if (dp1 > 12) { ddia = dp1; dmes = dp2; }
+      else if (dp2 > 12) { dmes = dp1; ddia = dp2; }
+      else { ddia = dp1; dmes = dp2; }
+      var d0 = new Date(dyy, dmes - 1, ddia, 0, 0, 0);
+      if (!isNaN(d0.getTime())) return d0;
+    }
     var mh = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
     if (mh && baseDate) {
       var d2 = new Date(baseDate);
