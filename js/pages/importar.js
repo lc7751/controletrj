@@ -5,6 +5,12 @@
  * de Downloads. Dois caminhos: leitura automática (Chrome/Edge) ou upload
  * manual (qualquer navegador).
  *
+ * A leitura automática verifica a pasta sozinha a cada
+ * F.getMonitorIntervalMs() (45s por padrão — ver files.js). Toda vez que
+ * lê com sucesso, os arquivos usados (agendada + não-agendada) são
+ * movidos para a subpasta "Importados" dentro da própria pasta
+ * conectada, pra não confundir com os próximos downloads.
+ *
  * Os INCIDENTES (Sites Fora) podem ser importados de três formas:
  *   • colando o texto/HTML do painel G.E.N.E.S.I.S em um campo de texto;
  *   • anexando o arquivo do painel G.E.N.E.S.I.S;
@@ -132,26 +138,27 @@
     var tMeta = meta.tasks || {};
     var nTasks = FS.getTasks().length;
     var nInc = FS.getIncidents().length;
+    var intervaloSeg = Math.round((FS.getMonitorIntervalMs ? FS.getMonitorIntervalMs() : 45000) / 1000);
 
     container.appendChild(U.pageHeader('Importar dados',
       'Carregue as tarefas e os incidentes para liberar o restante do sistema.'));
 
-    // ---- status compacto ----
+    // ---- status compacto (com ícones) ----
     container.appendChild(U.h('div', { class: 'grid grid-cols-2 md:grid-cols-4 gap-3 mb-7' }, [
-      U.kpiCard({ label: 'Tarefas', value: U.fmtNum(nTasks), cor: C.CORES_TRJ.orange }),
-      U.kpiCard({ label: 'Incidentes', value: U.fmtNum(nInc), cor: C.CORES_TRJ.blue }),
-      U.kpiCard({ label: 'Origem das tarefas', value: tMeta.origem === 'pasta' ? 'Pasta' : (tMeta.origem === 'upload' ? 'Upload' : '—'), cor: C.CORES_TRJ.green }),
-      U.kpiCard({ label: 'Atualizado em', value: tMeta.em ? new Date(tMeta.em).toLocaleDateString('pt-BR') : '—', sub: tMeta.em ? new Date(tMeta.em).toLocaleTimeString('pt-BR') : null, cor: '#8b5cf6' })
+      U.kpiCard({ label: '📋 Tarefas', value: U.fmtNum(nTasks), cor: C.CORES_TRJ.orange }),
+      U.kpiCard({ label: '🚨 Incidentes', value: U.fmtNum(nInc), cor: C.CORES_TRJ.blue }),
+      U.kpiCard({ label: '📥 Origem das tarefas', value: tMeta.origem === 'pasta' ? 'Pasta automática' : (tMeta.origem === 'upload' ? 'Upload manual' : '—'), cor: C.CORES_TRJ.green }),
+      U.kpiCard({ label: '🕒 Atualizado em', value: tMeta.em ? new Date(tMeta.em).toLocaleDateString('pt-BR') : '—', sub: tMeta.em ? new Date(tMeta.em).toLocaleTimeString('pt-BR') : null, cor: '#8b5cf6' })
     ]));
 
     // =====================================================================
     // SEÇÃO 1 — TAREFAS (ATIVIDADES)
     // =====================================================================
-    container.appendChild(secaoTitulo('Tarefas (Atividades)', C.CORES_TRJ.orange));
+    container.appendChild(secaoTitulo('📋 Tarefas (Atividades)', C.CORES_TRJ.orange));
 
     var tarefasGrid = U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8' });
 
-    // --- upload manual: dropzone (substitui o input cru) ---
+    // --- upload manual: dropzone ---
     var arquivosResumo = (tMeta.arquivos || []).map(function (a) { return a.nome + ' (' + U.fmtNum(a.qtd) + ')'; }).join(' · ');
     var dzTarefas = U.dropzone({
       icon: '📊',
@@ -171,9 +178,12 @@
         finally { U.loading(false); }
       }
     });
-    tarefasGrid.appendChild(U.h('div', { class: 'trj-card p-5' }, dzTarefas));
+    tarefasGrid.appendChild(U.h('div', { class: 'trj-card p-5' }, [
+      U.h('div', { class: 'flex items-center gap-2 mb-3 text-sm font-bold' }, [U.h('span', { text: '⬆️' }), U.h('span', { text: 'Upload manual' })]),
+      dzTarefas
+    ]));
 
-    // --- leitura automática da pasta (discreta, ao lado) ---
+    // --- leitura automática da pasta ---
     var pastaCard = U.h('div', { class: 'trj-card p-5 flex flex-col gap-3' });
     pastaCard.appendChild(U.h('h3', { class: 'text-sm font-bold flex items-center gap-2' }, [
       U.h('span', { text: '🔄' }), U.h('span', { text: 'Leitura automática da pasta' })
@@ -181,12 +191,16 @@
     if (!FS.supportsDirectoryPicker()) {
       pastaCard.appendChild(U.h('p', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, html: 'Disponível só no <b>Chrome</b> ou <b>Edge</b>. Use o upload manual ao lado.' }));
     } else {
-      var statusPasta = U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: 'Buscando pasta conectada...' });
+      var statusPasta = infoRow('📁', 'Buscando pasta conectada...', 'var(--trj-muted)');
       pastaCard.appendChild(statusPasta);
       FS.folderName().then(function (nome) {
-        statusPasta.textContent = nome ? ('📁 ' + nome + ' — pronta para leitura') : 'Nenhuma pasta conectada ainda. Clique em "Conectar outra pasta..." para começar.';
-        statusPasta.style.color = nome ? 'var(--trj-green)' : 'var(--trj-muted)';
+        setInfoRow(statusPasta, '📁', nome ? (nome + ' — pronta para leitura') : 'Nenhuma pasta conectada ainda.', nome ? 'var(--trj-green)' : 'var(--trj-muted)');
       });
+      // duas linhas informativas fixas, com ícone — deixam claro o
+      // comportamento automático sem precisar abrir nenhum menu.
+      pastaCard.appendChild(infoRow('⏱', 'Verifica automaticamente a cada ' + intervaloSeg + 's', 'var(--trj-muted)'));
+      pastaCard.appendChild(infoRow('📦', 'Arquivos lidos são movidos para a subpasta "Importados/"', 'var(--trj-muted)'));
+
       var btnVerificar = U.h('button', {
         class: 'trj-btn trj-btn-primary clickable', html: app.icon('refresh') + ' Verificar agora',
         onclick: async function () {
@@ -201,7 +215,7 @@
         }
       });
       var btnConectar = U.h('button', {
-        class: 'trj-btn trj-btn-ghost clickable', text: 'Conectar outra pasta...',
+        class: 'trj-btn trj-btn-ghost clickable', html: '🔗 Conectar outra pasta...',
         onclick: async function () {
           try {
             U.loading(true, 'Abrindo seletor de pasta...');
@@ -215,7 +229,7 @@
           finally { U.loading(false); }
         }
       });
-      pastaCard.appendChild(U.h('div', { class: 'flex gap-2 flex-wrap' }, [btnVerificar, btnConectar]));
+      pastaCard.appendChild(U.h('div', { class: 'flex gap-2 flex-wrap mt-1' }, [btnVerificar, btnConectar]));
       pastaCard.appendChild(U.h('p', { class: 'text-xs mt-1', style: { color: 'var(--trj-muted)' }, text: '💡 Pasta de Downloads com muitos arquivos antigos deixa a verificação mais lenta — conectar uma pasta menor e dedicada ajuda.' }));
     }
     tarefasGrid.appendChild(pastaCard);
@@ -224,7 +238,7 @@
     // =====================================================================
     // SEÇÃO 2 — INCIDENTES (SITES FORA)
     // =====================================================================
-    container.appendChild(secaoTitulo('Incidentes (Sites Fora)', C.CORES_TRJ.blue));
+    container.appendChild(secaoTitulo('🚨 Incidentes (Sites Fora)', C.CORES_TRJ.blue));
 
     // --- ação primária: busca automática, em destaque ---
     var autoCard = U.h('div', {
@@ -233,7 +247,7 @@
     });
     autoCard.appendChild(U.h('div', { class: 'flex items-center gap-2 mb-1' }, [
       U.h('span', { class: 'trj-pulse-dot' }),
-      U.h('h3', { class: 'text-base font-bold', text: 'Buscar incidentes automaticamente' })
+      U.h('h3', { class: 'text-base font-bold flex items-center gap-2' }, [U.h('span', { text: '📡' }), U.h('span', { text: 'Buscar incidentes automaticamente' })])
     ]));
     autoCard.appendChild(U.h('p', { class: 'text-xs mb-4', style: { color: 'var(--trj-muted)' }, text: 'Conecte-se à VPN da empresa, deixe a Ponte TRJ local aberta, e clique no botão — sem copiar nem colar nada.' }));
     autoCard.appendChild(U.h('button', {
@@ -244,18 +258,18 @@
 
     // --- opções manuais, escondidas por padrão (<details> nativo: some sem perder o texto digitado) ---
     var details = U.h('details', { class: 'trj-details trj-card p-5' });
-    details.appendChild(U.h('summary', { text: 'Prefere importar manualmente?' }));
+    details.appendChild(U.h('summary', { html: '✍️ Prefere importar manualmente?' }));
 
     var manualBody = U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mt-1' });
 
     var colCol = U.h('div', { class: 'flex flex-col gap-2' });
-    colCol.appendChild(U.h('div', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: 'Colar o conteúdo da página:' }));
+    colCol.appendChild(U.h('div', { class: 'text-xs flex items-center gap-1', style: { color: 'var(--trj-muted)' } }, [U.h('span', { text: '📋' }), U.h('span', { text: 'Colar o conteúdo da página:' })]));
     var txt = U.h('textarea', { class: 'trj-input w-full', rows: '6', placeholder: 'Cole aqui o conteúdo do painel G.E.N.E.S.I.S (Ctrl+V)...', style: { fontFamily: 'monospace', fontSize: '12px', resize: 'vertical' } });
-    var btnTxt = U.h('button', { class: 'trj-btn trj-btn-primary clickable', text: '⬆ Importar texto colado', onclick: async function () {
+    var btnTxt = U.h('button', { class: 'trj-btn trj-btn-primary clickable', html: '⬆️ Importar texto colado', onclick: async function () {
       var ok = await processarGenesis(txt.value, data, app, 'genesis-texto');
       if (ok) txt.value = '';
     } });
-    var btnTxtLimpar = U.h('button', { class: 'trj-btn trj-btn-ghost clickable', text: 'Limpar', onclick: function () { txt.value = ''; } });
+    var btnTxtLimpar = U.h('button', { class: 'trj-btn trj-btn-ghost clickable', html: '🧹 Limpar', onclick: function () { txt.value = ''; } });
     colCol.appendChild(txt);
     colCol.appendChild(U.h('div', { class: 'flex gap-2 flex-wrap' }, [btnTxt, btnTxtLimpar]));
     manualBody.appendChild(colCol);
@@ -279,11 +293,11 @@
     // RODAPÉ — limpar dados
     // =====================================================================
     container.appendChild(U.h('div', { class: 'flex gap-2 flex-wrap mt-7' }, [
-      U.h('button', { class: 'trj-btn trj-btn-ghost clickable', text: '🗑 Limpar tarefas', onclick: function () {
+      U.h('button', { class: 'trj-btn trj-btn-ghost clickable', html: '🗑️ Limpar tarefas', onclick: function () {
         if (!confirm('Remover todas as tarefas carregadas?')) return;
         FS.clearTasks(); app.refresh(true).then(function () { app.render(); }); U.toast('Tarefas removidas.', 'ok');
       } }),
-      U.h('button', { class: 'trj-btn trj-btn-ghost clickable', text: '🗑 Limpar incidentes', onclick: function () {
+      U.h('button', { class: 'trj-btn trj-btn-ghost clickable', html: '🗑️ Limpar incidentes', onclick: function () {
         if (!confirm('Remover todos os incidentes carregados?')) return;
         FS.clearIncidents(); app.refresh(true).then(function () { app.render(); }); U.toast('Incidentes removidos.', 'ok');
       } })
@@ -297,5 +311,19 @@
       U.h('span', { text: texto })
     ]);
   }
+
+  // linha de info compacta (ícone + texto colorido) — usada nos status da
+  // leitura automática (pasta conectada, intervalo, arquivamento).
+  function infoRow(icone, texto, cor) {
+    var row = U.h('div', { class: 'text-xs flex items-center gap-2', style: { color: cor || 'var(--trj-muted)' } }, [
+      U.h('span', { class: 'trj-info-icon', text: icone }),
+      U.h('span', { class: 'trj-info-text', text: texto })
+    ]);
+    return row;
+  }
+  function setInfoRow(row, icone, texto, cor) {
+    row.style.color = cor || 'var(--trj-muted)';
+    var ic = row.querySelector('.trj-info-icon'); if (ic) ic.textContent = icone;
+    var tx = row.querySelector('.trj-info-text'); if (tx) tx.textContent = texto;
+  }
 })(window.TRJ = window.TRJ || {});
-  
