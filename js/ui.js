@@ -280,17 +280,41 @@
 
   function register(c) { charts.push(c); return c; }
 
+  // Clareia uma cor hex pra usar no hover (aumenta luminosidade)
+  function clarearCor(hex) {
+    hex = (hex || '#ff8c00').replace('#', '');
+    if (hex.length === 3) hex = hex.split('').map(function (c) { return c + c; }).join('');
+    var r = parseInt(hex.substr(0, 2), 16);
+    var g = parseInt(hex.substr(2, 2), 16);
+    var b = parseInt(hex.substr(4, 2), 16);
+    // mistura 60% da cor original com 40% de branco
+    r = Math.min(255, Math.round(r + (255 - r) * 0.55));
+    g = Math.min(255, Math.round(g + (255 - g) * 0.55));
+    b = Math.min(255, Math.round(b + (255 - b) * 0.55));
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  function hoverDatasets(datasets) {
+    return datasets.map(function (ds) {
+      var bgArr = Array.isArray(ds.backgroundColor) ? ds.backgroundColor : [ds.backgroundColor];
+      var hoverBg = bgArr.map(function (c) { return clarearCor(c && c.toString && c.toString().startsWith('#') ? c : '#ff8c00'); });
+      return Object.assign({}, ds, {
+        hoverBackgroundColor: hoverBg,
+        hoverBorderColor: Array.isArray(ds.backgroundColor) ? bgArr.map(function () { return 'rgba(255,255,255,0.7)'; }) : 'rgba(255,255,255,0.7)',
+        hoverBorderWidth: 1.5
+      });
+    });
+  }
+
   // bar vertical. data = [{label,total,cor?}], onBar(index)
   U.barChart = function (canvas, data, opts) {
     opts = opts || {};
+    var datasets = [{ data: data.map(function (d) { return d.total; }),
+      backgroundColor: data.map(function (d) { return d.cor || C.CORES_TRJ.orange; }),
+      borderRadius: 6, maxBarThickness: 46 }];
     return register(new Chart(canvas, {
       type: 'bar',
-      data: {
-        labels: data.map(function (d) { return d.label; }),
-        datasets: [{ data: data.map(function (d) { return d.total; }),
-          backgroundColor: data.map(function (d) { return d.cor || C.CORES_TRJ.orange; }),
-          borderRadius: 6, maxBarThickness: 46 }]
-      },
+      data: { labels: data.map(function (d) { return d.label; }), datasets: hoverDatasets(datasets) },
       options: baseOpts({ onClick: opts.onBar, horizontal: false })
     }));
   };
@@ -298,14 +322,12 @@
   // bar horizontal
   U.hbarChart = function (canvas, data, opts) {
     opts = opts || {};
+    var datasets = [{ data: data.map(function (d) { return d.total; }),
+      backgroundColor: data.map(function (d) { return d.cor || C.CORES_TRJ.orange; }),
+      borderRadius: 6, maxBarThickness: 34 }];
     return register(new Chart(canvas, {
       type: 'bar',
-      data: {
-        labels: data.map(function (d) { return d.label; }),
-        datasets: [{ data: data.map(function (d) { return d.total; }),
-          backgroundColor: data.map(function (d) { return d.cor || C.CORES_TRJ.orange; }),
-          borderRadius: 6, maxBarThickness: 34 }]
-      },
+      data: { labels: data.map(function (d) { return d.label; }), datasets: hoverDatasets(datasets) },
       options: baseOpts({ onClick: opts.onBar, horizontal: true })
     }));
   };
@@ -325,7 +347,7 @@
     if (temPreditiva) datasets.push({ label: opts.l3 || 'Preditiva', data: data.map(function (d) { return d.preditiva || 0; }), backgroundColor: C.CORES_TRJ.orange, borderRadius: 4, maxBarThickness: 46 });
     return register(new Chart(canvas, {
       type: 'bar',
-      data: { labels: data.map(function (d) { return d.label; }), datasets: datasets },
+      data: { labels: data.map(function (d) { return d.label; }), datasets: hoverDatasets(datasets) },
       options: o
     }));
   };
@@ -476,10 +498,35 @@
     }, bits);
   };
 
+  // Badge "Resultado SLA" para tarefas que JÁ foram encerradas/canceladas.
+  // Em vez de "VENCE EM" ou "VENCIDO A" (que fazem sentido para backlog aberto),
+  // exibe "DENTRO SLA" (verde) ou "FORA SLA" (vermelho) — pra canceladas e
+  // concluídas, onde o que importa é se a atividade foi resolvida no prazo.
+  U.resultadoSlaBadge = function (t) {
+    var st = (t.statusSla || '').toUpperCase();
+    if (st === 'DENTRO DO SLA') {
+      return h('span', { class: 'trj-badge', style: { background: 'rgba(46,204,113,.16)', color: '#2ecc71', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' } }, [
+        h('span', { text: '✅' }), h('span', { text: 'Dentro SLA' })
+      ]);
+    }
+    if (st === 'FORA DO SLA') {
+      return h('span', { class: 'trj-badge', style: { background: 'rgba(231,76,60,.16)', color: '#e74c3c', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' } }, [
+        h('span', { text: '❌' }), h('span', { text: 'Fora SLA' })
+      ]);
+    }
+    return h('span', { style: { color: 'var(--trj-muted)' }, text: st || '—' });
+  };
+
   // ---------- Tabela de tasks (drill) — mesmas colunas da BASE_METRICAS original ----------
-  U.taskTable = function (rows) {
-    var thead = h('thead', null, h('tr', null, ['Região', 'TSK', 'Site', 'Cidade', 'Falha', 'P', 'Criação', 'Vencimento'].map(function (t) { return h('th', { text: t }); })));
+  U.taskTable = function (rows, opts) {
+    opts = opts || {};
+    // "modo resultado": pra drills de canceladas/produtividade, a coluna final
+    // mostra "Dentro SLA" / "Fora SLA" em vez de "Vence em / Vencido a"
+    var modoResultado = opts.modoResultado;
+    var colVencLabel = modoResultado ? 'Resultado SLA' : 'Vencimento';
+    var thead = h('thead', null, h('tr', null, ['Região', 'TSK', 'Site', 'Cidade', 'Falha', 'P', 'Criação', colVencLabel].map(function (t) { return h('th', { text: t }); })));
     var body = rows.slice(0, 1000).map(function (t) {
+      var vencCell = modoResultado ? U.resultadoSlaBadge(t) : U.vencimentoBadge(t.vencimentoCalc);
       return h('tr', null, [
         h('td', { text: C.REGIAO_LABELS[t.regiao] || t.regiao || '—' }),
         h('td', { text: t.osNumero || '—' }),
@@ -488,7 +535,7 @@
         h('td', { text: t.tipoFalha || '—' }),
         h('td', { text: t.prioridade || '—' }),
         h('td', { text: t.dataCriacao ? D.formatarDataCompacta(t.dataCriacao) : '—' }),
-        h('td', null, U.vencimentoBadge(t.vencimentoCalc))
+        h('td', null, vencCell)
       ]);
     });
     var tbl = h('table', { class: 'trj-table' }, [thead, h('tbody', null, body)]);
