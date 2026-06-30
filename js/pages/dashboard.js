@@ -30,7 +30,7 @@
         return U.h('option', { value: p, text: p, selected: f.prioridade === p ? 'selected' : null });
       })));
     var btnWa = U.h('button', { class: 'trj-btn trj-btn-ghost', text: '📱 Copiar resumo', onclick: function () { copiarResumo(d); } });
-    var btnExcel = U.h('button', { class: 'trj-btn trj-btn-ghost', text: '📊 Extrair Excel', onclick: function () { exportarExcelDashboard(d); } });
+    var btnExcel = U.h('button', { class: 'trj-btn trj-btn-ghost', text: '📊 Extrair Excel', onclick: function () { exportarExcelDashboard(d, data); } });
     var btnRef = U.h('button', { class: 'trj-btn trj-btn-primary', html: app.icon('refresh') + ' Atualizar', onclick: function () { app.refresh(); } });
     var right = U.h('div', { class: 'flex items-center gap-2 flex-wrap' }, [selReg, selPri, btnWa, btnExcel, btnRef]);
     var atualizadoEm = d.atualizadoEm ? new Date(d.atualizadoEm).toLocaleString('pt-BR') : new Date().toLocaleString('pt-BR');
@@ -192,7 +192,7 @@
 
   // Extrai todos os dados do Dashboard (KPIs + todos os gráficos) num único
   // arquivo Excel, uma aba por bloco — pra quem preferir analisar fora do site.
-  function exportarExcelDashboard(d) {
+  function exportarExcelDashboard(d, pageData) {
     if (typeof XLSX === 'undefined') { U.toast('Biblioteca de Excel não carregou. Recarregue a página.', 'err'); return; }
     var wb = XLSX.utils.book_new();
     var C2 = TRJ.constants;
@@ -225,10 +225,8 @@
     ]);
 
     // ---- Backlog completo (tarefas em aberto) ----
-    var data = TRJ.files ? TRJ.files.getTasks() : [];
-    var rawInc = TRJ.files ? TRJ.files.getIncidents() : [];
-    var tasksE = (window.App && App.data && App.data.tasksEnriched) || [];
-    var incE = (window.App && App.data && App.data.incidentsEnriched) || [];
+    var tasksE = (pageData && pageData.tasksEnriched) || [];
+    var incE = (pageData && pageData.incidentsEnriched) || [];
     var sep = dom.separarTicketsManuais(tasksE);
     var ticketsCorretiva = sep.tickets, manuaisFull = sep.manuais;
 
