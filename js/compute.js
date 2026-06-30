@@ -142,7 +142,19 @@
     var tickets = sep.tickets, manuais = sep.manuais;
 
     var backlog = tickets.filter(function (t) { return D.isBacklogStatus(t.status); });
-    var concluidas = tickets.filter(function (t) { return !D.isBacklogStatus(t.status); });
+
+    // Separa CONCLUIDA de CANCELADA — o VBA só conta SLA para CONCLUIDA.
+    // CANCELADA corretiva (por automação ou por associação) aparece no donut
+    // de Atividades Manuais, não no cálculo Dentro/Fora do SLA.
+    var concluidas = tickets.filter(function (t) {
+      var s = (t.status || '').toUpperCase().trim();
+      return s === 'CONCLUÍDA' || s === 'CONCLUIDA';
+    });
+    var canceladasCorretivas = tickets.filter(function (t) {
+      var s = (t.status || '').toUpperCase().trim();
+      return s === 'CANCELADA' || s === 'CANCELADO';
+    });
+
     var fora = backlog.filter(function (t) { return t.statusSla === 'FORA DO SLA'; });
     var dentro = backlog.filter(function (t) { return t.statusSla === 'DENTRO DO SLA'; });
     var indef = backlog.filter(function (t) { return t.statusSla === 'INDEFINIDO' || t.fonteSla === 'SEM DADOS'; });
@@ -215,16 +227,26 @@
     var slaPorRegiao = C.REGIOES.map(function (r) { return { regiao: r, label: C.REGIAO_LABELS[r] || r, dentro: (slaRegMap[r] && slaRegMap[r].dentro) || 0, fora: (slaRegMap[r] && slaRegMap[r].fora) || 0 }; })
       .filter(function (x) { return x.dentro + x.fora > 0; });
 
-    // Atividades manuais
-    var wo = 0, prev = 0, conj = 0, outras = 0;
+    // Atividades manuais + canceladas corretivas
+    // Canceladas corretivas (BG = motivo): "ASSOCIAÇÃO DE ATIVIDADES" = por associação (não-auto); demais = automação.
+    var wo = 0, prev = 0, conj = 0, outras = 0, cancelAuto = 0, cancelAssoc = 0;
     manuais.forEach(function (t) {
       switch (D.categoriaManual(t.tipoAtividade)) {
         case 'prev': prev++; break; case 'conj': conj++; break; case 'wo': wo++; break; default: outras++;
       }
     });
+    canceladasCorretivas.forEach(function (t) {
+      var motivo = (t.motivoCancelamento || '').toString().toUpperCase();
+      if (motivo.indexOf('ASSOCIA') >= 0) cancelAssoc++;
+      else cancelAuto++;
+    });
     var atividadesManuais = [
-      { name: 'Atividade WO', value: wo }, { name: 'Atividade Preventiva', value: prev },
-      { name: 'Atividade Conjunta', value: conj }, { name: 'Outras', value: outras }
+      { name: 'Atividade WO', value: wo },
+      { name: 'Atividade Preventiva', value: prev },
+      { name: 'Atividade Conjunta', value: conj },
+      { name: 'Cancel. Automação', value: cancelAuto },
+      { name: 'Cancel. Associação', value: cancelAssoc },
+      { name: 'Outras', value: outras }
     ].filter(function (x) { return x.value > 0; });
 
     // Produtividade — encerradas (corretiva), separadas em Dentro/Fora do SLA;
