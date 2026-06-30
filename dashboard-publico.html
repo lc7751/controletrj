@@ -60,6 +60,7 @@ body { min-height: 100vh; }
 </head>
 <body>
 <div id="root"><div class="text-center py-20" style="color:var(--trj-muted)">Carregando dados publicados...</div></div>
+<div id="dev-footer-mount" style="max-width:1400px;margin:0 auto;padding:0 22px;position:relative;z-index:1;"></div>
 
 <script>
 (function () {
@@ -266,6 +267,8 @@ body { min-height: 100vh; }
     var rows = Comp.drillIncidents(raw.incidentsEnriched, spec);
     U.openModal(title || 'Detalhamento', U.incidentTable(rows, raw.tasksEnriched), { onCopy: function () { return U.incidentTableCopyText(rows, title); } });
   }
+
+  document.getElementById('dev-footer-mount').appendChild(U.devFooter());
 
   carregarDados();
   setInterval(function () { carregarDados(true); }, 60000); // atualiza sozinho, sem piscar tela de erro
