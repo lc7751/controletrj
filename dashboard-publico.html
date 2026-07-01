@@ -73,7 +73,15 @@ body { min-height: 100vh; }
   var view = 'welcome';              // 'welcome' | 'dashboard'
   var state = { regiao: 'TODAS', prioridade: 'TODAS' };
 
-  var REGIAO_ICONS = { INTERIOR: '🌳', BAIXADA: '🏘️', 'GRANDE RJ': '🏙️', 'ZONA OESTE': '🌇', 'ESPIRITO SANTO': '🌊', OTHERS: '📍' };
+  // Ícones SVG por região (mais executivos que emojis)
+  var REGIAO_ICONS_SVG = {
+    'INTERIOR': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="26" height="26"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    'BAIXADA': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="26" height="26"><rect x="3" y="9" width="18" height="13" rx="2"/><path d="M3 9l9-6 9 6"/><path d="M9 22V12h6v10"/></svg>',
+    'GRANDE RJ': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="26" height="26"><line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="11"/><line x1="10" y1="18" x2="10" y2="11"/><line x1="14" y1="18" x2="14" y2="11"/><line x1="18" y1="18" x2="18" y2="11"/><polygon points="12 2 20 7 4 7"/></svg>',
+    'ZONA OESTE': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="26" height="26"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+    'ESPIRITO SANTO': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="26" height="26"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0"/><path d="M3 12h18"/><path d="M12 3c-2.5 2.5-4 5.5-4 9s1.5 6.5 4 9"/><path d="M12 3c2.5 2.5 4 5.5 4 9s-1.5 6.5-4 9"/></svg>',
+    'OTHERS': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="26" height="26"><circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 6 8 14 8 14s8-8 8-14a8 8 0 0 0-8-8z"/></svg>'
+  };
 
   // ---------------- Carregamento ----------------
   async function carregarDados(silencioso) {
@@ -114,7 +122,7 @@ body { min-height: 100vh; }
       U.h('div', { class: 'welcome-sub', text: 'Escolha sua região para visualização' }),
       U.h('div', { class: 'regiao-grid' }, C.REGIOES.map(function (r) {
         return U.h('button', { class: 'regiao-btn', onclick: function () { escolherRegiao(r); } }, [
-          U.h('span', { class: 'ic', text: REGIAO_ICONS[r] || '📍' }),
+          U.h('span', { class: 'ic', html: REGIAO_ICONS_SVG[r] || REGIAO_ICONS_SVG['OTHERS'] }),
           U.h('span', { class: 'nome', text: C.REGIAO_LABELS[r] || r }),
           U.h('span', { class: 'qtd', text: (contagem[r] || 0) + ' site(s) fora agora' })
         ]);
@@ -169,7 +177,12 @@ body { min-height: 100vh; }
 
     var aging = U.chartCard('Aging do Backlog');
     var venc = U.chartCard('Prazos a Vencer');
-    var sites = U.chartCard('Sites Fora por Região');
+
+    // Toggle de agrupamento por END_ID no Sites Fora
+    var sfAgrupar = { value: false };
+    var switchSf = U.switch(false, 'Agrupar por END_ID', function (v) { sfAgrupar.value = v; });
+    var sites = U.chartCard('Sites Fora por Região', { rightEl: switchSf });
+
     var slaReg = U.chartCard('SLA por Região');
     var manu = U.chartCard('Atividades Manuais', { hint: 'inclui cancelamentos' });
     var prod = U.chartCard('Produtividade — Encerradas Dentro/Fora do SLA');
@@ -179,23 +192,29 @@ body { min-height: 100vh; }
     var aData = d.aging || [], vData = d.prazosVencimento || [], sfData = d.sitesForaRegiao || [], srData = d.slaPorRegiao || [], amData = d.atividadesManuais || [], pData = d.produtividade || [];
     U.barChart(aging.canvas, aData, { onBar: function (i) { openDrillTasks({ tipo: 'aging', arg: i }, f, 'Aging: ' + aData[i].label); } });
     U.hbarChart(venc.canvas, vData, { onBar: function (i) { openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A vencer: ' + vData[i].label); } });
-    U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), { onBar: function (i) { openDrillIncidents({ tipo: 'sitesFora', arg: sfData[i].regiao }, 'Sites fora: ' + sfData[i].label); } });
+    U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), {
+      onBar: function (i) {
+        var tipo = sfAgrupar.value ? 'sitesForaAgrupado' : 'sitesFora';
+        openDrillIncidents({ tipo: tipo, arg: sfData[i].regiao }, 'Sites fora: ' + sfData[i].label);
+      }
+    });
     U.stackedChart(slaReg.canvas, srData, { onSeg: function (i, ds) { var r = srData[i]; openDrillTasks({ tipo: 'slaRegiao', arg: r.regiao + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'SLA ' + r.label); } });
     U.donutChart(manu.canvas, amData, {
       cores: C.DONUT_CORES,
       onSlice: function (i) {
         var nm = amData[i].name;
-        var spec = nm.indexOf('Cancel.') === 0
+        var ehCancel = nm.indexOf('Cancel.') === 0;
+        var spec = ehCancel
           ? { tipo: 'cancelCorretiva', arg: nm.indexOf('Associa') >= 0 ? 'assoc' : 'auto' }
           : { tipo: 'atividades', arg: argAtiv(nm) };
-        openDrillTasks(spec, f, nm);
+        openDrillTasks(spec, f, nm, ehCancel ? { modoCancelamento: true } : {});
       }
     });
     U.stackedChart(prod.canvas, pData.map(function (p) { return { label: p.categoria, dentro: p.dentro, fora: p.fora, preditiva: p.preditiva }; }), {
       onSeg: function (i, ds) {
         var cat = pData[i].categoria;
         var lado = ds === 2 ? 'preditiva' : (ds === 1 ? 'fora' : 'dentro');
-        openDrillTasks({ tipo: 'produtividadeCat', arg: cat + '|' + lado }, f, 'Produtividade ' + cat + (ds === 2 ? ' — Preditiva' : (ds === 1 ? ' — Fora do SLA' : ' — Dentro do SLA')));
+        openDrillTasks({ tipo: 'produtividadeCat', arg: cat + '|' + lado }, f, 'Produtividade ' + cat, { modoResultado: true });
       }
     });
   }
@@ -259,9 +278,9 @@ body { min-height: 100vh; }
   }
 
   // ---------------- Drills (mesma lógica do painel principal) ----------------
-  function openDrillTasks(spec, filtros, title) {
+  function openDrillTasks(spec, filtros, title, opts) {
     var rows = Comp.drillTasks(raw.tasksEnriched, spec, filtros || {});
-    U.openModal(title || 'Detalhamento', U.taskTable(rows), { onCopy: function () { return U.taskTableCopyText(rows, title); } });
+    U.openModal(title || 'Detalhamento', U.taskTable(rows, opts || {}), { onCopy: function () { return U.taskTableCopyText(rows, title); } });
   }
   function openDrillIncidents(spec, title) {
     var rows = Comp.drillIncidents(raw.incidentsEnriched, spec);
