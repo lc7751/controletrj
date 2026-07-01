@@ -51,17 +51,26 @@
       var regiao = D.determinarRegiao(t.filaAtual, t.microarea, v);
       var cidade = (v && v.cidade) || null;
       var sla = D.computeSla(t, prazoMap, now);
-      // "Fim" (encerramento real) costuma vir só com a HORA (ex.: "10:17",
-      // confirmado na planilha real), sem nenhuma informação de data —
-      // precisa ser combinado com a "Data Base" (coluna T) pra virar uma
-      // data completa e poder ser comparado com o vencimento do SLA.
       var baseParaFim = D.parsePlatformDate(t.dataBase) || D.toDate(t.dataCriacao);
       var fimCalc = D.parsePlatformDate(t.fim, baseParaFim);
+
+      // Para tarefas CANCELADAS (coluna N vazia), extrai a data de cancelamento
+      // da primeira linha do texto do "Diário de Trabalho" (coluna BG), que
+      // tem o formato "DD/MM/AAAA HH:MM:SS - ...". A primeira ocorrência é a
+      // ação mais recente (o texto vem em ordem decrescente).
+      var cancelacaoCalc = null;
+      if (!fimCalc) {
+        var bgTexto = (t.motivoCancelamento || '').toString();
+        var mBg = bgTexto.match(/(\d{1,2}\/\d{2}\/\d{4}[ T]\d{1,2}:\d{2})/);
+        if (mBg) cancelacaoCalc = D.parsePlatformDate(mBg[1]);
+      }
+
       return Object.assign({}, t, {
         sequenciaId: t.sequenciaId === '' || t.sequenciaId == null ? null : Number(t.sequenciaId),
         regiao: regiao,
         cidade: cidade,
         fimCalc: fimCalc,
+        cancelacaoCalc: cancelacaoCalc,
         vencimentoCalc: sla.vencimentoCalc,
         fonteSla: sla.fonteSla,
         statusSla: sla.statusSla
@@ -440,35 +449,29 @@
       case 'preditiva': return tickets.filter(function (t) { return t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA'; });
       case 'produtividade': return concluidas;
       case 'aging': {
-        // Cada faixa: ordenar do mais NOVO ao mais PRÓXIMO do limite superior
-        // (ou seja, do menor aging ao maior, dentro do bucket)
         var b = C.AGING_BUCKETS[parseInt(arg, 10)]; if (!b) return [];
         return backlog.filter(function (t) {
           if (!t.dataCriacao) return false;
           var idade = Math.round((now - new Date(t.dataCriacao).getTime()) / 60000);
           return idade >= b.min && idade < b.max;
         }).sort(function (a, b2) {
-          // mais novo (menor aging) primeiro
-          function idadeMin(t) { return Math.round((now - new Date(t.dataCriacao).getTime()) / 60000); }
+          function idadeMin(x) { return Math.round((now - new Date(x.dataCriacao).getTime()) / 60000); }
           return idadeMin(a) - idadeMin(b2);
         });
       }
       case 'vencimento': {
-        // Prazos a Vencer: agrupa por região e dentro de cada região por prioridade (P1→P5)
         var vb = C.VENCIMENTO_BUCKETS[parseInt(arg, 10)]; if (!vb) return [];
-        var rows = backlog.filter(function (t) {
+        return backlog.filter(function (t) {
           if (t.statusSla !== 'DENTRO DO SLA' || !t.vencimentoCalc) return false;
           var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
           return rest >= 0 && rest >= vb.min && rest < vb.max;
-        });
-        return rows.sort(function (a, b2) {
+        }).sort(function (a, b2) {
           var ra = a.regiao || 'OTHERS', rb = b2.regiao || 'OTHERS';
           if (ra !== rb) return ra.localeCompare(rb);
           return priNum(a) - priNum(b2);
         });
       }
       case 'slaRegiao': {
-        // SLA por Região: dentro de cada região, ordenar por prioridade P1→P5
         var parts = (arg || '').split('|'); var reg = parts[0]; var lado = parts[1];
         return backlog.filter(function (t) {
           return (t.regiao || 'OTHERS') === reg && t.statusSla === (lado === 'fora' ? 'FORA DO SLA' : 'DENTRO DO SLA');
@@ -520,7 +523,6 @@
     var filtrado;
     if (spec.tipo === 'sitesFora') filtrado = ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; });
     else if (spec.tipo === 'sitesForaAgrupado') {
-      // agrupado por END_ID (1 linha por END_ID) — filtrado por região
       filtrado = ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; });
       filtrado = agruparIncidentesPorEndId(filtrado);
     }
