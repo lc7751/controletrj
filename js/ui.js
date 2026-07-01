@@ -247,7 +247,15 @@
     var canvas = h('canvas');
     var wrap = h('div', { class: 'chart-wrap' + (opts.small ? ' sm' : '') }, canvas);
     var rightBits = [];
-    if (opts.hint) rightBits.push(h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: opts.hint }));
+    if (opts.hint) {
+      // hint pode ser string ou elemento DOM (ex.: um U.switch)
+      if (typeof opts.hint === 'string') {
+        rightBits.push(h('span', { class: 'text-xs', style: { color: 'var(--trj-muted)' }, text: opts.hint }));
+      } else if (opts.hint && opts.hint.nodeType) {
+        rightBits.push(opts.hint);
+      }
+    }
+    if (opts.rightEl && opts.rightEl.nodeType) rightBits.push(opts.rightEl);
     if (opts.onCopy) {
       rightBits.push(h('button', {
         class: 'trj-btn trj-btn-ghost', title: 'Copiar dados em texto',
@@ -507,18 +515,29 @@
     }, bits);
   };
 
-  // ---------- Badge de Resultado SLA (tarefas já encerradas/canceladas) ----------
-  // Para concluídas: compara fimCalc com vencimentoCalc.
-  // Para canceladas: usa cancelacaoCalc (extraído do texto BG em enrichTasks).
-  // Nunca usa t.statusSla diretamente — 'computeSla' retorna 'CONCLUIDO'
-  // para todas as tarefas fechadas, independente de serem dentro/fora do prazo.
-  U.resultadoSlaBadge = function (t) {
-    var refData = t.fimCalc || t.cancelacaoCalc;
-    var dentroSla = null;
-    if (refData && t.vencimentoCalc) {
-      dentroSla = new Date(refData).getTime() <= new Date(t.vencimentoCalc).getTime();
+  // ---------- Badge de tipo de cancelamento ----------
+  // Para canceladas: mostra o MOTIVO (Associação ou Automação), sem medir SLA.
+  // A medição de SLA não é confiável pra canceladas porque a data de
+  // cancelamento fica em texto livre (campo BG), então usar o tipo é mais
+  // seguro e mais útil operacionalmente.
+  U.cancelamentoBadge = function (t) {
+    var motivo = (t.motivoCancelamento || '').toString().toUpperCase();
+    var ehAssoc = motivo.indexOf('ASSOCIA') >= 0;
+    if (ehAssoc) {
+      return h('span', { class: 'trj-badge', style: { background: 'rgba(52,152,219,.16)', color: '#3498db', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' } }, [
+        h('span', { text: '🔗' }), h('span', { text: 'Associação' })
+      ]);
     }
-    if (dentroSla === null) return h('span', { style: { color: 'var(--trj-muted)' }, text: '—' });
+    return h('span', { class: 'trj-badge', style: { background: 'rgba(155,89,182,.16)', color: '#9b59b6', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' } }, [
+      h('span', { text: '⚡' }), h('span', { text: 'Automação' })
+    ]);
+  };
+
+  // ---------- Badge de Resultado SLA (somente para CONCLUÍDAS) ----------
+  // Compara fimCalc (hora real de encerramento) com vencimentoCalc (prazo).
+  U.resultadoSlaBadge = function (t) {
+    if (!t.fimCalc || !t.vencimentoCalc) return h('span', { style: { color: 'var(--trj-muted)' }, text: '—' });
+    var dentroSla = new Date(t.fimCalc).getTime() <= new Date(t.vencimentoCalc).getTime();
     if (dentroSla) {
       return h('span', { class: 'trj-badge', style: { background: 'rgba(46,204,113,.16)', color: '#2ecc71', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' } }, [
         h('span', { text: '✅' }), h('span', { text: 'Dentro SLA' })
@@ -530,17 +549,20 @@
   };
 
   // ---------- Tabela de tasks (drill) ----------
-  // opts.modoResultado = true → última coluna mostra "Dentro SLA / Fora SLA"
-  //   (para drills de concluídas/canceladas, onde a tarefa já foi encerrada)
-  // opts.modoResultado = false/undefined → última coluna mostra tempo restante
-  //   (para drills de backlog aberto)
+  // opts.modoResultado = true  → última coluna mostra "Dentro SLA / Fora SLA" (concluídas)
+  // opts.modoCancelamento = true → última coluna mostra "Automação / Associação" (canceladas)
+  // sem flag → mostra tempo restante (backlog aberto)
   U.taskTable = function (rows, opts) {
     opts = opts || {};
     var modoResultado = opts.modoResultado;
-    var colVencLabel = modoResultado ? 'Resultado SLA' : 'Vencimento';
-    var thead = h('thead', null, h('tr', null, ['Região', 'TSK', 'Site', 'Cidade', 'Falha', 'P', 'Criação', colVencLabel].map(function (t) { return h('th', { text: t }); })));
+    var modoCancelamento = opts.modoCancelamento;
+    var colLabel = modoCancelamento ? 'Tipo Cancelamento' : (modoResultado ? 'Resultado SLA' : 'Vencimento');
+    var thead = h('thead', null, h('tr', null, ['Região', 'TSK', 'Site', 'Cidade', 'Falha', 'P', 'Criação', colLabel].map(function (t) { return h('th', { text: t }); })));
     var body = rows.slice(0, 1000).map(function (t) {
-      var vencCell = modoResultado ? U.resultadoSlaBadge(t) : U.vencimentoBadge(t.vencimentoCalc);
+      var lastCell;
+      if (modoCancelamento) lastCell = U.cancelamentoBadge(t);
+      else if (modoResultado) lastCell = U.resultadoSlaBadge(t);
+      else lastCell = U.vencimentoBadge(t.vencimentoCalc);
       return h('tr', null, [
         h('td', { text: C.REGIAO_LABELS[t.regiao] || t.regiao || '—' }),
         h('td', { text: t.osNumero || '—' }),
@@ -549,7 +571,7 @@
         h('td', { text: t.tipoFalha || '—' }),
         h('td', { text: t.prioridade || '—' }),
         h('td', { text: t.dataCriacao ? D.formatarDataCompacta(t.dataCriacao) : '—' }),
-        h('td', null, vencCell)
+        h('td', null, lastCell)
       ]);
     });
     var tbl = h('table', { class: 'trj-table' }, [thead, h('tbody', null, body)]);
