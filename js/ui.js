@@ -280,27 +280,31 @@
 
   function register(c) { charts.push(c); return c; }
 
-  // Clareia uma cor hex pra usar no hover (aumenta luminosidade)
+  // Clareia uma cor hex pro efeito de hover — mistura apenas 30% de branco
+  // pra dar destaque sutil sem perder a cor original de referência.
   function clarearCor(hex) {
     hex = (hex || '#ff8c00').replace('#', '');
     if (hex.length === 3) hex = hex.split('').map(function (c) { return c + c; }).join('');
     var r = parseInt(hex.substr(0, 2), 16);
     var g = parseInt(hex.substr(2, 2), 16);
     var b = parseInt(hex.substr(4, 2), 16);
-    // mistura 60% da cor original com 40% de branco
-    r = Math.min(255, Math.round(r + (255 - r) * 0.55));
-    g = Math.min(255, Math.round(g + (255 - g) * 0.55));
-    b = Math.min(255, Math.round(b + (255 - b) * 0.55));
+    r = Math.min(255, Math.round(r + (255 - r) * 0.30));
+    g = Math.min(255, Math.round(g + (255 - g) * 0.30));
+    b = Math.min(255, Math.round(b + (255 - b) * 0.30));
     return 'rgb(' + r + ',' + g + ',' + b + ')';
   }
 
+  // Enriquece datasets com hoverBackgroundColor mais clara + borda branca sutil
   function hoverDatasets(datasets) {
     return datasets.map(function (ds) {
       var bgArr = Array.isArray(ds.backgroundColor) ? ds.backgroundColor : [ds.backgroundColor];
-      var hoverBg = bgArr.map(function (c) { return clarearCor(c && c.toString && c.toString().startsWith('#') ? c : '#ff8c00'); });
+      var hoverBg = bgArr.map(function (c) {
+        var cs = c && c.toString ? c.toString() : '';
+        return cs.startsWith('#') ? clarearCor(cs) : cs;
+      });
       return Object.assign({}, ds, {
         hoverBackgroundColor: hoverBg,
-        hoverBorderColor: Array.isArray(ds.backgroundColor) ? bgArr.map(function () { return 'rgba(255,255,255,0.7)'; }) : 'rgba(255,255,255,0.7)',
+        hoverBorderColor: bgArr.map(function () { return 'rgba(255,255,255,0.55)'; }),
         hoverBorderWidth: 1.5
       });
     });
@@ -352,17 +356,24 @@
     }));
   };
 
-  // donut. data = [{name,value}], onSlice(index)
+  // donut. data = [{name,value}], onSlice(index) — com hover de cor mais clara + borda branca
   U.donutChart = function (canvas, data, opts) {
     opts = opts || {};
     var cores = opts.cores || C.CHART_CORES;
+    var bgCores = data.map(function (d, i) { return cores[i % cores.length]; });
+    var hoverCores = bgCores.map(function (c) { return c.startsWith('#') ? clarearCor(c) : c; });
     return register(new Chart(canvas, {
       type: 'doughnut',
       data: {
         labels: data.map(function (d) { return d.name; }),
-        datasets: [{ data: data.map(function (d) { return d.value; }),
-          backgroundColor: data.map(function (d, i) { return cores[i % cores.length]; }),
-          borderColor: isLightTheme() ? '#ffffff' : '#13131a', borderWidth: 2 }]
+        datasets: [{
+          data: data.map(function (d) { return d.value; }),
+          backgroundColor: bgCores,
+          hoverBackgroundColor: hoverCores,
+          hoverBorderColor: 'rgba(255,255,255,0.6)',
+          hoverBorderWidth: 2,
+          borderColor: isLightTheme() ? '#ffffff' : '#13131a', borderWidth: 2
+        }]
       },
       options: {
         responsive: true, maintainAspectRatio: false, cutout: '60%',
@@ -483,9 +494,7 @@
     return result;
   };
 
-  // ---------- Badge visual de vencimento (mais "alto nível" que texto puro) ----------
-  // Pílula colorida com ícone — relógio se ainda dentro do prazo, alerta se
-  // vencido — e um ponto pulsante quando já venceu, pra chamar atenção.
+  // ---------- Badge visual de vencimento (backlog aberto: "VENCE EM / VENCIDO A") ----------
   U.vencimentoBadge = function (vencimentoCalc) {
     var venc = D.formatarVencimentoSimples(vencimentoCalc);
     if (!venc.cor) return h('span', { style: { color: 'var(--trj-muted)' }, text: '—' });
@@ -498,30 +507,35 @@
     }, bits);
   };
 
-  // Badge "Resultado SLA" para tarefas que JÁ foram encerradas/canceladas.
-  // Em vez de "VENCE EM" ou "VENCIDO A" (que fazem sentido para backlog aberto),
-  // exibe "DENTRO SLA" (verde) ou "FORA SLA" (vermelho) — pra canceladas e
-  // concluídas, onde o que importa é se a atividade foi resolvida no prazo.
+  // ---------- Badge de Resultado SLA (tarefas já encerradas/canceladas) ----------
+  // Para concluídas: compara fimCalc com vencimentoCalc.
+  // Para canceladas: usa cancelacaoCalc (extraído do texto BG em enrichTasks).
+  // Nunca usa t.statusSla diretamente — 'computeSla' retorna 'CONCLUIDO'
+  // para todas as tarefas fechadas, independente de serem dentro/fora do prazo.
   U.resultadoSlaBadge = function (t) {
-    var st = (t.statusSla || '').toUpperCase();
-    if (st === 'DENTRO DO SLA') {
+    var refData = t.fimCalc || t.cancelacaoCalc;
+    var dentroSla = null;
+    if (refData && t.vencimentoCalc) {
+      dentroSla = new Date(refData).getTime() <= new Date(t.vencimentoCalc).getTime();
+    }
+    if (dentroSla === null) return h('span', { style: { color: 'var(--trj-muted)' }, text: '—' });
+    if (dentroSla) {
       return h('span', { class: 'trj-badge', style: { background: 'rgba(46,204,113,.16)', color: '#2ecc71', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' } }, [
         h('span', { text: '✅' }), h('span', { text: 'Dentro SLA' })
       ]);
     }
-    if (st === 'FORA DO SLA') {
-      return h('span', { class: 'trj-badge', style: { background: 'rgba(231,76,60,.16)', color: '#e74c3c', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' } }, [
-        h('span', { text: '❌' }), h('span', { text: 'Fora SLA' })
-      ]);
-    }
-    return h('span', { style: { color: 'var(--trj-muted)' }, text: st || '—' });
+    return h('span', { class: 'trj-badge', style: { background: 'rgba(231,76,60,.16)', color: '#e74c3c', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '5px' } }, [
+      h('span', { text: '❌' }), h('span', { text: 'Fora SLA' })
+    ]);
   };
 
-  // ---------- Tabela de tasks (drill) — mesmas colunas da BASE_METRICAS original ----------
+  // ---------- Tabela de tasks (drill) ----------
+  // opts.modoResultado = true → última coluna mostra "Dentro SLA / Fora SLA"
+  //   (para drills de concluídas/canceladas, onde a tarefa já foi encerrada)
+  // opts.modoResultado = false/undefined → última coluna mostra tempo restante
+  //   (para drills de backlog aberto)
   U.taskTable = function (rows, opts) {
     opts = opts || {};
-    // "modo resultado": pra drills de canceladas/produtividade, a coluna final
-    // mostra "Dentro SLA" / "Fora SLA" em vez de "Vence em / Vencido a"
     var modoResultado = opts.modoResultado;
     var colVencLabel = modoResultado ? 'Resultado SLA' : 'Vencimento';
     var thead = h('thead', null, h('tr', null, ['Região', 'TSK', 'Site', 'Cidade', 'Falha', 'P', 'Criação', colVencLabel].map(function (t) { return h('th', { text: t }); })));
