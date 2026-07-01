@@ -67,11 +67,10 @@
     // ---- charts grid ----
     var aging = U.chartCard('Aging do Backlog');
     var venc = U.chartCard('Prazos a Vencer');
-    // Sites Fora por Região — com toggle de agrupamento por END_ID
+    // Sites Fora por Região — toggle de agrupamento por END_ID
     var sfAgrupar = { value: false };
-    var switchSf = U.switch(false, 'Por END_ID', function (v) { sfAgrupar.value = v; });
-    switchSf.style.cssText += 'font-size:11px;';
-    var sites = U.chartCard('Sites Fora por Região', { hint: switchSf });
+    var switchSf = U.switch(false, 'Agrupar por END_ID', function (v) { sfAgrupar.value = v; });
+    var sites = U.chartCard('Sites Fora por Região', { rightEl: switchSf });
     var slaReg = U.chartCard('SLA por Região');
     var manu = U.chartCard('Atividades Manuais', { hint: 'inclui cancelamentos' });
     var prod = U.chartCard('Produtividade — Encerradas Dentro/Fora do SLA');
@@ -101,7 +100,7 @@
         var spec = ehCancel
           ? { tipo: 'cancelCorretiva', arg: nm.indexOf('Associa') >= 0 ? 'assoc' : 'auto' }
           : { tipo: 'atividades', arg: argAtiv(nm) };
-        app.openDrillTasks(spec, f, nm, ehCancel ? { modoResultado: true } : {});
+        app.openDrillTasks(spec, f, nm, ehCancel ? { modoCancelamento: true } : {});
       }
     });
     U.stackedChart(prod.canvas, pData.map(function (p) { return { label: p.categoria, dentro: p.dentro, fora: p.fora, preditiva: p.preditiva }; }), {
