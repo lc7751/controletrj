@@ -31,18 +31,6 @@
     'þ': 241, '·': 242, 'µ': 243, '¶': 244, '¾': 245, '—': 246, '¼': 247, '½': 248, 'ª': 249, 'º': 250,
     '«': 251, '■': 252, '»': 253, '±': 254
   };
-  var HP_ROMAN8_CHAR_TO_BYTE = {
-    'À': 161, 'Â': 162, 'È': 163, 'Ê': 164, 'Ë': 165, 'Î': 166, 'Ï': 167, '´': 168, 'ˋ': 169, 'ˆ': 170,
-    '¨': 171, '˜': 172, 'Ù': 173, 'Û': 174, '₤': 175, '¯': 176, 'Ý': 177, 'ý': 178, '°': 179, 'Ç': 180,
-    'ç': 181, 'Ñ': 182, 'ñ': 183, '¡': 184, '¿': 185, '¤': 186, '£': 187, '¥': 188, '§': 189, 'ƒ': 190,
-    '¢': 191, 'â': 192, 'ê': 193, 'ô': 194, 'û': 195, 'á': 196, 'é': 197, 'ó': 198, 'ú': 199, 'à': 200,
-    'è': 201, 'ò': 202, 'ù': 203, 'ä': 204, 'ë': 205, 'ö': 206, 'ü': 207, 'Å': 208, 'î': 209, 'Ø': 210,
-    'Æ': 211, 'å': 212, 'í': 213, 'ø': 214, 'æ': 215, 'Ä': 216, 'ì': 217, 'Ö': 218, 'Ü': 219, 'É': 220,
-    'ï': 221, 'ß': 222, 'Ô': 223, 'Á': 224, 'Ã': 225, 'ã': 226, 'Ð': 227, 'ð': 228, 'Í': 229, 'Ì': 230,
-    'Ó': 231, 'Ò': 232, 'Õ': 233, 'õ': 234, 'Š': 235, 'š': 236, 'Ú': 237, 'Ÿ': 238, 'ÿ': 239, 'Þ': 240,
-    'þ': 241, '·': 242, 'µ': 243, '¶': 244, '¾': 245, '—': 246, '¼': 247, '½': 248, 'ª': 249, 'º': 250,
-    '«': 251, '■': 252, '»': 253, '±': 254
-  };
   var CP1253_CHAR_TO_BYTE = {
     '΅': 161, 'Ά': 162, '£': 163, '¤': 164, '¥': 165, '¦': 166, '§': 167, '¨': 168, '©': 169, '«': 171,
     '¬': 172, '­': 173, '®': 174, '―': 175, '°': 176, '±': 177, '²': 178, '³': 179, '΄': 180, 'µ': 181,
@@ -55,38 +43,95 @@
     'σ': 243, 'τ': 244, 'υ': 245, 'φ': 246, 'χ': 247, 'ψ': 248, 'ω': 249, 'ϊ': 250, 'ϋ': 251, 'ό': 252,
     'ύ': 253, 'ώ': 254
   };
+
+  // Mapeamento ISO-8859-10 → caractere UTF-8 correto.
+  // Quando a Genesis page serve UTF-8 mas o browser interpreta os bytes de
+  // continuação (0xA0-0xBF) usando ISO-8859-10 em vez de Latin-1, os
+  // caracteres acentuados do português ficam corrompidos com este padrão:
+  //   á (UTF-8: C3 A1) → "Ã" + "Ą" (U+0104, porque 0xA1 em ISO-8859-10 = Ą)
+  //   ã (UTF-8: C3 A3) → "Ã" + "Ģ" (U+0122, porque 0xA3 em ISO-8859-10 = Ģ)
+  //   ç (UTF-8: C3 A7) → "Ã" + "§" (U+00A7, § é igual em ISO-8859-10 e Latin-1)
+  //   é (UTF-8: C3 A9) → "Ã" + "Đ" (U+0110, porque 0xA9 em ISO-8859-10 = Đ)
+  var ISO8859_10_C3_MAP = {
+    '\u00A0': 'à',  // 0xA0 NBSP  → à
+    '\u0104': 'á',  // 0xA1 Ą    → á
+    '\u0112': 'â',  // 0xA2 Ē    → â
+    '\u0122': 'ã',  // 0xA3 Ģ    → ã
+    '\u012A': 'ä',  // 0xA4 Ī    → ä
+    '\u0128': 'å',  // 0xA5 Ĩ    → å
+    '\u0136': 'æ',  // 0xA6 Ķ    → æ
+    '\u00A7': 'ç',  // 0xA7 §    → ç
+    '\u013B': 'è',  // 0xA8 Ļ    → è
+    '\u0110': 'é',  // 0xA9 Đ    → é
+    '\u0160': 'ê',  // 0xAA Š    → ê
+    '\u0166': 'ë',  // 0xAB Ŧ    → ë
+    '\u017D': 'ì',  // 0xAC Ž    → ì
+    '\u00AD': 'í',  // 0xAD soft hyphen → í
+    '\u016A': 'î',  // 0xAE Ū    → î
+    '\u014A': 'ï',  // 0xAF Ŋ    → ï
+    '\u00B0': 'ð',  // 0xB0 °    → ð
+    '\u0105': 'ñ',  // 0xB1 ą    → ñ
+    '\u0113': 'ò',  // 0xB2 ē    → ò
+    '\u0123': 'ó',  // 0xB3 ģ    → ó
+    '\u012B': 'ô',  // 0xB4 ī    → ô
+    '\u0129': 'õ',  // 0xB5 ĩ    → õ
+    '\u0137': 'ö',  // 0xB6 ķ    → ö
+    '\u013C': 'ø',  // 0xB8 ļ    → ø
+    '\u0111': 'ù',  // 0xB9 đ    → ù
+    '\u0161': 'ú',  // 0xBA š    → ú
+    '\u0167': 'û',  // 0xBB ŧ    → û
+    '\u017E': 'ü',  // 0xBC ž    → ü
+    '\u2015': 'ý',  // 0xBD ―   → ý
+    '\u016B': 'þ',  // 0xBE ū    → þ
+    '\u014B': 'ÿ'   // 0xBF ŋ    → ÿ
+  };
+
   var _decoderUtf8Strict = (typeof TextDecoder !== 'undefined') ? new TextDecoder('utf-8', { fatal: true }) : null;
 
   function corrigirAcentos(texto) {
-    if (!texto || typeof texto !== 'string' || !_decoderUtf8Strict) return texto;
+    if (!texto || typeof texto !== 'string') return texto;
 
-    // 1ª tentativa (mais comum no Genesis): UTF-8 bytes lidos como Latin-1 (mojibake clássico)
-    // Detectado pelo padrão 0xC2 ou 0xC3 seguido de byte de continuação (0x80–0xBF).
-    // Exemplo: 'NÃ£o' = N(4E) + Ã(C3) + £(A3) + o(6F) → bytes UTF-8 de 'Não'
+    // 1ª tentativa: ISO-8859-10 variant mojibake (padrão do Genesis)
+    // Detecta "Ã" (U+00C3) seguido de caracteres que são tipicamente
+    // bytes de continuação UTF-8 mas foram lidos como ISO-8859-10.
+    if (texto.indexOf('Ã') >= 0) {
+      var hasIso10 = false;
+      for (var ci = 0; ci < texto.length - 1; ci++) {
+        if (texto[ci] === 'Ã' && ISO8859_10_C3_MAP[texto[ci + 1]] !== undefined) {
+          hasIso10 = true; break;
+        }
+      }
+      if (hasIso10) {
+        return texto.replace(/Ã(.)/g, function(m, c) {
+          return ISO8859_10_C3_MAP[c] !== undefined ? ISO8859_10_C3_MAP[c] : m;
+        });
+      }
+    }
+
+    if (!_decoderUtf8Strict) return texto;
+
+    // 2ª tentativa: UTF-8 lido como Latin-1 simples (0xC2/0xC3 + byte < 0xFF)
     var temMojibake = false;
-    for (var i = 0; i < texto.length - 1; i++) {
-      var c = texto.charCodeAt(i);
-      if ((c === 0xC2 || c === 0xC3) && texto.charCodeAt(i + 1) >= 0x80 && texto.charCodeAt(i + 1) <= 0xBF) {
+    for (var mi = 0; mi < texto.length - 1; mi++) {
+      var mc = texto.charCodeAt(mi);
+      if ((mc === 0xC2 || mc === 0xC3) && texto.charCodeAt(mi + 1) >= 0x80 && texto.charCodeAt(mi + 1) <= 0xBF) {
         temMojibake = true; break;
       }
     }
     if (temMojibake) {
-      var bytes = [];
-      var todoLatin1 = true;
-      for (var j = 0; j < texto.length; j++) {
-        var code = texto.charCodeAt(j);
-        if (code > 0xFF) { todoLatin1 = false; break; }
-        bytes.push(code);
+      var bytes = []; var todoLatin1 = true;
+      for (var li = 0; li < texto.length; li++) {
+        var lc = texto.charCodeAt(li);
+        if (lc > 0xFF) { todoLatin1 = false; break; }
+        bytes.push(lc);
       }
       if (todoLatin1) {
-        try {
-          var r0 = _decoderUtf8Strict.decode(new Uint8Array(bytes));
-          return r0;
-        } catch (e) { /* não é UTF-8 válido → tenta próximo */ }
+        try { return _decoderUtf8Strict.decode(new Uint8Array(bytes)); }
+        catch (e) { /* não é UTF-8 válido */ }
       }
     }
 
-    // 2ª tentativa: HP Roman-8
+    // 3ª tentativa: HP Roman-8
     function tentarTabela(t, tabela) {
       var bs = [], k, cod, b;
       for (k = 0; k < t.length; k++) {
@@ -102,7 +147,7 @@
     var r1 = tentarTabela(texto, HP_ROMAN8_CHAR_TO_BYTE);
     if (r1 != null) return r1;
 
-    // 3ª tentativa: CP1253 (Windows-1253 / Grego)
+    // 4ª tentativa: CP1253 (Windows-1253 / Grego)
     var r2 = tentarTabela(texto, CP1253_CHAR_TO_BYTE);
     if (r2 != null) return r2;
 
