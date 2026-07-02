@@ -437,19 +437,27 @@
       var k2 = (t.enderecoId || '').toString().trim().toUpperCase();
       if (k2 !== key) return false;
       var st = (t.status || '').toString().trim().toUpperCase();
-      return STATUS_FECHADO_TSK.indexOf(st) < 0; // ignora tarefas já fechadas
+      return STATUS_FECHADO_TSK.indexOf(st) < 0;
     });
     if (!candidatos.length) return null;
-    // prioriza "Iniciado" sobre os demais; entre iguais, a mais recente
+    // Maior sequenciaId = mais recente (regra da planilha: coluna C)
     candidatos.sort(function (a, b) {
+      var sa = Number(a.sequenciaId) || 0;
+      var sb = Number(b.sequenciaId) || 0;
+      if (sb !== sa) return sb - sa;
       var pa = (a.status || '').toUpperCase() === 'INICIADO' ? 0 : 1;
       var pb = (b.status || '').toUpperCase() === 'INICIADO' ? 0 : 1;
-      if (pa !== pb) return pa - pb;
-      var da = a.dataCriacao ? new Date(a.dataCriacao).getTime() : 0;
-      var db = b.dataCriacao ? new Date(b.dataCriacao).getTime() : 0;
-      return db - da;
+      return pa - pb;
     });
-    return { osNumero: candidatos[0].osNumero, status: candidatos[0].status || null, total: candidatos.length };
+    var melhor = candidatos[0];
+    return {
+      osNumero: melhor.osNumero,
+      status: melhor.status || null,
+      filaAtual: melhor.filaAtual || null,
+      motivoCancelamento: melhor.motivoCancelamento || null,
+      total: candidatos.length,
+      sequenciaId: melhor.sequenciaId
+    };
   }
   U.tskAberta = tskAberta;
 
@@ -467,7 +475,48 @@
     if (st === 'INICIADO') { cor = '#1fae5e'; bg = 'rgba(46,204,113,.22)'; }
     else if (st === 'NÃO INICIADO' || st === 'NAO INICIADO') { cor = '#9a7d00'; bg = 'rgba(241,196,15,.35)'; }
     var texto = (m.osNumero || '—') + (m.total > 1 ? ' (+' + (m.total - 1) + ')' : '');
-    return h('span', { class: 'trj-badge', style: { background: bg, color: cor, fontWeight: '700' }, title: m.status || '' }, texto);
+    var tooltip = (m.status || '') + (m.filaAtual ? '\n' + m.filaAtual : '');
+    return h('span', { class: 'trj-badge', style: { background: bg, color: cor, fontWeight: '700', cursor: 'help' }, title: tooltip }, texto);
+  };
+
+  // Padrões de anotações automáticas do sistema (bot) — ignoradas ao extrair o último update manual.
+  var BOT_PATTERNS = [/WFM\s*Agent/i, /MONITOR\s*CCI/i, /isoc_fixa/i, /Anotações de trabalho/i, /Sistema.*automático/i];
+  function ehBot(bloco) { return BOT_PATTERNS.some(function (p) { return p.test(bloco); }); }
+  function extrairUltimaAnotacao(bgTexto) {
+    if (!bgTexto) return null;
+    var blocos = bgTexto.toString().split(/(?=\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(?=[A-Z]{2,6}_\d{4}[\d\-]+)/);
+    for (var i = 0; i < blocos.length; i++) {
+      var b = blocos[i].trim();
+      if (b.length < 20) continue;
+      if (!ehBot(b)) return b;
+    }
+    return null;
+  }
+
+  // Célula "Último Update" — substitui a coluna Previsão na tabela de incidentes.
+  U.ultimoUpdateCell = function (incident, tasksEnriched) {
+    var m = tskAberta(incident, tasksEnriched);
+    if (!m) return h('span', { style: { color: 'var(--trj-muted)' }, text: '—' });
+    var ult = extrairUltimaAnotacao(m.motivoCancelamento);
+    if (!ult) {
+      return h('span', {
+        class: 'trj-badge',
+        style: { background: 'rgba(231,76,60,.16)', color: '#e74c3c', fontWeight: '700', cursor: 'default', gap: '4px', display: 'inline-flex', alignItems: 'center' },
+        title: 'Nenhuma atualização do técnico encontrada'
+      }, [h('span', { class: 'trj-pulse-dot' }), h('span', { text: 'Sem update' })]);
+    }
+    var semPrefix = ult.replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s+-?\s*/, '').trim();
+    var resumo = semPrefix.slice(0, 32) + (semPrefix.length > 32 ? '…' : '');
+    return h('button', {
+      class: 'trj-btn trj-btn-ghost',
+      style: { fontSize: '11px', padding: '2px 7px', maxWidth: '190px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', textAlign: 'left' },
+      title: ult,
+      onclick: function (ev) {
+        ev.stopPropagation();
+        var conteudo = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: ult });
+        U.openModal('Último Update — ' + (m.osNumero || ''), conteudo);
+      }
+    }, [h('span', { style: { opacity: '0.7', marginRight: '4px' }, text: '💬' }), h('span', { text: resumo })]);
   };
 
   // ---------- Correlação entre incidentes (mesmo horário ±4min + ANF/cidade) ----------
@@ -612,7 +661,7 @@
   U.incidentTable = function (rows, tasksEnriched) {
     var corr = U.computeCorrelacoes(rows);
     var thead = h('thead', null, h('tr', null,
-      ['Horário', 'Duração', 'Site', 'END_ID', 'ANF', 'Cidade/UF', 'TSK', 'Previsão', 'Causa', 'Detalhe']
+      ['Horário', 'Duração', 'Site', 'END_ID', 'ANF', 'Cidade/UF', 'TSK', 'Último Update', 'Causa', 'Detalhe']
         .map(function (t) { return h('th', { text: t }); })));
     var body = rows.slice(0, 1000).map(function (r, idx) {
       var c = corr[idx];
@@ -632,7 +681,7 @@
         h('td', { text: r.anf || '—' }),
         h('td', { text: r.cidadeUf || r.cidade || '—' }),
         h('td', null, U.tskCell(r, tasksEnriched)),
-        h('td', { text: r.previsao || '/' }),
+        h('td', null, U.ultimoUpdateCell(r, tasksEnriched)),
         h('td', { text: r.causa || '/' }),
         h('td', { text: r.detalhe || '#', style: { maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } })
       ]);
