@@ -440,15 +440,26 @@
       return STATUS_FECHADO_TSK.indexOf(st) < 0;
     });
     if (!candidatos.length) return null;
-    // Maior sequenciaId = mais recente (regra da planilha: coluna C)
-    candidatos.sort(function (a, b) {
-      var sa = Number(a.sequenciaId) || 0;
-      var sb = Number(b.sequenciaId) || 0;
-      if (sb !== sa) return sb - sa;
-      var pa = (a.status || '').toUpperCase() === 'INICIADO' ? 0 : 1;
-      var pb = (b.status || '').toUpperCase() === 'INICIADO' ? 0 : 1;
-      return pa - pb;
-    });
+    // Separar: corretiva tem prioridade sobre atividade manual
+    function ehCorretiva(t) {
+      var tipo = (t.tipoAtividade || '').trim();
+      return tipo === 'Planta Interna - Manutenção Corretiva' || tipo === 'Planta Interna - Manutencao Corretiva' ||
+             tipo.indexOf('Corretiva') >= 0 || tipo.indexOf('CORRETIVA') >= 0;
+    }
+    var corretivas = candidatos.filter(ehCorretiva);
+    var ativos = corretivas.length > 0 ? corretivas : candidatos; // só manual se não há corretiva
+    function sortDesc(list) {
+      return list.sort(function (a, b) {
+        var sa = Number(a.sequenciaId) || 0;
+        var sb = Number(b.sequenciaId) || 0;
+        if (sb !== sa) return sb - sa;
+        var pa = (a.status || '').toUpperCase() === 'INICIADO' ? 0 : 1;
+        var pb = (b.status || '').toUpperCase() === 'INICIADO' ? 0 : 1;
+        return pa - pb;
+      });
+    }
+    sortDesc(ativos);
+    var candidatos = ativos;
     var melhor = candidatos[0];
     return {
       osNumero: melhor.osNumero,
@@ -792,16 +803,45 @@
   }
 
   // Classifica o estado do Último Update baseado na lógica do VBA:
-  //   'sem'         → BG vazio, frase padrão bot, ou formulário WFM puro
+  //   'sem'         → BG vazio, frase padrão bot/MONITOR CCI, ou formulário WFM puro
   //   'acionamento' → bloco mais recente contém "VERIFICANDO ACIONAMENTO"
-  //   'ok'          → tem texto de técnico no bloco mais recente
+  //   'ok'          → tem texto real de técnico no bloco mais recente
   function classificarUltimoBloco(bgTexto) {
     if (isTextoSemAtualizacao(bgTexto)) return { estado: 'sem', texto: null };
     var bloco = extrairBlocoMaisRecente(bgTexto);
     if (!bloco) return { estado: 'sem', texto: bgTexto ? bgTexto.toString().trim() : null };
-    var txt = bloco.texto.toUpperCase();
-    if (txt.indexOf('VERIFICANDO ACIONAMENTO') >= 0) return { estado: 'acionamento', texto: bloco.texto };
+    var txtUpper = bloco.texto.toUpperCase();
+    if (txtUpper.indexOf('VERIFICANDO ACIONAMENTO') >= 0) return { estado: 'acionamento', texto: bloco.texto };
+    // MONITOR CCI com frase padrão → classificar como sem atualização
+    if (txtUpper.indexOf('MONITOR CCI') >= 0) {
+      for (var fi = 0; fi < FRASES_PADRAO_BOT.length; fi++) {
+        if (txtUpper.indexOf(FRASES_PADRAO_BOT[fi].toUpperCase()) >= 0) {
+          return { estado: 'sem', texto: null };
+        }
+      }
+      // MONITOR CCI com texto diferente das frases padrão → pode ser acionamento
+      return { estado: 'acionamento', texto: bloco.texto };
+    }
     return { estado: 'ok', texto: bloco.texto };
+  }
+
+  // Extrai os 2 blocos mais recentes (penúltimo + último) para o modal.
+  function extrairDoisBlocosMaisRecentes(bgTexto) {
+    if (!bgTexto) return [];
+    var texto = bgTexto.toString();
+    var DT_RE = /(\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)/g;
+    var matches = [], m;
+    while ((m = DT_RE.exec(texto)) !== null) {
+      var dt = parseDataHoraBG(m[1]);
+      if (dt && !isNaN(dt.getTime())) matches.push({ idx: m.index, dt: dt });
+    }
+    if (!matches.length) return bgTexto ? [bgTexto.toString().trim()] : [];
+    var blocos = matches.map(function (cur, i) {
+      var fim = i < matches.length - 1 ? matches[i + 1].idx : texto.length;
+      return { dt: cur.dt, texto: texto.substring(cur.idx, fim).trim() };
+    });
+    blocos.sort(function (a, b) { return b.dt - a.dt; });
+    return blocos.slice(0, 2).map(function (b) { return b.texto; });
   }
 
   // Célula "Último Update" — substitui a coluna Previsão na tabela de incidentes.
@@ -855,7 +895,11 @@
       title: textoCompleto || '',
       onclick: function(ev) {
         ev.stopPropagation();
-        var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: textoCompleto || '' });
+        var dois = extrairDoisBlocosMaisRecentes(m.motivoCancelamento || '');
+        var conteudoModal = dois.length > 1
+          ? dois[0] + '\n\n── Penúltimo ──\n\n' + dois[1]
+          : (textoCompleto || '');
+        var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: conteudoModal });
         U.openModal('Último Update — ' + (m.osNumero || ''), cid);
       }
     }, [h('span', { html: ICONE_FOLHA_SVG }), h('span', { text: resumoOk })]);
