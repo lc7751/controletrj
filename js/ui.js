@@ -493,32 +493,6 @@
     return null;
   }
 
-  // Célula "Último Update" — substitui a coluna Previsão na tabela de incidentes.
-  U.ultimoUpdateCell = function (incident, tasksEnriched) {
-    var m = tskAberta(incident, tasksEnriched);
-    if (!m) return h('span', { style: { color: 'var(--trj-muted)' }, text: '—' });
-    var ult = extrairUltimaAnotacao(m.motivoCancelamento);
-    if (!ult) {
-      return h('span', {
-        class: 'trj-badge',
-        style: { background: 'rgba(231,76,60,.16)', color: '#e74c3c', fontWeight: '700', cursor: 'default', gap: '4px', display: 'inline-flex', alignItems: 'center' },
-        title: 'Nenhuma atualização do técnico encontrada'
-      }, [h('span', { class: 'trj-pulse-dot' }), h('span', { text: 'Sem update' })]);
-    }
-    var semPrefix = ult.replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s+-?\s*/, '').trim();
-    var resumo = semPrefix.slice(0, 32) + (semPrefix.length > 32 ? '…' : '');
-    return h('button', {
-      class: 'trj-btn trj-btn-ghost',
-      style: { fontSize: '11px', padding: '2px 7px', maxWidth: '190px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', textAlign: 'left' },
-      title: ult,
-      onclick: function (ev) {
-        ev.stopPropagation();
-        var conteudo = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: ult });
-        U.openModal('Último Update — ' + (m.osNumero || ''), conteudo);
-      }
-    }, [h('span', { style: { opacity: '0.7', marginRight: '4px' }, text: '💬' }), h('span', { text: resumo })]);
-  };
-
   // ---------- Correlação entre incidentes (mesmo horário ±4min + ANF/cidade) ----------
   function parseHorarioMin(horario) {
     if (!horario) return null;
@@ -683,7 +657,23 @@
         h('td', null, U.tskCell(r, tasksEnriched)),
         h('td', null, U.ultimoUpdateCell(r, tasksEnriched)),
         h('td', { text: r.causa || '/' }),
-        h('td', { text: r.detalhe || '#', style: { maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } })
+        h('td', null, function(){
+          var textoDetalhe = r.detalhe || '';
+          if (!textoDetalhe || textoDetalhe === '#') return h('span', { style: { color: 'var(--trj-muted)' }, text: '#' });
+          var resumo = textoDetalhe.slice(0, 35) + (textoDetalhe.length > 35 ? '…' : '');
+          var cel = h('span', {
+            style: { maxWidth: '220px', display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: textoDetalhe.length > 35 ? 'pointer' : 'default', textDecoration: textoDetalhe.length > 35 ? 'underline dotted' : 'none' },
+            title: textoDetalhe, text: resumo
+          });
+          if (textoDetalhe.length > 35) {
+            cel.addEventListener('click', function(ev) {
+              ev.stopPropagation();
+              var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontSize: '13px', lineHeight: '1.8', padding: '4px' }, text: textoDetalhe });
+              U.openModal('Detalhe', cid);
+            });
+          }
+          return cel;
+        }())
       ]);
     });
     var tbl = h('table', { class: 'trj-table' }, [thead, h('tbody', null, body)]);
@@ -737,6 +727,96 @@
   // ---------- Rodapé "Equipe de Desenvolvimento" ----------
   // Reaproveitado tanto no painel principal (app.js) quanto no dashboard
   // público (dashboard-publico.html), pra manter o crédito sempre visível.
+
+// Ícone SVG de folha/documento (para o Último Update)
+  var ICONE_FOLHA_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
+
+  // Classifica o primeiro bloco do BG (mais recente) para definir o estado do update:
+  //   'acionamento' → último contato foi MONITOR CCI (ticket acionado, aguardando técnico)
+  //   'sem'         → nenhuma entrada encontrada ou só bot puro (WFM Agent com form)
+  //   'ok'          → tem texto de técnico no bloco
+  function classificarUltimoBloco(bgTexto) {
+    if (!bgTexto || bgTexto.toString().trim().length < 5) return { estado: 'sem', texto: null };
+    var texto = bgTexto.toString();
+    // Divide em blocos (mais recente primeiro)
+    var blocos = texto.split(/(?=\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(?=[A-Z]{2,6}_\d{4}[\d\-]+)/);
+    // Pega o primeiro bloco com conteúdo
+    for (var i = 0; i < blocos.length; i++) {
+      var b = blocos[i].trim();
+      if (b.length < 10) continue;
+      if (/MONITOR\s*CCI/i.test(b)) return { estado: 'acionamento', texto: b };
+      if (/WFM\s*Agent/i.test(b) || /isoc_fixa/i.test(b)) {
+        // WFM Agent pode conter texto humano no final (após o formulário)
+        // Remove o cabeçalho do form e vê o que sobra
+        var semForm = b.replace(/[\s\S]*?(Tramitação|Suspensão|Motivo da visita|Motivo:\s)/i, '').trim();
+        // Se há texto relevante após o form, é um update de técnico via WFM
+        if (semForm.length > 20 && !/^(Tramita|Suspens|Mostra|Visita)/i.test(semForm)) {
+          return { estado: 'ok', texto: b };
+        }
+        return { estado: 'sem', texto: b };
+      }
+      // Qualquer outro bloco = anotação humana direta
+      return { estado: 'ok', texto: b };
+    }
+    return { estado: 'sem', texto: null };
+  }
+
+  // Célula "Último Update" — substitui a coluna Previsão na tabela de incidentes.
+  // Ícone de folha SVG: verde = tem update, laranja = verificando acionamento, vermelho = sem update.
+  U.ultimoUpdateCell = function (incident, tasksEnriched) {
+    var m = tskAberta(incident, tasksEnriched);
+    if (!m) return h('span', { style: { color: 'var(--trj-muted)' }, text: '—' });
+
+    var resultado = classificarUltimoBloco(m.motivoCancelamento);
+    var estado = resultado.estado;
+    var textoCompleto = resultado.texto;
+
+    if (estado === 'sem') {
+      // Folha com borda vermelha pulsante — sem update do técnico
+      var el = h('span', {
+        class: 'trj-badge',
+        style: { background: 'rgba(231,76,60,.14)', color: '#e74c3c', fontWeight: '700', cursor: 'default', gap: '5px', display: 'inline-flex', alignItems: 'center', border: '1px solid rgba(231,76,60,.35)' },
+        title: 'Nenhuma atualização do técnico encontrada'
+      }, [
+        h('span', { html: ICONE_FOLHA_SVG }),
+        h('span', { class: 'trj-pulse-dot' }),
+        h('span', { text: 'Sem update' })
+      ]);
+      return el;
+    }
+
+    if (estado === 'acionamento') {
+      // Folha com contorno laranja — ticket acionado, aguardando resposta
+      var resumo = (textoCompleto || '').replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s+-?\s*/,'').trim().slice(0, 28);
+      if ((textoCompleto||'').length > 28) resumo += '…';
+      var btnAc = h('button', {
+        class: 'trj-btn',
+        style: { fontSize: '11px', padding: '2px 7px', background: 'rgba(255,140,0,.12)', color: 'var(--trj-primary)', border: '1px solid rgba(255,140,0,.35)', display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+        title: textoCompleto || 'Verificando acionamento',
+        onclick: function(ev) {
+          ev.stopPropagation();
+          var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: textoCompleto || '' });
+          U.openModal('Verificando Acionamento — ' + (m.osNumero || ''), cid);
+        }
+      }, [h('span', { html: ICONE_FOLHA_SVG }), h('span', { text: 'Acionando' })]);
+      return btnAc;
+    }
+
+    // Estado 'ok' — há texto de técnico, exibir com botão clicável
+    var semPrefix = (textoCompleto || '').replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s+-?\s*/,'').trim();
+    var resumoOk = semPrefix.slice(0, 30) + (semPrefix.length > 30 ? '…' : '');
+    return h('button', {
+      class: 'trj-btn trj-btn-ghost',
+      style: { fontSize: '11px', padding: '2px 7px', display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '190px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--trj-green)' },
+      title: textoCompleto || '',
+      onclick: function(ev) {
+        ev.stopPropagation();
+        var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: textoCompleto || '' });
+        U.openModal('Último Update — ' + (m.osNumero || ''), cid);
+      }
+    }, [h('span', { html: ICONE_FOLHA_SVG }), h('span', { text: resumoOk })]);
+  };
+
   U.devFooter = function () {
     function card(initials, cor, role, name, email) {
       return h('div', { class: 'trj-dev-card' }, [
