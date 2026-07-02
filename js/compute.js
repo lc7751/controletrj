@@ -110,6 +110,8 @@
       var alarme0 = D.corrigirAcentos(r.alarme);
       var infra0 = D.corrigirAcentos(r.infra);
       var cidadeUf0 = D.corrigirAcentos(r.cidadeUf);
+      var previsao0 = D.corrigirAcentos(r.previsao);
+      var statusEvento0 = D.corrigirAcentos(r.statusEvento);
       var v = validFor(validMap, r.enderecoId, site0);
       var cidade = (v && v.cidade) || cidadeDe(cidadeUf0);
       var anf = r.anf || null;
@@ -129,8 +131,8 @@
         cidadeUf: cidadeUf0 || null,
         cidade: cidade || null,
         infra: infra0 || null,
-        statusEvento: r.statusEvento || null,
-        previsao: r.previsao || null,
+        statusEvento: statusEvento0 || null,
+        previsao: previsao0 || null,
         causa: causa0 || null,
         causaGrupo: D.agruparCausa(causa0),
         detalhe: detalhe0 || null,
