@@ -65,12 +65,16 @@
       var base = state.agrupado ? Comp.agruparIncidentesPorEndId(incidents) : incidents;
       var q = (state.busca || '').toLowerCase().trim();
       var rows = !q ? base : base.filter(function (r) {
-        // Busca em todos os campos textuais, incluindo TSK e status.
-        // "SEM TSK" também deve ser encontrado quando não houver match de task.
-        var tskMatch = U.tskAberta ? U.tskAberta(r, (ctx.data && ctx.data.tasksEnriched) || []) : null;
-        var tskTxt = tskMatch ? ((tskMatch.osNumero || '') + ' ' + (tskMatch.status || '')) : 'SEM TSK';
-        var hay = [r.site, r.enderecoId, r.cidade, r.anf, r.causa, r.causaGrupo, r.obs, r.infra, r.gsbi, tskTxt].filter(Boolean).join(' ').toLowerCase();
-        return hay.indexOf(q) >= 0;
+        try {
+          var tskMatch = U.tskAberta ? U.tskAberta(r, tasksEnriched) : null;
+          var tskTxt = tskMatch ? ((tskMatch.osNumero || '') + ' ' + (tskMatch.status || '')) : 'SEM TSK';
+          var hay = [r.site, r.enderecoId, r.cidade, r.anf, r.causa, r.causaGrupo, r.obs, r.infra, r.gsbi, r.detalhe, tskTxt]
+            .filter(Boolean).join(' ').toLowerCase();
+          return hay.indexOf(q) >= 0;
+        } catch (e) {
+          var hay2 = [r.site, r.enderecoId, r.cidade, r.anf, r.causa, r.causaGrupo].filter(Boolean).join(' ').toLowerCase();
+          return hay2.indexOf(q) >= 0;
+        }
       });
       listEl.innerHTML = '';
       if (!incidents.length) {
