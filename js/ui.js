@@ -855,54 +855,47 @@
     var estado = resultado.estado;
     var textoCompleto = resultado.texto;
 
-    if (estado === 'sem') {
-      // Folha com borda vermelha pulsante — sem update do técnico
-      var el = h('span', {
-        class: 'trj-badge',
-        style: { background: 'rgba(231,76,60,.14)', color: '#e74c3c', fontWeight: '700', cursor: 'default', gap: '5px', display: 'inline-flex', alignItems: 'center', border: '1px solid rgba(231,76,60,.35)' },
-        title: 'Nenhuma atualização do técnico encontrada'
-      }, [
-        h('span', { html: ICONE_FOLHA_SVG }),
-        h('span', { class: 'trj-pulse-dot' }),
-        h('span', { text: 'Sem update' })
-      ]);
-      return el;
+    function abrirModal(ev) {
+      ev.stopPropagation();
+      var dois = extrairDoisBlocosMaisRecentes(m.motivoCancelamento || '');
+      var conteudoModal = dois.length > 1
+        ? '── Último ──\n\n' + dois[0] + '\n\n── Penúltimo ──\n\n' + dois[1]
+        : (textoCompleto || '—');
+      var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: conteudoModal });
+      U.openModal((estado === 'acionamento' ? 'Acionamento' : 'Último Update') + ' — ' + (m.osNumero || ''), cid);
     }
 
+    if (estado === 'sem') {
+      // Só ponto pulsante vermelho — sem nenhum texto, sem botão (não clicável)
+      return h('span', {
+        style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px' },
+        title: 'Sem atualização do técnico'
+      }, [h('span', { class: 'trj-pulse-dot' })]);
+    }
+
+    // Tooltip com preview da última atualização (hover mostra info sem clicar)
+    var previewHover = (textoCompleto || '')
+      .replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s+-?\s*/, '')
+      .trim().slice(0, 120);
+
     if (estado === 'acionamento') {
-      // Folha com contorno laranja — ticket acionado, aguardando resposta
-      var resumo = (textoCompleto || '').replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s+-?\s*/,'').trim().slice(0, 28);
-      if ((textoCompleto||'').length > 28) resumo += '…';
+      // Ícone de folha laranja — acionamento em andamento
       var btnAc = h('button', {
         class: 'trj-btn',
-        style: { fontSize: '11px', padding: '2px 7px', background: 'rgba(255,140,0,.12)', color: 'var(--trj-primary)', border: '1px solid rgba(255,140,0,.35)', display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-        title: textoCompleto || 'Verificando acionamento',
-        onclick: function(ev) {
-          ev.stopPropagation();
-          var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: textoCompleto || '' });
-          U.openModal('Verificando Acionamento — ' + (m.osNumero || ''), cid);
-        }
-      }, [h('span', { html: ICONE_FOLHA_SVG }), h('span', { text: 'Acionando' })]);
+        style: { background: 'transparent', border: 'none', padding: '2px 4px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: 'var(--trj-primary)', opacity: '0.85' },
+        title: previewHover || 'Verificando acionamento',
+        onclick: abrirModal
+      }, [h('span', { html: ICONE_FOLHA_SVG })]);
       return btnAc;
     }
 
-    // Estado 'ok' — há texto de técnico, exibir com botão clicável
-    var semPrefix = (textoCompleto || '').replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s+-?\s*/,'').trim();
-    var resumoOk = semPrefix.slice(0, 30) + (semPrefix.length > 30 ? '…' : '');
+    // Estado 'ok' — ícone de folha verde, tooltip com preview
     return h('button', {
-      class: 'trj-btn trj-btn-ghost',
-      style: { fontSize: '11px', padding: '2px 7px', display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '190px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--trj-green)' },
-      title: textoCompleto || '',
-      onclick: function(ev) {
-        ev.stopPropagation();
-        var dois = extrairDoisBlocosMaisRecentes(m.motivoCancelamento || '');
-        var conteudoModal = dois.length > 1
-          ? dois[0] + '\n\n── Penúltimo ──\n\n' + dois[1]
-          : (textoCompleto || '');
-        var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: conteudoModal });
-        U.openModal('Último Update — ' + (m.osNumero || ''), cid);
-      }
-    }, [h('span', { html: ICONE_FOLHA_SVG }), h('span', { text: resumoOk })]);
+      class: 'trj-btn',
+      style: { background: 'transparent', border: 'none', padding: '2px 4px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: 'var(--trj-green)', opacity: '0.85' },
+      title: previewHover,
+      onclick: abrirModal
+    }, [h('span', { html: ICONE_FOLHA_SVG })]);
   };
 
   U.devFooter = function () {
