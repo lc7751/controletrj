@@ -731,36 +731,80 @@
 // Ícone SVG de folha/documento (para o Último Update)
   var ICONE_FOLHA_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
 
-  // Classifica o primeiro bloco do BG (mais recente) para definir o estado do update:
-  //   'acionamento' → último contato foi MONITOR CCI (ticket acionado, aguardando técnico)
-  //   'sem'         → nenhuma entrada encontrada ou só bot puro (WFM Agent com form)
-  //   'ok'          → tem texto de técnico no bloco
-  function classificarUltimoBloco(bgTexto) {
-    if (!bgTexto || bgTexto.toString().trim().length < 5) return { estado: 'sem', texto: null };
-    var texto = bgTexto.toString();
-    // Divide em blocos (mais recente primeiro)
-    var blocos = texto.split(/(?=\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?)|(?=[A-Z]{2,6}_\d{4}[\d\-]+)/);
-    // Pega o primeiro bloco com conteúdo
-    for (var i = 0; i < blocos.length; i++) {
-      var b = blocos[i].trim();
-      if (b.length < 10) continue;
-      if (/MONITOR\s*CCI/i.test(b)) return { estado: 'acionamento', texto: b };
-      if (/WFM\s*Agent/i.test(b) || /isoc_fixa/i.test(b)) {
-        // WFM Agent pode conter texto humano no final (após o formulário)
-        // Remove o cabeçalho do form e vê o que sobra
-        var semForm = b.replace(/[\s\S]*?(Tramitação|Suspensão|Motivo da visita|Motivo:\s)/i, '').trim();
-        // Se há texto relevante após o form, é um update de técnico via WFM
-        if (semForm.length > 20 && !/^(Tramita|Suspens|Mostra|Visita)/i.test(semForm)) {
-          return { estado: 'ok', texto: b };
-        }
-        return { estado: 'sem', texto: b };
-      }
-      // Qualquer outro bloco = anotação humana direta
-      return { estado: 'ok', texto: b };
+  // ============================================================
+  // LÓGICA DO ÚLTIMO UPDATE (baseada no VBA modDistribuirDados)
+  // ============================================================
+  // Frases padrão dos sistemas automáticos (MONITOR CCI / BOT)
+  var FRASES_PADRAO_BOT = [
+    'Identificamos seu reparo na fila da TLP e vamos atuar para resolver o mais breve possível. Estamos trabalhando para garantir o melhor atendimento.',
+    'Identificamos alarmes relacionados ao seu reparo estaremos encaminhado o mesmo para atuação em campo.'
+  ];
+
+  // Corresponde a IsTextoSemAtualizacao do VBA
+  function isTextoSemAtualizacao(bg) {
+    if (!bg || bg.trim() === '') return true;
+    var t = bg.trim().toUpperCase().replace(/\s+/g, ' ');
+    for (var i = 0; i < FRASES_PADRAO_BOT.length; i++) {
+      if (t === FRASES_PADRAO_BOT[i].trim().toUpperCase().replace(/\s+/g, ' ')) return true;
     }
-    return { estado: 'sem', texto: null };
+    // Formulário WFM Agent puro (sem anotação humana)
+    if (t.indexOf('ALTERAÇÃO NO ENVIO') >= 0 && t.indexOf('JUSTIFICATIVA DA SELEÇÃO') >= 0 && t.indexOf('DATA DE ATIVAÇÃO DO GERADOR') >= 0) return true;
+    return false;
   }
 
+  // Parseia data no formato DD/MM/YYYY HH:MM:SS, DD/MM/YY HH:MM, YYYY-MM-DD HH:MM etc.
+  function parseDataHoraBG(s) {
+    s = (s || '').trim();
+    var m;
+    // YYYY-MM-DD HH:MM ou YYYY-MM-DD HH:MM:SS
+    m = s.match(/^(\d{4})[\/-](\d{2})[\/-](\d{2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (m) return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], m[6]?+m[6]:0);
+    // DD/MM/YYYY HH:MM ou DD/MM/YY HH:MM
+    m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (m) {
+      var ano = +m[3]; if (ano < 100) ano += 2000;
+      return new Date(ano, +m[2]-1, +m[1], +m[4], +m[5], m[6]?+m[6]:0);
+    }
+    return null;
+  }
+
+  // Extrai TODOS os timestamps do texto BG e retorna o bloco (timestamp + texto seguinte)
+  // cuja data seja a MAIS RECENTE — igual ao ExtrairUltimaDataHora + UltimaMensagem do VBA.
+  // Handles: DD/MM/YYYY HH:MM:SS, YYYY-MM-DD HH:MM e variações.
+  function extrairBlocoMaisRecente(bgTexto) {
+    if (!bgTexto) return null;
+    var texto = bgTexto.toString();
+    var DT_RE = /(\d{4}[\/-]\d{2}[\/-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)/g;
+    var matches = [], m;
+    while ((m = DT_RE.exec(texto)) !== null) {
+      var dt = parseDataHoraBG(m[1]);
+      if (dt && !isNaN(dt.getTime())) matches.push({ idx: m.index, len: m[0].length, dt: dt });
+    }
+    if (!matches.length) return null;
+    // Extrai bloco de cada timestamp até o próximo
+    var blocos = matches.map(function (cur, i) {
+      var fim = i < matches.length - 1 ? matches[i + 1].idx : texto.length;
+      return { dt: cur.dt, texto: texto.substring(cur.idx, fim).trim() };
+    });
+    // Ordena pelo mais recente
+    blocos.sort(function (a, b) { return b.dt - a.dt; });
+    return blocos[0];
+  }
+
+  // Classifica o estado do Último Update baseado na lógica do VBA:
+  //   'sem'         → BG vazio, frase padrão bot, ou formulário WFM puro
+  //   'acionamento' → bloco mais recente contém "VERIFICANDO ACIONAMENTO"
+  //   'ok'          → tem texto de técnico no bloco mais recente
+  function classificarUltimoBloco(bgTexto) {
+    if (isTextoSemAtualizacao(bgTexto)) return { estado: 'sem', texto: null };
+    var bloco = extrairBlocoMaisRecente(bgTexto);
+    if (!bloco) return { estado: 'sem', texto: bgTexto ? bgTexto.toString().trim() : null };
+    var txt = bloco.texto.toUpperCase();
+    if (txt.indexOf('VERIFICANDO ACIONAMENTO') >= 0) return { estado: 'acionamento', texto: bloco.texto };
+    return { estado: 'ok', texto: bloco.texto };
+  }
+
+  // Célula "Último Update" — substitui a coluna Previsão na tabela de incidentes.
   // Célula "Último Update" — substitui a coluna Previsão na tabela de incidentes.
   // Ícone de folha SVG: verde = tem update, laranja = verificando acionamento, vermelho = sem update.
   U.ultimoUpdateCell = function (incident, tasksEnriched) {
