@@ -66,11 +66,278 @@
 
     // ---- charts grid ----
     var aging = U.chartCard('Aging do Backlog');
-    var venc = U.chartCard('Prazos a Vencer');
-    // Sites Fora por Região — toggle de agrupamento por END_ID
+    // Prazos a Vencer — botões de região para cópia rápida
+    // Construídos após pageData estar disponível (closure da página)
+    var vencControls = U.h('div', { style: { display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' } });
+
+    function buildVencRegioeBtns() {
+      vencControls.innerHTML = '';
+      // Tarefas dentro do SLA com vencimento definido
+      var tasksVenc = (pageData.tasksEnriched || []).filter(function (t) {
+        return t.statusSla === 'DENTRO DO SLA' && t.vencimentoCalc;
+      });
+      // Regiões presentes
+      var regioesSeen = {};
+      tasksVenc.forEach(function (t) { regioesSeen[t.regiao || 'OTHERS'] = true; });
+      var regioes = Object.keys(regioesSeen).sort();
+      if (!regioes.length) return;
+
+      // Função de formatação do tempo restante
+      function fmtRestante(minutos) {
+        if (minutos <= 0) return 'VENCIDO';
+        if (minutos < 60) return minutos + 'min';
+        var h = Math.floor(minutos / 60), m = minutos % 60;
+        return h + 'h' + (m > 0 ? m + 'min' : '');
+      }
+
+      // Extrai o resumo da última anotação do BG
+      function ultimaNotaBG(bg) {
+        if (!bg || (U.isTextoSemAtualizacao && U.isTextoSemAtualizacao(bg))) return null;
+        var dois = U.extrairDoisBlocosBG ? U.extrairDoisBlocosBG(bg) : [];
+        if (!dois.length) return null;
+        var ult = dois[0] || '';
+        return ult.replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s*-?\s*/, '').trim().slice(0, 80);
+      }
+
+      // Gera texto formatado para uma região
+      function gerarTextoPrazosRegiao(regiao) {
+        var now = Date.now();
+        var tasksReg = tasksVenc.filter(function (t) {
+          return (t.regiao || 'OTHERS') === regiao;
+        }).sort(function (a, b) {
+          // Ordenar pelo vencimento mais próximo
+          return new Date(a.vencimentoCalc).getTime() - new Date(b.vencimentoCalc).getTime();
+        });
+        if (!tasksReg.length) return null;
+
+        var labelReg = C.REGIAO_LABELS[regiao] || regiao;
+        var linhas = ['*' + labelReg + '*', '*PRAZOS A VENCER*', ''];
+
+        // Agrupar por bucket de vencimento
+        C.VENCIMENTO_BUCKETS.forEach(function (bucket) {
+          var tasksB = tasksReg.filter(function (t) {
+            var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
+            return rest >= 0 && rest >= bucket.min && rest < bucket.max;
+          });
+          if (!tasksB.length) return;
+
+          linhas.push('⏱ *' + bucket.label + '*');
+          tasksB.forEach(function (t) {
+            var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
+            var prio = t.prioridade ? '*' + t.prioridade + '* - ' : '';
+            var tsk  = t.osNumero || 'SEM TSK';
+            var site = t.siteId || t.enderecoId || '—';
+            var endId = t.enderecoId || '—';
+            var tempo = fmtRestante(rest);
+            var linhaTask = prio + tsk + ' / ' + site + ' - ' + endId + ' | ⏱ ' + tempo;
+            linhas.push(linhaTask);
+
+            // Último update do BG
+            var nota = ultimaNotaBG(t.motivoCancelamento);
+            if (nota) {
+              linhas.push('  📄 ' + nota);
+            } else {
+              linhas.push('  📄 Sem update');
+            }
+          });
+          linhas.push('');
+        });
+
+        return linhas.join('\n').trim();
+      }
+
+      regioes.forEach(function (regiao) {
+        var label = (C.REGIAO_LABELS[regiao] || regiao).split(' ')[0]; // ex.: "INTERIOR", "GRANDE"
+        var count = tasksVenc.filter(function (t) { return (t.regiao || 'OTHERS') === regiao; }).length;
+
+        var btn = U.h('button', {
+          class: 'trj-btn clickable',
+          style: {
+            fontSize: '10px', padding: '2px 8px', fontWeight: '700',
+            background: 'var(--trj-card2)', border: '1px solid var(--trj-border)',
+            borderRadius: '999px', display: 'inline-flex', alignItems: 'center', gap: '4px'
+          },
+          title: 'Copiar prazos de ' + (C.REGIAO_LABELS[regiao] || regiao),
+          onclick: function () {
+            var texto = gerarTextoPrazosRegiao(regiao);
+            if (!texto) { U.toast('Sem tarefas com prazo definido nesta região.', 'err'); return; }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(texto)
+                .then(function () { U.toast('✓ Prazos de ' + label + ' copiados!', 'ok'); })
+                .catch(function () { _fallback(texto); });
+            } else { _fallback(texto); }
+            function _fallback(txt) {
+              var ta = document.createElement('textarea');
+              ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+              document.body.appendChild(ta); ta.select();
+              try { document.execCommand('copy'); U.toast('✓ Copiado!', 'ok'); }
+              catch (e) { U.toast('Não foi possível copiar.', 'err'); }
+              document.body.removeChild(ta);
+            }
+          }
+        }, [
+          U.h('span', { text: label }),
+          U.h('span', { style: { background: 'rgba(255,140,0,.25)', color: 'var(--trj-primary)', borderRadius: '999px', padding: '0 5px', fontSize: '9px', fontWeight: '800' }, text: String(count) })
+        ]);
+        vencControls.appendChild(btn);
+      });
+    }
+
+    var venc = U.chartCard('Prazos a Vencer', { rightEl: vencControls });
+    // Sites Fora por Região — toggle de agrupamento + botão de copiar
     var sfAgrupar = { value: false };
     var switchSf = U.switch(false, 'Agrupar por END_ID', function (v) { sfAgrupar.value = v; });
-    var sites = U.chartCard('Sites Fora por Região', { rightEl: switchSf });
+
+    // ---- Função: gera texto formatado por região para clipboard ----
+    function gerarTextoCopiaRegioes(regioesSelecionadas) {
+      var incidentsAtivos = (pageData.incidentsEnriched || []).filter(function (inc) {
+        return (inc.regiao || 'OTHERS') !== undefined && (inc.statusTrat || '').toUpperCase() !== 'RESOLVIDO';
+      });
+      var tasksEnriched = pageData.tasksEnriched || [];
+
+      var linhas = [];
+      regioesSelecionadas.forEach(function (regiao) {
+        // Incidentes desta região
+        var incs = incidentsAtivos.filter(function (inc) {
+          return (inc.regiao || 'OTHERS') === regiao;
+        });
+        if (!incs.length) return;
+
+        var labelRegiao = C.REGIAO_LABELS[regiao] || regiao;
+        linhas.push('*' + labelRegiao + '*');
+        linhas.push('*SITES FORA NA FILA*');
+
+        // Para cada incidente, buscar a TSK mais recente associada
+        incs.forEach(function (inc) {
+          var tsk = U.tskAberta ? U.tskAberta(inc, tasksEnriched) : null;
+          var tskNum  = tsk ? (tsk.osNumero || 'SEM TSK') : 'SEM TSK';
+          var site    = inc.site || '—';
+          var endId   = inc.enderecoId || '—';
+
+          // Tentar pegar a prioridade diretamente da tarefa encontrada
+          var prioLabel = '';
+          if (tsk && tsk.osNumero) {
+            // Buscar prioridade na lista de tarefas enriched
+            var tarefaMatch = tasksEnriched.filter(function (t) {
+              return (t.osNumero || '') === tsk.osNumero;
+            })[0];
+            if (tarefaMatch && tarefaMatch.prioridade) prioLabel = tarefaMatch.prioridade;
+          }
+
+          var prio = prioLabel ? '*' + prioLabel + '* - ' : '';
+          var linha = prio + tskNum + ' / ' + site + ' - ' + endId;
+          linhas.push(linha);
+        });
+
+        linhas.push(''); // linha em branco entre regiões
+      });
+
+      return linhas.join('\n').trim();
+    }
+
+    // ---- Botão de copiar: abre modal de seleção de regiões ----
+    var btnCopiarSF = U.h('button', {
+      class: 'trj-btn trj-btn-ghost clickable',
+      style: { fontSize: '11px', padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid rgba(255,255,255,.15)' },
+      onclick: function () {
+        // Pega regiões que têm incidentes ativos
+        var incAtivos = (pageData.incidentsEnriched || []).filter(function (inc) {
+          return (inc.statusTrat || '').toUpperCase() !== 'RESOLVIDO';
+        });
+        var contagemPorRegiao = {};
+        incAtivos.forEach(function (inc) {
+          var r = inc.regiao || 'OTHERS';
+          contagemPorRegiao[r] = (contagemPorRegiao[r] || 0) + 1;
+        });
+        var regioes = Object.keys(contagemPorRegiao).sort();
+
+        if (!regioes.length) {
+          U.toast('Nenhum incidente ativo para copiar.', 'err');
+          return;
+        }
+
+        // Estado de seleção
+        var selecionadas = {};
+        regioes.forEach(function (r) { selecionadas[r] = true; });
+
+        // Construir checkboxes de seleção
+        var checkboxEls = regioes.map(function (r) {
+          var label = C.REGIAO_LABELS[r] || r;
+          var count = contagemPorRegiao[r];
+          var cb = U.h('input', { type: 'checkbox' });
+          cb.checked = true;
+          cb.addEventListener('change', function () { selecionadas[r] = cb.checked; });
+
+          return U.h('label', {
+            style: { display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', cursor: 'pointer', borderRadius: '8px', border: '1px solid var(--trj-border)', background: 'var(--trj-card2)', transition: 'background .15s' }
+          }, [
+            cb,
+            U.h('span', { style: { fontWeight: '700', flex: '1' }, text: label }),
+            U.h('span', { class: 'trj-badge', style: { background: 'rgba(231,76,60,.18)', color: '#e74c3c', fontWeight: '700' }, text: count + ' site(s)' })
+          ]);
+        });
+
+        // Botão "Selecionar todos / nenhum"
+        var btnToggleAll = U.h('button', {
+          class: 'trj-btn trj-btn-ghost clickable',
+          style: { fontSize: '12px' },
+          text: 'Selecionar todos',
+          onclick: function () {
+            var allOn = regioes.every(function (r) { return selecionadas[r]; });
+            regioes.forEach(function (r, i) {
+              selecionadas[r] = !allOn;
+              checkboxEls[i].querySelector('input').checked = !allOn;
+            });
+            btnToggleAll.textContent = allOn ? 'Selecionar todos' : 'Desmarcar todos';
+          }
+        });
+
+        // Botão "Concluir escolha"
+        var btnConcluir = U.h('button', {
+          class: 'trj-btn trj-btn-primary clickable',
+          style: { fontWeight: '800', padding: '10px 24px', fontSize: '14px' },
+          text: '✓ Concluir escolha e copiar',
+          onclick: function () {
+            var escolhidas = regioes.filter(function (r) { return selecionadas[r]; });
+            if (!escolhidas.length) { U.toast('Selecione ao menos uma região.', 'err'); return; }
+            var texto = gerarTextoCopiaRegioes(escolhidas);
+            if (!texto) { U.toast('Nenhum dado para as regiões selecionadas.', 'err'); return; }
+            // Copiar para clipboard
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(texto)
+                .then(function () { U.toast('✓ Copiado! Cole no WhatsApp com Ctrl+V.', 'ok'); U.closeModal(); })
+                .catch(function () { fallbackCopiar(texto); });
+            } else {
+              fallbackCopiar(texto);
+            }
+          }
+        });
+
+        function fallbackCopiar(texto) {
+          var ta = document.createElement('textarea');
+          ta.value = texto; ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); U.toast('✓ Copiado!', 'ok'); U.closeModal(); }
+          catch (e) { U.toast('Não foi possível copiar automaticamente.', 'err'); }
+          document.body.removeChild(ta);
+        }
+
+        // Montar modal
+        var modalContent = U.h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, [
+          U.h('p', { style: { fontSize: '13px', color: 'var(--trj-muted)', marginBottom: '4px' }, text: 'Selecione as regiões que deseja incluir no texto copiado:' }),
+          U.h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, checkboxEls),
+          U.h('div', { style: { display: 'flex', justifyContent: 'space-between', marginTop: '8px' } }, [btnToggleAll, btnConcluir])
+        ]);
+        U.openModal('📋 Copiar Sites Fora por Região', modalContent, { width: '480px' });
+      }
+    }, [
+      U.h('span', { text: '📋' }),
+      U.h('span', { text: 'Copiar' })
+    ]);
+
+    // rightEl: toggle + botão copiar lado a lado
+    var sfControls = U.h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, [switchSf, btnCopiarSF]);
+    var sites = U.chartCard('Sites Fora por Região', { rightEl: sfControls });
     var slaReg = U.chartCard('SLA por Região');
     var manu = U.chartCard('Atividades Manuais', { hint: 'inclui cancelamentos' });
     var prod = U.chartCard('Produtividade — Encerradas Dentro/Fora do SLA');
@@ -82,6 +349,8 @@
 
     // ---- desenha charts (canvas já no DOM) ----
     var aData = d.aging || [], vData = d.prazosVencimento || [], sfData = d.sitesForaRegiao || [], srData = d.slaPorRegiao || [], amData = d.atividadesManuais || [], pData = d.produtividade || [];
+    // Preenche os botões de região do Prazos a Vencer agora que pageData está disponível
+    buildVencRegioeBtns();
     U.barChart(aging.canvas, aData, { onBar: function (i) { app.openDrillTasks({ tipo: 'aging', arg: i }, f, 'Aging: ' + aData[i].label); } });
     U.hbarChart(venc.canvas, vData, { onBar: function (i) { app.openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A vencer: ' + vData[i].label); } });
     U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), {
