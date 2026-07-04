@@ -137,6 +137,7 @@
     return lastModified || 0;
   }
   F.isAtividadesFile = isAtividadesFile;
+  F.isNaoAgendada = isNaoAgendada;
 
   // ------------------------------------------------------------------
   // 4) Persistência (localStorage) + memória
@@ -144,13 +145,17 @@
   var LS_TASKS = 'trj_rawTasks', LS_INC = 'trj_rawInc', LS_META = 'trj_filesMeta';
   var LS_TASKS_AG = 'trj_rawTasksAg';   // agendada (por data)
   var LS_TASKS_NA = 'trj_rawTasksNa';   // não-agendada
-  var mem = { tasks: [], tasksAg: [], tasksNa: [], inc: [], meta: {} };
+  var LS_META_AG  = 'trj_metaAg';       // metadados do slot agendada
+  var LS_META_NA  = 'trj_metaNa';       // metadados do slot não-agendada
+  var mem = { tasks: [], tasksAg: [], tasksNa: [], inc: [], meta: {}, metaAg: null, metaNa: null };
   (function loadLS() {
     try { mem.tasks = JSON.parse(localStorage.getItem(LS_TASKS) || '[]') || []; } catch (e) { mem.tasks = []; }
     try { mem.tasksAg = JSON.parse(localStorage.getItem(LS_TASKS_AG) || '[]') || []; } catch (e) { mem.tasksAg = []; }
     try { mem.tasksNa = JSON.parse(localStorage.getItem(LS_TASKS_NA) || '[]') || []; } catch (e) { mem.tasksNa = []; }
     try { mem.inc = JSON.parse(localStorage.getItem(LS_INC) || '[]') || []; } catch (e) { mem.inc = []; }
     try { mem.meta = JSON.parse(localStorage.getItem(LS_META) || '{}') || {}; } catch (e) { mem.meta = {}; }
+    try { mem.metaAg = JSON.parse(localStorage.getItem(LS_META_AG) || 'null'); } catch (e) { mem.metaAg = null; }
+    try { mem.metaNa = JSON.parse(localStorage.getItem(LS_META_NA) || 'null'); } catch (e) { mem.metaNa = null; }
     // Reconstruir tasks combinado a partir dos parciais, se disponíveis
     if (mem.tasksAg.length || mem.tasksNa.length) {
       mem.tasks = mem.tasksAg.concat(mem.tasksNa);
@@ -171,8 +176,32 @@
     saveLS(LS_TASKS, mem.tasks);
     saveLS(LS_TASKS_AG, mem.tasksAg);
     saveLS(LS_TASKS_NA, mem.tasksNa);
+    saveLS(LS_META_AG, mem.metaAg);
+    saveLS(LS_META_NA, mem.metaNa);
     saveLS(LS_META, mem.meta);
   }
+
+  // Retorna informações do slot agendada e não-agendada para exibição na UI
+  F.getSlotInfo = function () {
+    return {
+      ag: mem.metaAg ? { nome: mem.metaAg.nome, qtd: mem.tasksAg.length, em: mem.metaAg.em } : null,
+      na: mem.metaNa ? { nome: mem.metaNa.nome, qtd: mem.tasksNa.length, em: mem.metaNa.em } : null
+    };
+  };
+
+  // Limpa somente o slot agendada (mantém não-agendada)
+  F.clearSlotAg = function () {
+    mem.tasksAg = []; mem.metaAg = null;
+    mem.tasks = mem.tasksNa.slice();
+    setTasks(mem.tasks, mem.meta.tasks || {});
+  };
+
+  // Limpa somente o slot não-agendada (mantém agendada)
+  F.clearSlotNa = function () {
+    mem.tasksNa = []; mem.metaNa = null;
+    mem.tasks = mem.tasksAg.slice();
+    setTasks(mem.tasks, mem.meta.tasks || {});
+  };
   function setIncidents(arr, meta) {
     mem.inc = arr || [];
     if (meta) mem.meta = Object.assign({}, mem.meta, { inc: meta });
@@ -184,7 +213,7 @@
   F.setIncidents = setIncidents;
   F.getMeta = function () { return mem.meta || {}; };
   F.clearTasks = function () {
-    mem.tasksAg = []; mem.tasksNa = [];
+    mem.tasksAg = []; mem.tasksNa = []; mem.metaAg = null; mem.metaNa = null;
     monitor.lastSignature = null;
     setTasks([], { origem: null, em: null, arquivos: [], signature: null });
   };
@@ -310,11 +339,14 @@
     // Processar cada arquivo encontrado e atualizar só o tipo correspondente
     for (var i = 0; i < chosen.length; i++) {
       var parsed = parseArrayBuffer(buffers[i]);
+      var slotMeta = { nome: chosen[i].name, qtd: parsed.length, em: new Date().toISOString() };
       arquivos.push({ nome: chosen[i].name, qtd: parsed.length });
       if (chosen[i].naoAgendada) {
-        mem.tasksNa = parsed;         // substitui só as não-agendadas
+        mem.tasksNa = parsed;   // substitui só as não-agendadas
+        mem.metaNa = slotMeta;
       } else {
-        mem.tasksAg = parsed;         // substitui só as agendadas
+        mem.tasksAg = parsed;   // substitui só as agendadas
+        mem.metaAg = slotMeta;
       }
     }
 
