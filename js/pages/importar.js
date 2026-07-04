@@ -158,30 +158,96 @@
 
     var tarefasGrid = U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8' });
 
-    // --- upload manual: dropzone ---
-    var arquivosResumo = (tMeta.arquivos || []).map(function (a) { return a.nome + ' (' + U.fmtNum(a.qtd) + ')'; }).join(' · ');
-    var dzTarefas = U.dropzone({
-      icon: '📊',
-      title: nTasks ? 'Trocar planilha(s)' : 'Arraste as planilhas aqui',
-      sub: 'ou clique para selecionar — arquivos <b>Atividades-TRJ_FMMT</b> (.xlsx)',
-      accept: '.xlsx,.xls', multiple: true,
-      statusOk: nTasks > 0,
-      statusText: nTasks ? ('✓ ' + U.fmtNum(nTasks) + ' tarefa(s)' + (arquivosResumo ? ' — ' + arquivosResumo : '')) : 'Aguardando arquivo(s)...',
-      onFile: async function (files) {
-        try {
-          U.loading(true, 'Lendo planilha(s)...');
-          var r = await FS.readManualFiles(files, function (msg) { U.loading(true, msg); });
-          await app.refresh(true);
-          U.toast(r.total + ' tarefa(s) carregada(s).', 'ok');
-          app.render();
-        } catch (e) { U.toast(e.message || 'Erro ao ler os arquivos.', 'err'); }
-        finally { U.loading(false); }
+    // --- dois slots de upload independentes ---
+    var slots = FS.getSlotInfo();  // { ag: {nome,qtd,em} | null, na: {nome,qtd,em} | null }
+
+    function makeSlot(opts) {
+      // opts: { tipo:'ag'|'na', label, icon, filtro, slotInfo, onClear }
+      var si = opts.slotInfo;
+      var card = U.h('div', { class: 'trj-card p-4 flex flex-col gap-3' });
+
+      // Cabeçalho do slot
+      var hdr = U.h('div', { class: 'flex items-center justify-between' }, [
+        U.h('div', { class: 'flex items-center gap-2 text-sm font-bold' }, [
+          U.h('span', { text: opts.icon }),
+          U.h('span', { text: opts.label })
+        ]),
+        si ? U.h('button', {
+          class: 'trj-btn trj-btn-ghost clickable',
+          style: { fontSize: '11px', padding: '2px 8px', color: '#e74c3c' },
+          text: '✕ Remover',
+          onclick: async function () {
+            opts.onClear();
+            await app.refresh(true);
+            app.render();
+            U.toast('Slot removido.', 'ok');
+          }
+        }) : null
+      ]);
+      card.appendChild(hdr);
+
+      // Status atual do slot
+      if (si) {
+        var nomeCurto = si.nome.replace(/Atividades-TRJ_FMMT_?/i, '').replace(/\.xlsx?$/i, '') || si.nome;
+        card.appendChild(U.h('div', {
+          class: 'flex items-center gap-2 p-2 rounded',
+          style: { background: 'rgba(46,204,113,.08)', border: '1px solid rgba(46,204,113,.25)', fontSize: '12px' }
+        }, [
+          U.h('span', { text: '✅' }),
+          U.h('div', { class: 'flex flex-col' }, [
+            U.h('span', { style: { fontWeight: '700', color: 'var(--trj-green)' }, text: nomeCurto }),
+            U.h('span', { style: { color: 'var(--trj-muted)', fontSize: '11px' } },
+              U.fmtNum(si.qtd) + ' tarefa(s) · ' + (si.em ? new Date(si.em).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : ''))
+          ])
+        ]));
       }
-    });
-    tarefasGrid.appendChild(U.h('div', { class: 'trj-card p-5' }, [
-      U.h('div', { class: 'flex items-center gap-2 mb-3 text-sm font-bold' }, [U.h('span', { text: '⬆️' }), U.h('span', { text: 'Upload manual' })]),
-      dzTarefas
-    ]));
+
+      // Dropzone para upload
+      var dz = U.dropzone({
+        icon: si ? '🔄' : '📂',
+        title: si ? 'Atualizar este arquivo' : 'Arraste o arquivo aqui',
+        sub: 'ou clique para selecionar — <b>' + opts.filtroLabel + '</b> (.xlsx)',
+        accept: '.xlsx,.xls', multiple: false,
+        statusOk: false,
+        onFile: async function (files) {
+          // Filtrar só o tipo correto
+          var validos = Array.from(files).filter(function (f) {
+            var isNa = FS.isNaoAgendada ? FS.isNaoAgendada(f.name) : (f.name.toLowerCase().indexOf('nao') >= 0 && f.name.toLowerCase().indexOf('agendad') >= 0);
+            return opts.tipo === 'na' ? isNa : !isNa;
+          });
+          if (!validos.length) {
+            U.toast('O arquivo não corresponde a este slot (' + opts.label + ').', 'err');
+            return;
+          }
+          try {
+            U.loading(true, 'Lendo planilha...');
+            var r = await FS.readManualFiles(validos, function (msg) { U.loading(true, msg); });
+            await app.refresh(true);
+            U.toast(r.total + ' tarefa(s) total após atualização.', 'ok');
+            app.render();
+          } catch (e) { U.toast(e.message || 'Erro ao ler o arquivo.', 'err'); }
+          finally { U.loading(false); }
+        }
+      });
+      card.appendChild(dz);
+      return card;
+    }
+
+    // Slot 1 — Agendada (arquivo com data de hoje)
+    tarefasGrid.appendChild(makeSlot({
+      tipo: 'ag', label: 'Planilha agendada (data de hoje)', icon: '📅',
+      filtroLabel: 'Atividades-TRJ_FMMT_DD_MM_AA',
+      slotInfo: slots.ag,
+      onClear: function () { FS.clearSlotAg(); }
+    }));
+
+    // Slot 2 — Não-agendada
+    tarefasGrid.appendChild(makeSlot({
+      tipo: 'na', label: 'Planilha não-agendada', icon: '📋',
+      filtroLabel: 'Atividades-TRJ_FMMT_Não-agendada',
+      slotInfo: slots.na,
+      onClear: function () { FS.clearSlotNa(); }
+    }));
 
     // --- leitura automática da pasta ---
     var pastaCard = U.h('div', { class: 'trj-card p-5 flex flex-col gap-3' });
