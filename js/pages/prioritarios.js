@@ -1,375 +1,403 @@
 /* =====================================================================
  * Página: Prioritários
  * ---------------------------------------------------------------------
- * Painel de acompanhamento de casos especiais:
- *   • B2B / PREMIUM    — coluna DJ = "ISOC SERVICOS FIXO PREMIUM CLASS"
- *                        OU coluna BG contém "PREMIUM", "B2B - TIM",
- *                        "tracking_corporativo"
- *   • Backbone / Longa Distância — coluna BG contém "BACKBONE",
- *                                  "LONGA DISTANCIA" ou "LONGA DISTÂNCIA"
- *   • Concentradores   — cadastro de sites sensíveis que devem ser
- *                        monitorados; quando qualquer END_ID ou SITE
- *                        cadastrado aparece numa tarefa aberta ou num
- *                        incidente ativo (Sites Fora), aparece aqui
- *                        automaticamente com destaque.
+ * Interface de categorias (botões) com drilldown por clique.
+ * Cada categoria exibe: TSK · NE/Site · END_ID · Falha · Fila atual
+ * + último e penúltimo update do BG (estilo Sites Fora).
+ *
+ * Categorias:
+ *   • ⭐ B2B / Premium  — coluna DJ contém "ISOC"/"PREMIUM"
+ *                         OU coluna BG contém "B2B","PREMIUM"
+ *   • ⚡ Backbone LD    — coluna BG contém "BACKBONE" ou "LONGA DISTANCIA"
+ *   • 📍 Concentradores — cadastro de sites monitorados;
+ *                         cruza com tarefas abertas e incidentes ativos
  * ===================================================================== */
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
-  var U = TRJ.ui, C = TRJ.constants, D = TRJ.domain;
+  var U = TRJ.ui, C = TRJ.constants;
 
   var LS_CONC = 'trj_concentradores';
 
-  // ------------------------------------------------------------------
-  // Utilitários
-  // ------------------------------------------------------------------
+  // ---- helpers -------------------------------------------------------
   function up(s) { return (s || '').toString().trim().toUpperCase(); }
 
-  function carregarConcentradores() {
-    try { return JSON.parse(localStorage.getItem(LS_CONC) || '[]') || []; }
-    catch (e) { return []; }
-  }
-  function salvarConcentradores(lista) {
-    try { localStorage.setItem(LS_CONC, JSON.stringify(lista)); } catch (e) {}
-  }
-
-  // Verifica se a tarefa está em backlog (aberta)
   function ehBacklog(t) {
     var s = up(t.status);
     return s === 'NÃO INICIADO' || s === 'NAO INICIADO' || s === 'INICIADO' || s === 'PENDENTE';
   }
-
-  // Verifica se é tarefa corretiva
   function ehCorretiva(t) {
     return (t.tipoAtividade || '').indexOf('Corretiva') >= 0 ||
-           (t.tipoAtividade || '').indexOf('CORRETIVA') >= 0 ||
-           (t.tipoAtividade || '') === 'Planta Interna - Manutenção Corretiva';
+           (t.tipoAtividade || '').indexOf('CORRETIVA') >= 0;
   }
-
-  // Detecta B2B / Premium (baseado no VBA GerarListaVencimentos)
-  function ehB2BouPremium(t) {
+  function ehB2B(t) {
     var dj = up(t.isocDJ || '');
     var bg = up(t.motivoCancelamento || '');
-    return dj.indexOf('PREMIUM') >= 0 ||
-           dj.indexOf('ISOC') >= 0 ||
-           bg.indexOf('B2B - TIM') >= 0 ||
-           bg.indexOf('TRACKING_CORPORATIVO') >= 0 ||
-           bg.indexOf('B2B') >= 0 ||
-           bg.indexOf('PREMIUM') >= 0;
+    return dj.indexOf('PREMIUM') >= 0 || dj.indexOf('ISOC') >= 0 ||
+           bg.indexOf('B2B') >= 0 || bg.indexOf('PREMIUM') >= 0 ||
+           bg.indexOf('TRACKING_CORPORATIVO') >= 0;
   }
-
-  // Detecta Backbone / Longa Distância
   function ehBackboneLD(t) {
     var bg = up(t.motivoCancelamento || '');
-    return bg.indexOf('BACKBONE') >= 0 ||
-           bg.indexOf('LONGA DISTANCIA') >= 0 ||
-           bg.indexOf('LONGA DISTÂNCIA') >= 0;
+    return bg.indexOf('BACKBONE') >= 0 || bg.indexOf('LONGA DISTANCIA') >= 0;
   }
 
-  // Trecho relevante do BG para exibir (primeira linha não-bot)
-  function extrairTrechoRelevante(bg) {
-    if (!bg) return null;
-    var linhas = bg.split(/\n|(?=\d{2}\/\d{2}\/\d{4}\s)/);
-    for (var i = 0; i < linhas.length; i++) {
-      var l = linhas[i].trim();
-      if (l.length < 15 || /WFM\s*Agent/i.test(l) || /MONITOR\s*CCI/i.test(l)) continue;
-      return l.slice(0, 100) + (l.length > 100 ? '…' : '');
-    }
-    return null;
+  function carregarConc() {
+    try { return JSON.parse(localStorage.getItem(LS_CONC) || '[]') || []; }
+    catch (e) { return []; }
+  }
+  function salvarConc(l) {
+    try { localStorage.setItem(LS_CONC, JSON.stringify(l)); } catch (e) {}
   }
 
-  // Cor/label por status
-  function statusStyle(s) {
-    var u = up(s);
-    if (u === 'INICIADO') return { cor: '#1fae5e', bg: 'rgba(46,204,113,.18)', label: 'INICIADO' };
-    if (u === 'NÃO INICIADO' || u === 'NAO INICIADO') return { cor: '#f0b429', bg: 'rgba(240,180,41,.22)', label: 'NÃO INICIADO' };
-    if (u === 'PENDENTE') return { cor: '#9b59b6', bg: 'rgba(155,89,182,.18)', label: 'PENDENTE' };
-    return { cor: '#9aa5b1', bg: 'rgba(154,165,177,.15)', label: s || '—' };
-  }
+  // ---- ícone folha (igual ao Sites Fora) ----------------------------
+  var FOLHA = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
 
-  // ------------------------------------------------------------------
-  // Card de tarefa prioritária
-  // ------------------------------------------------------------------
-  function cardTarefa(t, opts) {
-    opts = opts || {};
-    var ss = statusStyle(t.status);
-    var tsk = t.osNumero || '—';
+  // ---- célula de último update do BG --------------------------------
+  function bgCell(t) {
     var bg = t.motivoCancelamento || '';
-    var trecho = opts.trecho || extrairTrechoRelevante(bg) || null;
-    var isocLabel = t.isocDJ ? up(t.isocDJ).slice(0, 40) : null;
-
-    var badges = [];
-    if (opts.badgeB2B) badges.push(U.h('span', {
-      class: 'trj-badge', style: { background: 'rgba(52,152,219,.22)', color: '#3498db', fontWeight: '800', fontSize: '10px' }, text: '⭐ B2B/PREMIUM'
-    }));
-    if (opts.badgeBackbone) badges.push(U.h('span', {
-      class: 'trj-badge', style: { background: 'rgba(231,76,60,.22)', color: '#e74c3c', fontWeight: '800', fontSize: '10px' }, text: '⚡ BACKBONE LD'
-    }));
-    if (opts.badgeConc) badges.push(U.h('span', {
-      class: 'trj-badge', style: { background: 'rgba(155,89,182,.22)', color: '#9b59b6', fontWeight: '800', fontSize: '10px' }, text: '📍 CONCENTRADOR'
-    }));
-
-    var topo = U.h('div', { class: 'flex items-center justify-between flex-wrap gap-2', style: { marginBottom: '8px' } }, [
-      U.h('div', { class: 'flex items-center gap-2 flex-wrap' }, [
-        U.h('span', { style: { fontFamily: 'ui-monospace,monospace', fontWeight: '800', fontSize: '14px', color: 'var(--trj-primary)' }, text: tsk }),
-        U.h('span', { class: 'trj-badge', style: { background: ss.bg, color: ss.cor, fontWeight: '700' }, text: ss.label }),
-        t.prioridade ? U.h('span', { class: 'trj-badge', style: { background: 'rgba(255,140,0,.15)', color: 'var(--trj-primary)', fontWeight: '700' }, text: t.prioridade }) : null
-      ].concat(badges)),
-      U.h('div', { class: 'flex gap-2 flex-wrap' }, [
-        t.enderecoId ? U.h('span', { style: { fontSize: '12px', color: 'var(--trj-muted)' }, text: t.enderecoId }) : null
-      ])
-    ]);
-
-    var info = [];
-    if (t.filaAtual) info.push(U.h('div', { style: { fontSize: '11px', color: 'var(--trj-muted)' }, text: '👤 ' + t.filaAtual.slice(0, 60) }));
-    if (isocLabel) info.push(U.h('div', { style: { fontSize: '11px', color: '#3498db', fontWeight: '600' }, text: '🏢 ' + isocLabel }));
-    if (opts.notaConc) info.push(U.h('div', { style: { fontSize: '11px', color: '#9b59b6', fontStyle: 'italic' }, text: '📝 ' + opts.notaConc }));
-    if (trecho) info.push(U.h('div', { style: { fontSize: '11px', color: 'var(--trj-muted)', marginTop: '3px' }, text: '💬 ' + trecho }));
-
-    return U.h('div', {
-      class: 'trj-card p-3',
-      style: { borderLeft: '4px solid ' + (opts.borderCor || 'var(--trj-primary)'), cursor: 'pointer', transition: 'box-shadow .15s' },
-      onclick: function () {
-        var modal = U.h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' } },
-          [U.h('b', { text: tsk + ' — BG completo\n\n' }),
-           U.h('span', { text: bg || '(sem diário)' })]);
-        U.openModal(tsk, modal);
+    if (!bg || !U.extrairDoisBlocosBG) {
+      return U.h('span', { style: { color: 'var(--trj-muted)', fontSize: '11px' }, text: '—' });
+    }
+    var semUpdate = U.isTextoSemAtualizacao && U.isTextoSemAtualizacao(bg);
+    var dois = U.extrairDoisBlocosBG(bg);
+    if (semUpdate || !dois.length) {
+      return U.h('span', {
+        class: 'trj-badge',
+        style: { background: 'rgba(231,76,60,.14)', color: '#e74c3c', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px', cursor: 'default' },
+        title: 'Nenhuma atualização do técnico'
+      }, [U.h('span', { class: 'trj-pulse-dot' }), U.h('span', { text: 'Sem update' })]);
+    }
+    var ultimo = dois[0] || '';
+    var semPrefix = ultimo.replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s*-?\s*/, '').trim();
+    var resumo = semPrefix.slice(0, 35) + (semPrefix.length > 35 ? '…' : '');
+    return U.h('button', {
+      class: 'trj-btn trj-btn-ghost',
+      style: { fontSize: '11px', padding: '2px 6px', display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--trj-green)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      title: ultimo,
+      onclick: function (ev) {
+        ev.stopPropagation();
+        var conteudo = U.h('div', {
+          style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }
+        }, [U.h('b', { text: '── Último ──\n\n' }), U.h('span', { text: dois[0] || '' }),
+            dois[1] ? U.h('span', { text: '\n\n── Penúltimo ──\n\n' + dois[1] }) : null]);
+        U.openModal('BG — ' + (t.osNumero || ''), conteudo);
       }
-    }, [topo].concat(info));
+    }, [U.h('span', { html: FOLHA }), U.h('span', { text: resumo })]);
   }
 
-  // Card de incidente (sites fora)
-  function cardIncidente(inc, opts) {
+  // ---- status badge -------------------------------------------------
+  function statusBadge(s) {
+    var u = up(s);
+    var cor = '#9aa5b1', bg = 'rgba(154,165,177,.15)', lbl = s || '—';
+    if (u === 'INICIADO')                        { cor = '#1fae5e'; bg = 'rgba(46,204,113,.2)'; }
+    else if (u === 'NÃO INICIADO' || u === 'NAO INICIADO') { cor = '#f0b429'; bg = 'rgba(240,180,41,.25)'; lbl = 'NÃO INIC.'; }
+    else if (u === 'PENDENTE')                   { cor = '#9b59b6'; bg = 'rgba(155,89,182,.2)'; }
+    return U.h('span', { class: 'trj-badge', style: { background: bg, color: cor, fontWeight: '700', fontSize: '10px' }, text: lbl });
+  }
+
+  // ---- tabela de tarefas prioritárias --------------------------------
+  function tabelaTarefas(rows, opts) {
     opts = opts || {};
-    return U.h('div', {
-      class: 'trj-card p-3',
-      style: { borderLeft: '4px solid #e74c3c' }
-    }, [
-      U.h('div', { class: 'flex items-center gap-2 flex-wrap', style: { marginBottom: '4px' } }, [
-        U.h('span', { class: 'trj-badge', style: { background: 'rgba(231,76,60,.22)', color: '#e74c3c', fontWeight: '800', fontSize: '10px' }, text: '🚨 SITE FORA' }),
-        U.h('span', { style: { fontWeight: '700', fontFamily: 'ui-monospace,monospace' }, text: inc.site || inc.enderecoId || '—' }),
-        U.h('span', { style: { fontSize: '12px', color: 'var(--trj-muted)' }, text: inc.enderecoId || '' })
-      ]),
-      U.h('div', { style: { fontSize: '11px', color: 'var(--trj-muted)' } },
-        '⏱ ' + (inc.downtime || inc.duracao || '—') + '  |  ' + (inc.causa || '/') + '  |  ' + (inc.cidadeUf || '—')),
-      opts.notaConc ? U.h('div', { style: { fontSize: '11px', color: '#9b59b6', fontStyle: 'italic', marginTop: '3px' }, text: '📝 ' + opts.notaConc }) : null
-    ]);
+    if (!rows.length) {
+      return U.h('p', {
+        style: { color: 'var(--trj-muted)', fontSize: '13px', fontStyle: 'italic', textAlign: 'center', padding: '24px 0' },
+        text: opts.vazio || 'Nenhum resultado nesta categoria.'
+      });
+    }
+    var thead = U.h('thead', null, U.h('tr', null,
+      ['Status', 'TSK', 'NE / Site', 'END_ID', 'Falha', 'Fila Atual', 'BG — Último Update']
+        .map(function (t) { return U.h('th', { text: t }); })));
+
+    var tbody = U.h('tbody', null, rows.map(function (t) {
+      var fila = (t.filaAtual || '—').slice(0, 45);
+      var ne   = t.siteId || t.enderecoId || '—';
+      var falha = t.tipoFalha || '—';
+      return U.h('tr', null, [
+        U.h('td', null, statusBadge(t.status)),
+        U.h('td', null, U.h('span', {
+          style: { fontFamily: 'ui-monospace,monospace', fontWeight: '700', fontSize: '12px', color: 'var(--trj-primary)', cursor: 'pointer' },
+          title: 'Clicar para ver BG completo',
+          text: t.osNumero || '—',
+          onclick: function () {
+            var el = U.h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: t.motivoCancelamento || '(sem diário)' });
+            U.openModal(t.osNumero + ' — Diário BG', el);
+          }
+        })),
+        U.h('td', { text: ne, style: { maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }),
+        U.h('td', { text: t.enderecoId || '—', style: { fontFamily: 'ui-monospace,monospace', fontSize: '11px' } }),
+        U.h('td', { text: falha, style: { maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }),
+        U.h('td', { text: fila, style: { fontSize: '11px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }),
+        U.h('td', null, bgCell(t))
+      ]);
+    }));
+    var tbl = U.h('table', { class: 'trj-table' }, [thead, tbody]);
+    var wrap = U.h('div', { style: { overflowX: 'auto' } }, tbl);
+    return wrap;
   }
 
-  // ------------------------------------------------------------------
-  // Seção genérica (título + conteúdo colapsável)
-  // ------------------------------------------------------------------
-  function secao(icon, titulo, cor, count, conteudo) {
-    var estado = { aberto: true };
-    var inner = U.h('div', { style: { marginTop: '12px' } });
-    conteudo.forEach(function (el) { if (el) inner.appendChild(el); });
+  // ---- drilldown de concentradores (tarefas + incidentes) -----------
+  function tabelaConcentradores(matches, onAtualizar) {
+    if (!matches.length) {
+      return U.h('p', {
+        style: { color: 'var(--trj-muted)', fontSize: '13px', fontStyle: 'italic', textAlign: 'center', padding: '24px 0' },
+        text: 'Nenhum concentrador cadastrado está com tarefa aberta ou incidente ativo no momento.'
+      });
+    }
+    // Separar tarefas e incidentes
+    var tarefas  = matches.filter(function (m) { return m.tipo === 'task'; });
+    var incids   = matches.filter(function (m) { return m.tipo === 'incident'; });
+    var sections = [];
 
-    var badgeCount = U.h('span', {
-      class: 'trj-badge',
-      style: { background: count > 0 ? 'rgba(231,76,60,.22)' : 'rgba(154,165,177,.15)', color: count > 0 ? '#e74c3c' : 'var(--trj-muted)', fontWeight: '800', fontSize: '11px', minWidth: '24px', textAlign: 'center', animation: count > 0 ? 'pulse 2s infinite' : 'none' },
-      text: String(count)
-    });
+    if (tarefas.length) {
+      var thead = U.h('thead', null, U.h('tr', null,
+        ['Status', 'TSK', 'NE / Site', 'END_ID', 'Falha', 'Fila Atual', 'BG — Último Update', 'Anotação']
+          .map(function (t) { return U.h('th', { text: t }); })));
+      var tbody = U.h('tbody', null, tarefas.map(function (m) {
+        var t = m.data;
+        return U.h('tr', { style: { borderLeft: '3px solid #9b59b6' } }, [
+          U.h('td', null, statusBadge(t.status)),
+          U.h('td', null, U.h('span', {
+            style: { fontFamily: 'ui-monospace,monospace', fontWeight: '700', fontSize: '12px', color: 'var(--trj-primary)', cursor: 'pointer' },
+            text: t.osNumero || '—',
+            onclick: function () {
+              var el = U.h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: t.motivoCancelamento || '(sem diário)' });
+              U.openModal(t.osNumero + ' — Diário BG', el);
+            }
+          })),
+          U.h('td', { text: t.siteId || t.enderecoId || '—' }),
+          U.h('td', { text: t.enderecoId || '—', style: { fontFamily: 'ui-monospace,monospace', fontSize: '11px' } }),
+          U.h('td', { text: t.tipoFalha || '—' }),
+          U.h('td', { text: (t.filaAtual || '—').slice(0, 40), style: { fontSize: '11px' } }),
+          U.h('td', null, bgCell(t)),
+          U.h('td', { style: { color: '#9b59b6', fontStyle: 'italic', fontSize: '11px' }, text: m.conc.nota || '—' })
+        ]);
+      }));
+      sections.push(U.h('div', { style: { marginBottom: '16px' } }, [
+        U.h('p', { style: { fontSize: '12px', fontWeight: '700', color: '#9b59b6', marginBottom: '6px' }, text: '📋 Tarefas abertas (' + tarefas.length + ')' }),
+        U.h('div', { style: { overflowX: 'auto' } }, U.h('table', { class: 'trj-table' }, [thead, tbody]))
+      ]));
+    }
 
-    var chevron = U.h('span', { style: { fontSize: '18px', transition: 'transform .2s', color: 'var(--trj-muted)' }, text: '▾' });
-
-    var hdr = U.h('div', {
-      class: 'flex items-center justify-between clickable',
-      style: { cursor: 'pointer', padding: '10px 0', borderBottom: '2px solid ' + cor, marginBottom: '4px' },
-      onclick: function () {
-        estado.aberto = !estado.aberto;
-        inner.style.display = estado.aberto ? '' : 'none';
-        chevron.style.transform = estado.aberto ? '' : 'rotate(-90deg)';
-      }
-    }, [
-      U.h('div', { class: 'flex items-center gap-2' }, [
-        U.h('span', { style: { fontSize: '18px' }, text: icon }),
-        U.h('span', { style: { fontWeight: '800', fontSize: '15px', color: cor }, text: titulo }),
-        badgeCount
-      ]),
-      chevron
-    ]);
-
-    return U.h('div', { class: 'trj-card p-4 mb-4' }, [hdr, inner]);
+    if (incids.length) {
+      var thead2 = U.h('thead', null, U.h('tr', null,
+        ['Horário', 'Site', 'END_ID', 'Causa', 'Cidade', 'Duração', 'Anotação']
+          .map(function (t) { return U.h('th', { text: t }); })));
+      var tbody2 = U.h('tbody', null, incids.map(function (m) {
+        var i = m.data;
+        return U.h('tr', { style: { borderLeft: '3px solid #e74c3c' } }, [
+          U.h('td', { text: i.horario || '—' }),
+          U.h('td', { text: i.site || '—', style: { fontWeight: '700' } }),
+          U.h('td', { text: i.enderecoId || '—', style: { fontFamily: 'ui-monospace,monospace', fontSize: '11px' } }),
+          U.h('td', { text: i.causa || '/', style: { maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }),
+          U.h('td', { text: i.cidadeUf || '—' }),
+          U.h('td', { text: i.downtime || i.duracao || '—' }),
+          U.h('td', { style: { color: '#9b59b6', fontStyle: 'italic', fontSize: '11px' }, text: m.conc.nota || '—' })
+        ]);
+      }));
+      sections.push(U.h('div', null, [
+        U.h('p', { style: { fontSize: '12px', fontWeight: '700', color: '#e74c3c', marginBottom: '6px' }, text: '🚨 Sites Fora (Incidentes) (' + incids.length + ')' }),
+        U.h('div', { style: { overflowX: 'auto' } }, U.h('table', { class: 'trj-table' }, [thead2, tbody2]))
+      ]));
+    }
+    return U.h('div', null, sections);
   }
 
-  // ------------------------------------------------------------------
-  // SEÇÃO CONCENTRADORES — cadastro
-  // ------------------------------------------------------------------
-  function buildConcentradoresSection(tasks, incidents, onRefresh) {
-    var lista = carregarConcentradores();
-
-    // Encontrar matches entre concentradores e tasks/incidents
-    var matches = [];
-    lista.forEach(function (conc) {
-      var keyConc = up(conc.endId || conc.site || '');
-      if (!keyConc) return;
-
-      // Buscar nas tarefas abertas
-      tasks.forEach(function (t) {
-        if (!ehBacklog(t)) return;
-        var keyEnd = up(t.enderecoId || '');
-        var keySite = up(t.siteId || '');
-        if (keyEnd === keyConc || keySite === keyConc ||
-            (keyConc.length > 3 && (keyEnd.indexOf(keyConc) >= 0 || keySite.indexOf(keyConc) >= 0))) {
-          matches.push({ tipo: 'task', conc: conc, data: t });
-        }
-      });
-
-      // Buscar nos incidentes ativos (Sites Fora)
-      incidents.forEach(function (inc) {
-        if (up(inc.statusTrat) === 'RESOLVIDO') return;
-        var keyEnd = up(inc.enderecoId || inc.endId || '');
-        var keySite = up(inc.site || '');
-        if (keyEnd === keyConc || keySite === keyConc ||
-            (keyConc.length > 3 && (keyEnd.indexOf(keyConc) >= 0 || keySite.indexOf(keyConc) >= 0))) {
-          matches.push({ tipo: 'incident', conc: conc, data: inc });
-        }
-      });
-    });
-
-    var conteudo = [];
-
-    // Formulário de cadastro
-    var inpSite = U.h('input', { class: 'trj-input', placeholder: 'Nome do site (ex.: RJBT40)', style: { flex: '1' } });
-    var inpEnd  = U.h('input', { class: 'trj-input', placeholder: 'END_ID (ex.: RJRJO_0143)', style: { flex: '1' } });
-    var inpNota = U.h('input', { class: 'trj-input', placeholder: 'Anotação (ex.: Hub principal ANGR05)', style: { flex: '2' } });
+  // ---- formulário de cadastro de concentradores ---------------------
+  function formConcentradores(onSalvar) {
+    var inpSite = U.h('input', { class: 'trj-input', placeholder: 'Site (ex.: RJBT40)', style: { flex: '1', minWidth: '120px' } });
+    var inpEnd  = U.h('input', { class: 'trj-input', placeholder: 'END_ID (ex.: RJRJO_0143)', style: { flex: '1', minWidth: '140px' } });
+    var inpNota = U.h('input', { class: 'trj-input', placeholder: 'Anotação (ex.: Hub principal ANGR05)', style: { flex: '2', minWidth: '200px' } });
     var btnAdd  = U.h('button', {
       class: 'trj-btn trj-btn-primary clickable',
-      text: '+ Cadastrar',
+      html: '+ Cadastrar',
       onclick: function () {
-        var s = (inpSite.value || '').trim();
-        var e = (inpEnd.value || '').trim();
-        var n = (inpNota.value || '').trim();
+        var s = (inpSite.value || '').trim(), e = (inpEnd.value || '').trim(), n = (inpNota.value || '').trim();
         if (!s && !e) { U.toast('Informe ao menos o Site ou END_ID.', 'err'); return; }
-        var novo = { id: Date.now(), site: s, endId: e, nota: n };
-        lista.push(novo);
-        salvarConcentradores(lista);
+        var lista = carregarConc();
+        lista.push({ id: Date.now(), site: s, endId: e, nota: n });
+        salvarConc(lista);
         inpSite.value = ''; inpEnd.value = ''; inpNota.value = '';
         U.toast('Concentrador cadastrado.', 'ok');
-        onRefresh();
+        onSalvar();
       }
     });
-
-    conteudo.push(U.h('div', { class: 'flex flex-wrap gap-2 mb-4 items-center', style: { padding: '8px', background: 'var(--trj-card2)', borderRadius: '8px' } }, [
-      inpSite, inpEnd, inpNota, btnAdd
-    ]));
-
-    // Lista de concentradores cadastrados
-    if (lista.length > 0) {
-      conteudo.push(U.h('div', { style: { marginBottom: '12px' } }, lista.map(function (conc) {
-        return U.h('div', {
-          class: 'flex items-center gap-2 flex-wrap',
-          style: { fontSize: '12px', padding: '4px 0', borderBottom: '1px solid var(--trj-border)' }
-        }, [
-          conc.site ? U.h('span', { style: { fontWeight: '700' }, text: conc.site }) : null,
-          conc.endId ? U.h('span', { style: { color: 'var(--trj-muted)', fontFamily: 'ui-monospace,monospace' }, text: conc.endId }) : null,
-          conc.nota ? U.h('span', { style: { color: 'var(--trj-muted)', fontStyle: 'italic' }, text: '— ' + conc.nota }) : null,
-          U.h('button', {
-            class: 'trj-btn trj-btn-ghost clickable',
-            style: { fontSize: '10px', padding: '1px 6px', color: '#e74c3c', marginLeft: 'auto' },
-            text: '✕',
-            onclick: function () {
-              lista = lista.filter(function (x) { return x.id !== conc.id; });
-              salvarConcentradores(lista);
-              onRefresh();
-            }
-          })
-        ]);
-      })));
-    } else {
-      conteudo.push(U.h('p', { style: { color: 'var(--trj-muted)', fontSize: '13px', fontStyle: 'italic', textAlign: 'center', padding: '16px 0' }, text: 'Nenhum concentrador cadastrado ainda.' }));
-    }
-
-    // Matches encontrados
-    if (matches.length > 0) {
-      conteudo.push(U.h('div', {
-        class: 'trj-badge',
-        style: { display: 'inline-block', margin: '8px 0 4px', background: 'rgba(155,89,182,.18)', color: '#9b59b6', fontWeight: '800' },
-        text: '🔔 ' + matches.length + ' concentrador(es) com alerta'
-      }));
-      matches.forEach(function (m) {
-        if (m.tipo === 'task') {
-          conteudo.push(cardTarefa(m.data, { badgeConc: true, notaConc: m.conc.nota, borderCor: '#9b59b6' }));
-        } else {
-          conteudo.push(cardIncidente(m.data, { notaConc: m.conc.nota }));
-        }
-      });
-    } else if (lista.length > 0) {
-      conteudo.push(U.h('p', { style: { color: 'var(--trj-green)', fontSize: '13px', textAlign: 'center', padding: '8px 0' }, text: '✅ Nenhum concentrador cadastrado está com tarefa aberta ou incidente ativo.' }));
-    }
-
-    return { secao: secao('📍', 'Concentradores', '#9b59b6', matches.length, conteudo), count: matches.length };
+    return U.h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', padding: '12px', background: 'var(--trj-card2)', borderRadius: '8px', marginBottom: '12px' } },
+      [inpSite, inpEnd, inpNota, btnAdd]);
   }
 
-  // ------------------------------------------------------------------
-  // PÁGINA PRINCIPAL
-  // ------------------------------------------------------------------
+  function listaConcentradores(lista, onRemover) {
+    if (!lista.length) return U.h('p', { style: { color: 'var(--trj-muted)', fontSize: '12px', fontStyle: 'italic' }, text: 'Nenhum concentrador cadastrado. Use o formulário acima.' });
+    return U.h('div', { style: { marginBottom: '12px' } }, lista.map(function (c) {
+      return U.h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', borderBottom: '1px solid var(--trj-border)', fontSize: '12px', flexWrap: 'wrap' } }, [
+        U.h('span', { style: { fontFamily: 'ui-monospace,monospace', fontWeight: '700', minWidth: '80px' }, text: c.site || '—' }),
+        U.h('span', { style: { color: 'var(--trj-muted)', minWidth: '120px' }, text: c.endId || '—' }),
+        U.h('span', { style: { color: 'var(--trj-muted)', fontStyle: 'italic', flex: '1' }, text: c.nota || '' }),
+        U.h('button', {
+          class: 'trj-btn trj-btn-ghost clickable',
+          style: { fontSize: '10px', padding: '1px 6px', color: '#e74c3c', marginLeft: 'auto', flexShrink: '0' },
+          text: '✕ Remover',
+          onclick: function () {
+            var l = carregarConc().filter(function (x) { return x.id !== c.id; });
+            salvarConc(l);
+            onRemover();
+          }
+        })
+      ]);
+    }));
+  }
+
+  // ---- botão de categoria (label/chip com ícone + count) -----------
+  function btnCategoria(opts) {
+    // opts: { icon, label, count, cor, ativo, onclick }
+    var ativo = !!opts.ativo;
+    return U.h('button', {
+      class: 'trj-btn clickable',
+      style: {
+        display: 'flex', alignItems: 'center', gap: '10px',
+        padding: '14px 22px', borderRadius: '12px', fontSize: '14px', fontWeight: '700',
+        background: ativo ? opts.cor : 'var(--trj-card2)',
+        color: ativo ? '#fff' : opts.cor,
+        border: '2px solid ' + opts.cor,
+        boxShadow: ativo ? ('0 4px 18px ' + opts.cor + '55') : 'none',
+        transition: 'all .2s ease', transform: ativo ? 'translateY(-2px)' : '',
+        minWidth: '220px', position: 'relative'
+      },
+      onclick: opts.onclick
+    }, [
+      U.h('span', { style: { fontSize: '22px' }, text: opts.icon }),
+      U.h('div', { style: { textAlign: 'left' } }, [
+        U.h('div', { text: opts.label }),
+        U.h('div', { style: { fontSize: '11px', fontWeight: '400', opacity: '0.85' }, text: opts.count + ' tarefa(s) em aberto' })
+      ]),
+      opts.count > 0 ? U.h('span', {
+        style: { position: 'absolute', top: '6px', right: '8px', background: ativo ? 'rgba(255,255,255,.3)' : opts.cor, color: ativo ? '#fff' : '#fff', borderRadius: '999px', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '800' },
+        text: String(opts.count)
+      }) : null
+    ]);
+  }
+
+  // ---- PÁGINA PRINCIPAL --------------------------------------------
   TRJ.pages.prioritarios = function (container, ctx) {
     var app = ctx.app;
     var data = ctx.data || {};
-    var tasks     = (data.tasksEnriched || []).filter(function (t) { return ehBacklog(t) && ehCorretiva(t); });
+    var allTasks  = (data.tasksEnriched || []).filter(function (t) { return ehBacklog(t) && ehCorretiva(t); });
     var incidents = data.incidentsEnriched || [];
 
-    container.appendChild(U.pageHeader('🎯 Prioritários',
-      'Casos B2B/Premium, Backbone Longa Distância e Concentradores monitorados — atualizados a cada render.'));
+    var b2bTasks      = allTasks.filter(ehB2B);
+    var backboneTasks = allTasks.filter(ehBackboneLD);
 
-    // =====================================================================
-    // 1. B2B / PREMIUM
-    // =====================================================================
-    var b2bTasks = tasks.filter(ehB2BouPremium);
-
-    var b2bCards = b2bTasks.length === 0
-      ? [U.h('p', { style: { color: 'var(--trj-muted)', fontSize: '13px', fontStyle: 'italic', textAlign: 'center', padding: '16px 0' }, text: 'Nenhum caso B2B / Premium em aberto no momento.' })]
-      : b2bTasks.map(function (t) {
-          var dj = up(t.isocDJ || '');
-          var bg = up(t.motivoCancelamento || '');
-          var label = dj.indexOf('PREMIUM') >= 0 || dj.indexOf('ISOC') >= 0 ? dj.slice(0, 40) : null;
-          return cardTarefa(t, { badgeB2B: true, borderCor: '#3498db', trecho: label });
+    // Calcular matches de concentradores
+    function calcMatches() {
+      var lista = carregarConc();
+      var matches = [];
+      lista.forEach(function (conc) {
+        var key = up(conc.endId || conc.site || '');
+        if (!key) return;
+        allTasks.forEach(function (t) {
+          var ke = up(t.enderecoId || ''), ks = up(t.siteId || '');
+          if (ke === key || ks === key || (key.length > 3 && (ke.indexOf(key) >= 0 || ks.indexOf(key) >= 0)))
+            matches.push({ tipo: 'task', conc: conc, data: t });
         });
-
-    container.appendChild(secao('⭐', 'B2B / Premium', '#3498db', b2bTasks.length, b2bCards));
-
-    // =====================================================================
-    // 2. BACKBONE / LONGA DISTÂNCIA
-    // =====================================================================
-    var backboneTasks = tasks.filter(ehBackboneLD);
-
-    var backboneCards = backboneTasks.length === 0
-      ? [U.h('p', { style: { color: 'var(--trj-muted)', fontSize: '13px', fontStyle: 'italic', textAlign: 'center', padding: '16px 0' }, text: 'Nenhuma tarefa com Backbone / Longa Distância no diário.' })]
-      : backboneTasks.map(function (t) {
-          var bg = t.motivoCancelamento || '';
-          var lines = bg.split(/\n/);
-          var linhaBackbone = null;
-          for (var i = 0; i < lines.length; i++) {
-            if (/backbone|longa distancia|longa distância/i.test(lines[i])) {
-              linhaBackbone = lines[i].trim().slice(0, 100);
-              break;
-            }
-          }
-          return cardTarefa(t, { badgeBackbone: true, borderCor: '#e74c3c', trecho: linhaBackbone });
+        incidents.forEach(function (inc) {
+          if (up(inc.statusTrat) === 'RESOLVIDO') return;
+          var ke = up(inc.enderecoId || inc.endId || ''), ks = up(inc.site || '');
+          if (ke === key || ks === key || (key.length > 3 && (ke.indexOf(key) >= 0 || ks.indexOf(key) >= 0)))
+            matches.push({ tipo: 'incident', conc: conc, data: inc });
         });
-
-    container.appendChild(secao('⚡', 'Backbone / Longa Distância', '#e74c3c', backboneTasks.length, backboneCards));
-
-    // =====================================================================
-    // 3. CONCENTRADORES
-    // =====================================================================
-    function renderConcentradores() {
-      var old = container.querySelector('#conc-section');
-      if (old) old.remove();
-      var result = buildConcentradoresSection(data.tasksEnriched || [], incidents, renderConcentradores);
-      var wrapper = U.h('div', { id: 'conc-section' });
-      wrapper.appendChild(result.secao);
-      container.appendChild(wrapper);
+      });
+      return matches;
     }
-    renderConcentradores();
 
-    // =====================================================================
-    // Botão de atualização manual
-    // =====================================================================
-    container.appendChild(U.h('div', { class: 'flex justify-end mt-4' }, [
+    var concMatches = calcMatches();
+    var catAtiva = { v: null }; // categoria ativa: 'b2b' | 'backbone' | 'conc'
+
+    container.appendChild(U.pageHeader('🎯 Prioritários', 'Casos especiais em monitoramento — clique em uma categoria para ver os detalhes.'));
+
+    // --- linha de botões de categoria --------------------------------
+    var btnRow = U.h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '20px' } });
+    var drillArea = U.h('div', { style: { minHeight: '120px' } });
+
+    function setCategoria(cat) {
+      catAtiva.v = cat;
+      // Redesenhar botões
+      btnRow.innerHTML = '';
+      renderBotoes();
+      // Renderizar drilldown
+      drillArea.innerHTML = '';
+      drillArea.appendChild(renderDrill(cat));
+    }
+
+    function renderBotoes() {
+      btnRow.appendChild(btnCategoria({
+        icon: '⭐', label: 'B2B / Premium', count: b2bTasks.length, cor: '#3498db',
+        ativo: catAtiva.v === 'b2b',
+        onclick: function () { setCategoria(catAtiva.v === 'b2b' ? null : 'b2b'); }
+      }));
+      btnRow.appendChild(btnCategoria({
+        icon: '⚡', label: 'Backbone / Longa Distância', count: backboneTasks.length, cor: '#e74c3c',
+        ativo: catAtiva.v === 'backbone',
+        onclick: function () { setCategoria(catAtiva.v === 'backbone' ? null : 'backbone'); }
+      }));
+      btnRow.appendChild(btnCategoria({
+        icon: '📍', label: 'Concentradores', count: concMatches.length, cor: '#9b59b6',
+        ativo: catAtiva.v === 'conc',
+        onclick: function () { setCategoria(catAtiva.v === 'conc' ? null : 'conc'); }
+      }));
+    }
+    renderBotoes();
+    container.appendChild(btnRow);
+    container.appendChild(drillArea);
+
+    function renderDrill(cat) {
+      if (!cat) return U.h('div');
+
+      var card = U.h('div', { class: 'trj-card p-5', style: { animation: 'fadeIn .18s ease' } });
+
+      if (cat === 'b2b') {
+        card.appendChild(U.h('div', { class: 'flex items-center gap-2 mb-4' }, [
+          U.h('span', { style: { fontSize: '18px' }, text: '⭐' }),
+          U.h('span', { style: { fontWeight: '800', fontSize: '16px', color: '#3498db' }, text: 'B2B / Premium — ' + b2bTasks.length + ' caso(s)' })
+        ]));
+        card.appendChild(tabelaTarefas(b2bTasks, { vazio: 'Nenhum caso B2B / Premium em aberto no momento.' }));
+
+      } else if (cat === 'backbone') {
+        card.appendChild(U.h('div', { class: 'flex items-center gap-2 mb-4' }, [
+          U.h('span', { style: { fontSize: '18px' }, text: '⚡' }),
+          U.h('span', { style: { fontWeight: '800', fontSize: '16px', color: '#e74c3c' }, text: 'Backbone / Longa Distância — ' + backboneTasks.length + ' caso(s)' })
+        ]));
+        card.appendChild(tabelaTarefas(backboneTasks, { vazio: 'Nenhuma tarefa com Backbone / Longa Distância no diário.' }));
+
+      } else if (cat === 'conc') {
+        card.appendChild(U.h('div', { class: 'flex items-center gap-2 mb-3' }, [
+          U.h('span', { style: { fontSize: '18px' }, text: '📍' }),
+          U.h('span', { style: { fontWeight: '800', fontSize: '16px', color: '#9b59b6' }, text: 'Concentradores — ' + concMatches.length + ' alerta(s)' })
+        ]));
+        // Cadastro
+        card.appendChild(formConcentradores(function () {
+          concMatches = calcMatches();
+          setCategoria('conc');
+        }));
+        card.appendChild(listaConcentradores(carregarConc(), function () {
+          concMatches = calcMatches();
+          setCategoria('conc');
+        }));
+        // Drilldown
+        if (concMatches.length > 0) {
+          card.appendChild(U.h('hr', { style: { margin: '12px 0', borderColor: 'var(--trj-border)' } }));
+          card.appendChild(U.h('p', { style: { fontWeight: '700', fontSize: '13px', marginBottom: '8px', color: '#9b59b6' }, text: '🔔 Alertas ativos:' }));
+          card.appendChild(tabelaConcentradores(concMatches, function () {
+            concMatches = calcMatches();
+            setCategoria('conc');
+          }));
+        }
+      }
+      return card;
+    }
+
+    // Botão de atualização
+    container.appendChild(U.h('div', { style: { marginTop: '16px', display: 'flex', justifyContent: 'flex-end' } }, [
       U.h('button', {
-        class: 'trj-btn trj-btn-ghost clickable',
-        text: '🔄 Atualizar painel',
+        class: 'trj-btn trj-btn-ghost clickable', text: '🔄 Atualizar painel',
         onclick: function () { app.refresh(true).then(function () { app.render(); }); }
       })
     ]));
