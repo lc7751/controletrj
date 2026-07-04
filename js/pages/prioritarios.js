@@ -30,15 +30,18 @@
            (t.tipoAtividade || '').indexOf('CORRETIVA') >= 0;
   }
   function ehB2B(t) {
+    // Regra criadora (coluna DJ): só considera se contiver "PREMIUM"
     var dj = up(t.isocDJ || '');
+    // Coluna BG: conforme VBA — B2B-TIM, tracking_corporativo ou PREMIUM
     var bg = up(t.motivoCancelamento || '');
-    return dj.indexOf('PREMIUM') >= 0 || dj.indexOf('ISOC') >= 0 ||
-           bg.indexOf('B2B') >= 0 || bg.indexOf('PREMIUM') >= 0 ||
-           bg.indexOf('TRACKING_CORPORATIVO') >= 0;
+    return dj.indexOf('PREMIUM') >= 0 ||
+           bg.indexOf('B2B - TIM') >= 0 ||
+           bg.indexOf('TRACKING_CORPORATIVO') >= 0 ||
+           bg.indexOf('PREMIUM') >= 0;
   }
   function ehBackboneLD(t) {
     var bg = up(t.motivoCancelamento || '');
-    return bg.indexOf('BACKBONE') >= 0 || bg.indexOf('LONGA DISTANCIA') >= 0;
+    return bg.indexOf('LONGA DISTANCIA') >= 0;
   }
 
   function carregarConc() {
@@ -115,13 +118,8 @@
       return U.h('tr', null, [
         U.h('td', null, statusBadge(t.status)),
         U.h('td', null, U.h('span', {
-          style: { fontFamily: 'ui-monospace,monospace', fontWeight: '700', fontSize: '12px', color: 'var(--trj-primary)', cursor: 'pointer' },
-          title: 'Clicar para ver BG completo',
-          text: t.osNumero || '—',
-          onclick: function () {
-            var el = U.h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: t.motivoCancelamento || '(sem diário)' });
-            U.openModal(t.osNumero + ' — Diário BG', el);
-          }
+          style: { fontFamily: 'ui-monospace,monospace', fontWeight: '700', fontSize: '12px', color: 'var(--trj-primary)' },
+          text: t.osNumero || '—'
         })),
         U.h('td', { text: ne, style: { maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }),
         U.h('td', { text: t.enderecoId || '—', style: { fontFamily: 'ui-monospace,monospace', fontSize: '11px' } }),
@@ -157,12 +155,8 @@
         return U.h('tr', { style: { borderLeft: '3px solid #9b59b6' } }, [
           U.h('td', null, statusBadge(t.status)),
           U.h('td', null, U.h('span', {
-            style: { fontFamily: 'ui-monospace,monospace', fontWeight: '700', fontSize: '12px', color: 'var(--trj-primary)', cursor: 'pointer' },
-            text: t.osNumero || '—',
-            onclick: function () {
-              var el = U.h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: t.motivoCancelamento || '(sem diário)' });
-              U.openModal(t.osNumero + ' — Diário BG', el);
-            }
+            style: { fontFamily: 'ui-monospace,monospace', fontWeight: '700', fontSize: '12px', color: 'var(--trj-primary)' },
+            text: t.osNumero || '—'
           })),
           U.h('td', { text: t.siteId || t.enderecoId || '—' }),
           U.h('td', { text: t.enderecoId || '—', style: { fontFamily: 'ui-monospace,monospace', fontSize: '11px' } }),
