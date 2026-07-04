@@ -66,277 +66,131 @@
 
     // ---- charts grid ----
     var aging = U.chartCard('Aging do Backlog');
-    // Prazos a Vencer — botões de região para cópia rápida
-    // Construídos após pageData estar disponível (closure da página)
-    var vencControls = U.h('div', { style: { display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' } });
-
-    function buildVencRegioeBtns() {
-      vencControls.innerHTML = '';
-      // Tarefas dentro do SLA com vencimento definido
-      var tasksVenc = (pageData.tasksEnriched || []).filter(function (t) {
-        return t.statusSla === 'DENTRO DO SLA' && t.vencimentoCalc;
-      });
-      // Regiões presentes
-      var regioesSeen = {};
-      tasksVenc.forEach(function (t) { regioesSeen[t.regiao || 'OTHERS'] = true; });
-      var regioes = Object.keys(regioesSeen).sort();
-      if (!regioes.length) return;
-
-      // Função de formatação do tempo restante
-      function fmtRestante(minutos) {
-        if (minutos <= 0) return 'VENCIDO';
-        if (minutos < 60) return minutos + 'min';
-        var h = Math.floor(minutos / 60), m = minutos % 60;
-        return h + 'h' + (m > 0 ? m + 'min' : '');
-      }
-
-      // Extrai o resumo da última anotação do BG
-      function ultimaNotaBG(bg) {
-        if (!bg || (U.isTextoSemAtualizacao && U.isTextoSemAtualizacao(bg))) return null;
-        var dois = U.extrairDoisBlocosBG ? U.extrairDoisBlocosBG(bg) : [];
-        if (!dois.length) return null;
-        var ult = dois[0] || '';
-        return ult.replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s*-?\s*/, '').trim().slice(0, 80);
-      }
-
-      // Gera texto formatado para uma região
-      function gerarTextoPrazosRegiao(regiao) {
-        var now = Date.now();
-        var tasksReg = tasksVenc.filter(function (t) {
-          return (t.regiao || 'OTHERS') === regiao;
-        }).sort(function (a, b) {
-          // Ordenar pelo vencimento mais próximo
-          return new Date(a.vencimentoCalc).getTime() - new Date(b.vencimentoCalc).getTime();
-        });
-        if (!tasksReg.length) return null;
-
-        var labelReg = C.REGIAO_LABELS[regiao] || regiao;
-        var linhas = ['*' + labelReg + '*', '*PRAZOS A VENCER*', ''];
-
-        // Agrupar por bucket de vencimento
-        C.VENCIMENTO_BUCKETS.forEach(function (bucket) {
-          var tasksB = tasksReg.filter(function (t) {
-            var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
-            return rest >= 0 && rest >= bucket.min && rest < bucket.max;
-          });
-          if (!tasksB.length) return;
-
-          linhas.push('⏱ *' + bucket.label + '*');
-          tasksB.forEach(function (t) {
-            var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
-            var prio = t.prioridade ? '*' + t.prioridade + '* - ' : '';
-            var tsk  = t.osNumero || 'SEM TSK';
-            var site = t.siteId || t.enderecoId || '—';
-            var endId = t.enderecoId || '—';
-            var tempo = fmtRestante(rest);
-            var linhaTask = prio + tsk + ' / ' + site + ' - ' + endId + ' | ⏱ ' + tempo;
-            linhas.push(linhaTask);
-
-            // Último update do BG
-            var nota = ultimaNotaBG(t.motivoCancelamento);
-            if (nota) {
-              linhas.push('  📄 ' + nota);
-            } else {
-              linhas.push('  📄 Sem update');
-            }
-          });
-          linhas.push('');
-        });
-
-        return linhas.join('\n').trim();
-      }
-
-      regioes.forEach(function (regiao) {
-        var label = (C.REGIAO_LABELS[regiao] || regiao).split(' ')[0]; // ex.: "INTERIOR", "GRANDE"
-        var count = tasksVenc.filter(function (t) { return (t.regiao || 'OTHERS') === regiao; }).length;
-
-        var btn = U.h('button', {
-          class: 'trj-btn clickable',
-          style: {
-            fontSize: '10px', padding: '2px 8px', fontWeight: '700',
-            background: 'var(--trj-card2)', border: '1px solid var(--trj-border)',
-            borderRadius: '999px', display: 'inline-flex', alignItems: 'center', gap: '4px'
-          },
-          title: 'Copiar prazos de ' + (C.REGIAO_LABELS[regiao] || regiao),
-          onclick: function () {
-            var texto = gerarTextoPrazosRegiao(regiao);
-            if (!texto) { U.toast('Sem tarefas com prazo definido nesta região.', 'err'); return; }
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(texto)
-                .then(function () { U.toast('✓ Prazos de ' + label + ' copiados!', 'ok'); })
-                .catch(function () { _fallback(texto); });
-            } else { _fallback(texto); }
-            function _fallback(txt) {
-              var ta = document.createElement('textarea');
-              ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
-              document.body.appendChild(ta); ta.select();
-              try { document.execCommand('copy'); U.toast('✓ Copiado!', 'ok'); }
-              catch (e) { U.toast('Não foi possível copiar.', 'err'); }
-              document.body.removeChild(ta);
-            }
-          }
-        }, [
-          U.h('span', { text: label }),
-          U.h('span', { style: { background: 'rgba(255,140,0,.25)', color: 'var(--trj-primary)', borderRadius: '999px', padding: '0 5px', fontSize: '9px', fontWeight: '800' }, text: String(count) })
-        ]);
-        vencControls.appendChild(btn);
-      });
+    // ============================================================
+    // HELPERS COMPARTILHADOS DE CÓPIA
+    // ============================================================
+    function fmtMinutos(min) {
+      if (min <= 0) return 'VENCIDO';
+      if (min < 60) return min + 'min';
+      var h = Math.floor(min/60), m = min%60;
+      return h + 'h' + (m > 0 ? m + 'min' : '');
     }
 
-    var venc = U.chartCard('Prazos a Vencer', { rightEl: vencControls });
-    // Sites Fora por Região — toggle de agrupamento + botão de copiar
-    var sfAgrupar = { value: false };
-    var switchSf = U.switch(false, 'Agrupar por END_ID', function (v) { sfAgrupar.value = v; });
+    function calcUpdateStr(motivoCancelamento) {
+      if (!motivoCancelamento) return 'SEM ATUALIZAÇÃO';
+      if (U.isTextoSemAtualizacao && U.isTextoSemAtualizacao(motivoCancelamento))
+        return 'SEM ATUALIZAÇÃO';
+      var DT_RE = /(\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)/g;
+      var t = (motivoCancelamento||'').toString(), matches = [], m;
+      while ((m = DT_RE.exec(t)) !== null) {
+        var dt = U.parseDataHoraBG ? U.parseDataHoraBG(m[1]) : null;
+        if (dt && !isNaN(dt.getTime())) matches.push(dt);
+      }
+      if (!matches.length) return 'SEM ATUALIZAÇÃO';
+      var maisRec = matches.reduce(function(a,b){ return a>b?a:b; });
+      var diffMin = Math.round((Date.now() - maisRec.getTime()) / 60000);
+      if (diffMin < 0) return 'ATUALIZADO AGORA';
+      if (diffMin < 60) return 'ATUALIZADO A ' + diffMin + 'min';
+      var h = Math.floor(diffMin/60), mn = diffMin%60;
+      return 'ATUALIZADO A ' + h + 'h' + (mn > 0 ? mn + 'min' : '');
+    }
 
-    // ---- Função: gera texto formatado por região para clipboard ----
-    function gerarTextoCopiaRegioes(regioesSelecionadas) {
-      var incidentsAtivos = (pageData.incidentsEnriched || []).filter(function (inc) {
-        return (inc.regiao || 'OTHERS') !== undefined && (inc.statusTrat || '').toUpperCase() !== 'RESOLVIDO';
+    function prioLabel(t) {
+      return t && t.prioridade ? '*' + t.prioridade + '*' : '';
+    }
+
+    function copyText(txt) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt)
+          .then(function(){ U.toast('✓ Copiado!', 'ok'); })
+          .catch(function(){ _fb(txt); });
+      } else { _fb(txt); }
+      function _fb(s) {
+        var ta = document.createElement('textarea');
+        ta.value = s; ta.style.position='fixed'; ta.style.opacity='0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); U.toast('✓ Copiado!', 'ok'); }
+        catch(e){ U.toast('Não foi possível copiar.','err'); }
+        document.body.removeChild(ta);
+      }
+    }
+
+    // ============================================================
+    // SITES FORA — geração de texto para cópia
+    // ============================================================
+    function gerarTextoSitesFora(regiaoFiltro) {
+      var incAtivos = (pageData.incidentsEnriched || []).filter(function(inc){
+        return (inc.statusTrat||'').toUpperCase() !== 'RESOLVIDO' &&
+               (!regiaoFiltro || (inc.regiao||'OTHERS') === regiaoFiltro);
       });
       var tasksEnriched = pageData.tasksEnriched || [];
-
-      var linhas = [];
-      regioesSelecionadas.forEach(function (regiao) {
-        // Incidentes desta região
-        var incs = incidentsAtivos.filter(function (inc) {
-          return (inc.regiao || 'OTHERS') === regiao;
-        });
-        if (!incs.length) return;
-
-        var labelRegiao = C.REGIAO_LABELS[regiao] || regiao;
-        linhas.push('*' + labelRegiao + '*');
-        linhas.push('*SITES FORA NA FILA*');
-
-        // Para cada incidente, buscar a TSK mais recente associada
-        incs.forEach(function (inc) {
-          var tsk = U.tskAberta ? U.tskAberta(inc, tasksEnriched) : null;
-          var tskNum  = tsk ? (tsk.osNumero || 'SEM TSK') : 'SEM TSK';
-          var site    = inc.site || '—';
-          var endId   = inc.enderecoId || '—';
-
-          // Tentar pegar a prioridade diretamente da tarefa encontrada
-          var prioLabel = '';
-          if (tsk && tsk.osNumero) {
-            // Buscar prioridade na lista de tarefas enriched
-            var tarefaMatch = tasksEnriched.filter(function (t) {
-              return (t.osNumero || '') === tsk.osNumero;
-            })[0];
-            if (tarefaMatch && tarefaMatch.prioridade) prioLabel = tarefaMatch.prioridade;
-          }
-
-          var prio = prioLabel ? '*' + prioLabel + '* - ' : '';
-          var linha = prio + tskNum + ' / ' + site + ' - ' + endId;
-          linhas.push(linha);
-        });
-
-        linhas.push(''); // linha em branco entre regiões
+      var regioesMapa = {};
+      incAtivos.forEach(function(inc){
+        var r = inc.regiao || 'OTHERS';
+        if (!regioesMapa[r]) regioesMapa[r] = [];
+        regioesMapa[r].push(inc);
       });
 
+      var linhas = [];
+      Object.keys(regioesMapa).sort().forEach(function(r){
+        var regLabel = (C.REGIAO_LABELS[r] || r).toUpperCase();
+        linhas.push('*' + regLabel + '*');
+        linhas.push('*SITES FORA NA FILA*');
+
+        var comTSK = [], semTSK = [];
+        regioesMapa[r].forEach(function(inc){
+          var tsk = U.tskAberta ? U.tskAberta(inc, tasksEnriched) : null;
+          if (tsk) {
+            var tf = tasksEnriched.filter(function(t){ return t.osNumero === tsk.osNumero; })[0];
+            comTSK.push({inc:inc, tsk:tsk, tf:tf});
+          } else semTSK.push(inc);
+        });
+
+        // --- TSK first ---
+        comTSK.forEach(function(item){
+          var tsk = item.tsk, tf = item.tf;
+          var prio = tf && tf.prioridade ? '*' + tf.prioridade + '* ' : '';
+          var tskNum = tsk.osNumero || 'SEM TSK';
+          var site = (tf && tf.siteId) || item.inc.site || '—';
+          var upd = calcUpdateStr((tf||{}).motivoCancelamento || (tsk||{}).motivoCancelamento);
+          linhas.push(prio + tskNum + ' / ' + site + ' · ' + upd);
+        });
+
+        // --- Sem TSK ---
+        semTSK.forEach(function(inc){
+          var hor = inc.horario || '—';
+          var site = inc.site || '—';
+          var tec = inc.tecnologia ? ' (' + inc.tecnologia + ')' : '';
+          linhas.push(hor + ' · SEM TSK · ' + site + tec);
+        });
+
+        linhas.push('');
+      });
       return linhas.join('\n').trim();
     }
 
-    // ---- Botão de copiar: abre modal de seleção de regiões ----
-    var btnCopiarSF = U.h('button', {
+    // Prazos a Vencer — toggle de agrupamento
+    var vencBtnCopiar = U.h('button', {
       class: 'trj-btn trj-btn-ghost clickable',
-      style: { fontSize: '11px', padding: '2px 10px', display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid rgba(255,255,255,.15)' },
-      onclick: function () {
-        // Pega regiões que têm incidentes ativos
-        var incAtivos = (pageData.incidentsEnriched || []).filter(function (inc) {
-          return (inc.statusTrat || '').toUpperCase() !== 'RESOLVIDO';
-        });
-        var contagemPorRegiao = {};
-        incAtivos.forEach(function (inc) {
-          var r = inc.regiao || 'OTHERS';
-          contagemPorRegiao[r] = (contagemPorRegiao[r] || 0) + 1;
-        });
-        var regioes = Object.keys(contagemPorRegiao).sort();
+      style: { fontSize: '11px', padding: '2px 9px', display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid rgba(255,255,255,.15)' },
+      onclick: function(){ copyText(gerarTextoPrazosTodasRegioes()); }
+    }, [U.h('span',{text:'📋'}), U.h('span',{text:'Copiar'})]);
+    var venc = U.chartCard('PRAZOS A VENCER', { hint: null, rightEl: vencBtnCopiar });
 
-        if (!regioes.length) {
-          U.toast('Nenhum incidente ativo para copiar.', 'err');
-          return;
-        }
+    // ============================================================
+    // SITES FORA — toggle + botão copiar todos
+    // ============================================================
+    var sfAgrupar = { value: false };
+    var switchSf = U.switch(false, 'AGRUPAR POR END_ID', function(v){ sfAgrupar.value = v; });
 
-        // Estado de seleção
-        var selecionadas = {};
-        regioes.forEach(function (r) { selecionadas[r] = true; });
+    var btnCopiarTodosSF = U.h('button', {
+      class: 'trj-btn trj-btn-ghost clickable',
+      style: { fontSize: '11px', padding: '2px 9px', display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid rgba(255,255,255,.15)' },
+      onclick: function(){ copyText(gerarTextoSitesFora(null)); }
+    }, [U.h('span',{text:'📋'}), U.h('span',{text:'Copiar'})]);
 
-        // Construir checkboxes de seleção
-        var checkboxEls = regioes.map(function (r) {
-          var label = C.REGIAO_LABELS[r] || r;
-          var count = contagemPorRegiao[r];
-          var cb = U.h('input', { type: 'checkbox' });
-          cb.checked = true;
-          cb.addEventListener('change', function () { selecionadas[r] = cb.checked; });
-
-          return U.h('label', {
-            style: { display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', cursor: 'pointer', borderRadius: '8px', border: '1px solid var(--trj-border)', background: 'var(--trj-card2)', transition: 'background .15s' }
-          }, [
-            cb,
-            U.h('span', { style: { fontWeight: '700', flex: '1' }, text: label }),
-            U.h('span', { class: 'trj-badge', style: { background: 'rgba(231,76,60,.18)', color: '#e74c3c', fontWeight: '700' }, text: count + ' site(s)' })
-          ]);
-        });
-
-        // Botão "Selecionar todos / nenhum"
-        var btnToggleAll = U.h('button', {
-          class: 'trj-btn trj-btn-ghost clickable',
-          style: { fontSize: '12px' },
-          text: 'Selecionar todos',
-          onclick: function () {
-            var allOn = regioes.every(function (r) { return selecionadas[r]; });
-            regioes.forEach(function (r, i) {
-              selecionadas[r] = !allOn;
-              checkboxEls[i].querySelector('input').checked = !allOn;
-            });
-            btnToggleAll.textContent = allOn ? 'Selecionar todos' : 'Desmarcar todos';
-          }
-        });
-
-        // Botão "Concluir escolha"
-        var btnConcluir = U.h('button', {
-          class: 'trj-btn trj-btn-primary clickable',
-          style: { fontWeight: '800', padding: '10px 24px', fontSize: '14px' },
-          text: '✓ Concluir escolha e copiar',
-          onclick: function () {
-            var escolhidas = regioes.filter(function (r) { return selecionadas[r]; });
-            if (!escolhidas.length) { U.toast('Selecione ao menos uma região.', 'err'); return; }
-            var texto = gerarTextoCopiaRegioes(escolhidas);
-            if (!texto) { U.toast('Nenhum dado para as regiões selecionadas.', 'err'); return; }
-            // Copiar para clipboard
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(texto)
-                .then(function () { U.toast('✓ Copiado! Cole no WhatsApp com Ctrl+V.', 'ok'); U.closeModal(); })
-                .catch(function () { fallbackCopiar(texto); });
-            } else {
-              fallbackCopiar(texto);
-            }
-          }
-        });
-
-        function fallbackCopiar(texto) {
-          var ta = document.createElement('textarea');
-          ta.value = texto; ta.style.position = 'fixed'; ta.style.opacity = '0';
-          document.body.appendChild(ta); ta.select();
-          try { document.execCommand('copy'); U.toast('✓ Copiado!', 'ok'); U.closeModal(); }
-          catch (e) { U.toast('Não foi possível copiar automaticamente.', 'err'); }
-          document.body.removeChild(ta);
-        }
-
-        // Montar modal
-        var modalContent = U.h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, [
-          U.h('p', { style: { fontSize: '13px', color: 'var(--trj-muted)', marginBottom: '4px' }, text: 'Selecione as regiões que deseja incluir no texto copiado:' }),
-          U.h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, checkboxEls),
-          U.h('div', { style: { display: 'flex', justifyContent: 'space-between', marginTop: '8px' } }, [btnToggleAll, btnConcluir])
-        ]);
-        U.openModal('📋 Copiar Sites Fora por Região', modalContent, { width: '480px' });
-      }
-    }, [
-      U.h('span', { text: '📋' }),
-      U.h('span', { text: 'Copiar' })
-    ]);
-
-    // rightEl: toggle + botão copiar lado a lado
-    var sfControls = U.h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, [switchSf, btnCopiarSF]);
+    var sfControls = U.h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, [switchSf, btnCopiarTodosSF]);
+    var sites = U.chartCard('SITES FORA POR REGIÃO', { rightEl: sfControls });
     var sites = U.chartCard('Sites Fora por Região', { rightEl: sfControls });
     var slaReg = U.chartCard('SLA por Região');
     var manu = U.chartCard('Atividades Manuais', { hint: 'inclui cancelamentos' });
@@ -348,14 +202,91 @@
     container.appendChild(buildTopCidades(topCidades, app));
 
     // ---- desenha charts (canvas já no DOM) ----
+    // Gera texto de prazos a vencer para UMA ou TODAS as regiões
+    function gerarTextoPrazosRegiao(regiaoFiltro) {
+      var now = Date.now();
+      var tasksVenc = (pageData.tasksEnriched || []).filter(function(t){
+        return t.statusSla === 'DENTRO DO SLA' && t.vencimentoCalc &&
+               (!regiaoFiltro || (t.regiao||'OTHERS') === regiaoFiltro);
+      });
+      var regioesMapa = {};
+      tasksVenc.forEach(function(t){
+        var r = t.regiao||'OTHERS';
+        if(!regioesMapa[r]) regioesMapa[r]=[];
+        regioesMapa[r].push(t);
+      });
+      var linhas = [];
+      Object.keys(regioesMapa).sort().forEach(function(r){
+        var regLabel = (C.REGIAO_LABELS[r]||r).toUpperCase();
+        linhas.push('*' + regLabel + '*');
+        // Ordenar P1→P5
+        var arr = regioesMapa[r].slice().sort(function(a,b){
+          var pa = parseInt((a.prioridade||'P9').replace(/\D/g,''),10)||9;
+          var pb = parseInt((b.prioridade||'P9').replace(/\D/g,''),10)||9;
+          if(pa!==pb) return pa-pb;
+          return new Date(a.vencimentoCalc).getTime()-new Date(b.vencimentoCalc).getTime();
+        });
+        arr.forEach(function(t){
+          var prio = t.prioridade ? '*' + t.prioridade + '* ' : '';
+          var tsk  = t.osNumero || '—';
+          var site = t.siteId || t.enderecoId || '—';
+          var cid  = (t.cidade||t.cidadeUf||'').replace(/\s*\/.*$/,'').trim().toUpperCase();
+          var falha = (t.tipoFalha||'—').toUpperCase();
+          var rest = Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
+          var tempoStr = rest<=0 ? 'VENCIDO' : 'VENCE EM '+fmtMinutos(rest);
+          var campos = [tsk, site, cid, falha, tempoStr].filter(Boolean);
+          linhas.push(prio + campos.join(' · '));
+        });
+        linhas.push('');
+      });
+      return linhas.join('\n').trim();
+    }
+    function gerarTextoPrazosTodasRegioes(){ return gerarTextoPrazosRegiao(null); }
+
     var aData = d.aging || [], vData = d.prazosVencimento || [], sfData = d.sitesForaRegiao || [], srData = d.slaPorRegiao || [], amData = d.atividadesManuais || [], pData = d.produtividade || [];
-    U.barChart(aging.canvas, aData, { onBar: function (i) { app.openDrillTasks({ tipo: 'aging', arg: i }, f, 'Aging: ' + aData[i].label); } });
-    U.hbarChart(venc.canvas, vData, { onBar: function (i) { app.openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A vencer: ' + vData[i].label); } });
-    U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), {
+    U.barChart(aging.canvas, aData, { onBar: function (i) { app.openDrillTasks({ tipo: 'aging', arg: i }, f, 'AGING: ' + aData[i].label); } });
+    U.hbarChart(venc.canvas, vData, { onBar: function (i) {
+      var bucket = vData[i];
+      var regiaoFiltro = null;
+      // Cópia só do período do drill
+      var onCopyDrill = function () {
+        var now = Date.now();
+        var b = C.VENCIMENTO_BUCKETS[i];
+        var tasks = (pageData.tasksEnriched || []).filter(function(t){
+          if(t.statusSla!=='DENTRO DO SLA'||!t.vencimentoCalc) return false;
+          var rest=Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
+          return rest>=0 && rest>=b.min && rest<b.max;
+        });
+        var linhas = ['*' + ('A VENCER: ' + (bucket.label||'')).toUpperCase() + '*', ''];
+        var regioesMapa = {};
+        tasks.forEach(function(t){ var r=t.regiao||'OTHERS'; if(!regioesMapa[r]) regioesMapa[r]=[]; regioesMapa[r].push(t); });
+        Object.keys(regioesMapa).sort().forEach(function(r){
+          linhas.push('*' + (C.REGIAO_LABELS[r]||r).toUpperCase() + '*');
+          var arr = regioesMapa[r].slice().sort(function(a,b2){
+            var pa=parseInt((a.prioridade||'P9').replace(/\D/g,''),10)||9;
+            var pb=parseInt((b2.prioridade||'P9').replace(/\D/g,''),10)||9;
+            return pa!==pb?pa-pb:new Date(a.vencimentoCalc).getTime()-new Date(b2.vencimentoCalc).getTime();
+          });
+          arr.forEach(function(t){
+            var prio=t.prioridade?'*'+t.prioridade+'* ':'';
+            var rest2=Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
+            var cid=(t.cidade||t.cidadeUf||'').replace(/\s*\/.*$/,'').trim().toUpperCase();
+            linhas.push(prio+(t.osNumero||'—')+' · '+(t.siteId||t.enderecoId||'—')+' · '+cid+' · '+(t.tipoFalha||'—').toUpperCase()+' · VENCE EM '+fmtMinutos(rest2));
+          });
+          linhas.push('');
+        });
+        return linhas.join('\n').trim();
+      };
+      app.openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A VENCER: ' + (bucket.label||''), {}, onCopyDrill);
+    }});
+    U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label.toUpperCase(), total: x.total, cor: C.CORES_TRJ.red }; }), {
       onBar: function (i) {
         var tipo = sfAgrupar.value ? 'sitesForaAgrupado' : 'sitesFora';
-        var titulo = 'Sites fora' + (sfAgrupar.value ? ' (agrupado)' : '') + ': ' + sfData[i].label;
-        app.openDrillIncidents({ tipo: tipo, arg: sfData[i].regiao }, titulo);
+        var regiao = sfData[i].regiao;
+        var titulo = 'SITES FORA: ' + (sfData[i].label||'').toUpperCase();
+        app.openDrillIncidents({ tipo: tipo, arg: regiao }, titulo, {
+          onCopy: function(){ return gerarTextoSitesFora(regiao); }
+        });
       }
     });
     U.stackedChart(slaReg.canvas, srData, { onSeg: function (i, ds) { var r = srData[i]; app.openDrillTasks({ tipo: 'slaRegiao', arg: r.regiao + '|' + (ds === 1 ? 'fora' : 'dentro') }, f, 'SLA ' + r.label); } });
@@ -515,106 +446,139 @@
   function exportarExcelDashboard(d, pageData) {
     if (typeof XLSX === 'undefined') { U.toast('Biblioteca de Excel não carregou. Recarregue a página.', 'err'); return; }
     var wb = XLSX.utils.book_new();
-    var C2 = TRJ.constants;
     var dom = TRJ.domain;
     var now = new Date();
 
-    function aba(nome, aoa) {
+    // Aplica formatação básica na aba: freeze do cabeçalho + larguras de coluna
+    function formatarAba(ws, colWidths) {
+      // Congelar primeira linha
+      if (!ws['!freeze']) ws['!freeze'] = { ySplit: 1 };
+      // Larguras das colunas
+      if (colWidths && colWidths.length) {
+        ws['!cols'] = colWidths.map(function(w){ return { wch: w }; });
+      }
+    }
+
+    function aba(nome, aoa, colWidths) {
       var ws = XLSX.utils.aoa_to_sheet(aoa);
+      formatarAba(ws, colWidths);
       XLSX.utils.book_append_sheet(wb, ws, nome.slice(0, 31));
     }
-    function abaLista(nome, rows, cols) {
-      var aoa = [cols.map(function (c) { return c.h; })];
-      (rows || []).forEach(function (r) { aoa.push(cols.map(function (c) { return r[c.k] != null ? r[c.k] : ''; })); });
-      aba(nome, aoa);
+
+    function abaLista(nome, rows, cols, colWidths) {
+      var hdr = cols.map(function (c) { return (c.h||'').toUpperCase(); });
+      var aoa = [hdr];
+      (rows || []).forEach(function (r) {
+        aoa.push(cols.map(function (c) {
+          var v = r[c.k];
+          if (v == null) return '';
+          if (c.dt && v) { try { return new Date(v).toLocaleString('pt-BR'); } catch(e){ return v; } }
+          return v;
+        }));
+      });
+      aba(nome, aoa, colWidths || cols.map(function(){ return 18; }));
     }
 
     // ---- KPIs ----
     var K = d.kpis || {};
     var tc = d.topCidades || {};
-    aba('KPIs', [
-      ['Indicador', 'Valor'],
-      ['Fora do SLA', K.foraSla || 0],
-      ['Backlog Total', K.backlogTotal || 0],
-      ['Backlog Indefinido', K.backlogIndef || 0],
-      ['Preditiva', K.preditiva || 0],
-      ['Produtividade (concluídas)', K.produtividade || 0],
-      ['SLA Geral (%)', K.slaGeral || 0],
-      ['Sites Fora (total)', tc.totalSitesFora || 0],
-      ['Extraído em', now.toLocaleString('pt-BR')]
-    ]);
+    aba('DASHBOARD', [
+      ['INDICADOR', 'VALOR'],
+      ['FORA DO SLA', K.foraSla || 0],
+      ['BACKLOG TOTAL', K.backlogTotal || 0],
+      ['BACKLOG INDEFINIDO', K.backlogIndef || 0],
+      ['PREDITIVA', K.preditiva || 0],
+      ['PRODUTIVIDADE (CONCLUÍDAS)', K.produtividade || 0],
+      ['SLA GERAL (%)', K.slaGeral || 0],
+      ['SITES FORA (TOTAL)', tc.totalSitesFora || 0],
+      ['EXTRAÍDO EM', now.toLocaleString('pt-BR')]
+    ], [40, 20]);
 
-    // ---- Backlog completo (tarefas em aberto) ----
     var tasksE = (pageData && pageData.tasksEnriched) || [];
-    var incE = (pageData && pageData.incidentsEnriched) || [];
-    var sep = dom.separarTicketsManuais(tasksE);
+    var incE   = (pageData && pageData.incidentsEnriched) || [];
+    var sep    = dom.separarTicketsManuais(tasksE);
     var ticketsCorretiva = sep.tickets, manuaisFull = sep.manuais;
 
-    abaLista('Backlog', tasksE.filter(function (t) { return dom.isBacklogStatus(t.status); }), [
-      { k: 'osNumero', h: 'TSK' }, { k: 'status', h: 'Status' }, { k: 'prioridade', h: 'Prioridade' },
-      { k: 'regiao', h: 'Região' }, { k: 'cidade', h: 'Cidade' }, { k: 'enderecoId', h: 'END_ID' },
-      { k: 'siteId', h: 'Site' }, { k: 'tipoFalha', h: 'Falha' }, { k: 'filaAtual', h: 'Fila' },
-      { k: 'dataCriacao', h: 'Criação' }, { k: 'vencimentoCalc', h: 'Vencimento SLA' },
-      { k: 'statusSla', h: 'Status SLA' }, { k: 'agingMinutos', h: 'Aging (min)' }
-    ]);
+    var colsTask = [
+      { k:'osNumero', h:'TSK', w:20 }, { k:'status', h:'STATUS', w:14 }, { k:'prioridade', h:'PRIORIDADE', w:12 },
+      { k:'regiao', h:'REGIÃO', w:16 }, { k:'cidade', h:'CIDADE', w:20 }, { k:'enderecoId', h:'END_ID', w:16 },
+      { k:'siteId', h:'SITE', w:16 }, { k:'tipoFalha', h:'TIPO FALHA', w:22 }, { k:'filaAtual', h:'FILA ATUAL', w:40 },
+      { k:'dataCriacao', h:'CRIAÇÃO', w:18, dt:1 }, { k:'vencimentoCalc', h:'VENCIMENTO SLA', w:18, dt:1 },
+      { k:'statusSla', h:'STATUS SLA', w:16 }, { k:'tipoAtividade', h:'TIPO ATIVIDADE', w:30 }
+    ];
+
+    // ---- Backlog ----
+    abaLista('BACKLOG', tasksE.filter(function(t){ return dom.isBacklogStatus(t.status); }),
+      colsTask, colsTask.map(function(c){ return c.w||18; }));
 
     // ---- Concluídas ----
-    abaLista('Concluidas', ticketsCorretiva.filter(function (t) {
-      var s = (t.status || '').toUpperCase().trim();
-      return s === 'CONCLUÍDA' || s === 'CONCLUIDA';
+    abaLista('CONCLUÍDAS', ticketsCorretiva.filter(function(t){
+      var s=(t.status||'').toUpperCase().trim(); return s==='CONCLUÍDA'||s==='CONCLUIDA';
     }), [
-      { k: 'osNumero', h: 'TSK' }, { k: 'status', h: 'Status' }, { k: 'prioridade', h: 'Prioridade' },
-      { k: 'regiao', h: 'Região' }, { k: 'cidade', h: 'Cidade' }, { k: 'enderecoId', h: 'END_ID' },
-      { k: 'siteId', h: 'Site' }, { k: 'tipoFalha', h: 'Falha' }, { k: 'filaAtual', h: 'Fila' },
-      { k: 'dataCriacao', h: 'Criação' }, { k: 'fimCalc', h: 'Encerramento' },
-      { k: 'vencimentoCalc', h: 'Vencimento SLA' }, { k: 'statusSla', h: 'Status SLA' }
-    ]);
+      {k:'osNumero',h:'TSK',w:20},{k:'status',h:'STATUS',w:14},{k:'prioridade',h:'PRIORIDADE',w:12},
+      {k:'regiao',h:'REGIÃO',w:16},{k:'cidade',h:'CIDADE',w:20},{k:'enderecoId',h:'END_ID',w:16},
+      {k:'siteId',h:'SITE',w:16},{k:'tipoFalha',h:'TIPO FALHA',w:22},{k:'filaAtual',h:'FILA ATUAL',w:40},
+      {k:'dataCriacao',h:'CRIAÇÃO',w:18,dt:1},{k:'fimCalc',h:'ENCERRAMENTO',w:18,dt:1},
+      {k:'vencimentoCalc',h:'VENCIMENTO SLA',w:18,dt:1},{k:'statusSla',h:'STATUS SLA',w:16}
+    ].map(function(c){ return c; }), null);
 
-    // ---- Canceladas (corretiva) — com motivo, separadas por automação/associação ----
-    abaLista('Canceladas', ticketsCorretiva.filter(function (t) {
-      var s = (t.status || '').toUpperCase().trim();
-      return s === 'CANCELADA' || s === 'CANCELADO';
-    }).map(function (t) {
-      var motivo = (t.motivoCancelamento || '').toString().toUpperCase();
-      return Object.assign({}, t, { tipoCancelamento: motivo.indexOf('ASSOCIA') >= 0 ? 'Associação' : 'Automação' });
+    // ---- Canceladas ----
+    abaLista('CANCELADAS', ticketsCorretiva.filter(function(t){
+      var s=(t.status||'').toUpperCase().trim(); return s==='CANCELADA'||s==='CANCELADO';
+    }).map(function(t){
+      var m=(t.motivoCancelamento||'').toString().toUpperCase();
+      return Object.assign({},t,{tipoCancelamento:m.indexOf('ASSOCIA')>=0?'ASSOCIAÇÃO':'AUTOMAÇÃO'});
     }), [
-      { k: 'osNumero', h: 'TSK' }, { k: 'tipoCancelamento', h: 'Tipo Cancelamento' }, { k: 'prioridade', h: 'Prioridade' },
-      { k: 'regiao', h: 'Região' }, { k: 'cidade', h: 'Cidade' }, { k: 'enderecoId', h: 'END_ID' },
-      { k: 'siteId', h: 'Site' }, { k: 'tipoFalha', h: 'Falha' }, { k: 'filaAtual', h: 'Fila' },
-      { k: 'dataCriacao', h: 'Criação' }
-    ]);
+      {k:'osNumero',h:'TSK',w:20},{k:'tipoCancelamento',h:'TIPO CANCELAMENTO',w:20},{k:'prioridade',h:'PRIORIDADE',w:12},
+      {k:'regiao',h:'REGIÃO',w:16},{k:'cidade',h:'CIDADE',w:20},{k:'enderecoId',h:'END_ID',w:16},
+      {k:'siteId',h:'SITE',w:16},{k:'tipoFalha',h:'TIPO FALHA',w:22},{k:'filaAtual',h:'FILA ATUAL',w:40},
+      {k:'dataCriacao',h:'CRIAÇÃO',w:18,dt:1}
+    ], null);
 
-    // ---- Atividades manuais (WO/Preventiva/Conjunta/Outras) ----
-    abaLista('Atividades Manuais (detalhe)', manuaisFull, [
-      { k: 'osNumero', h: 'TSK' }, { k: 'tipoAtividade', h: 'Tipo Atividade' }, { k: 'status', h: 'Status' },
-      { k: 'regiao', h: 'Região' }, { k: 'cidade', h: 'Cidade' }, { k: 'enderecoId', h: 'END_ID' },
-      { k: 'siteId', h: 'Site' }, { k: 'filaAtual', h: 'Fila' }, { k: 'dataCriacao', h: 'Criação' }
-    ]);
+    // ---- Atividades Manuais ----
+    abaLista('ATIVIDADES MANUAIS', manuaisFull, [
+      {k:'osNumero',h:'TSK',w:20},{k:'tipoAtividade',h:'TIPO ATIVIDADE',w:30},{k:'status',h:'STATUS',w:14},
+      {k:'regiao',h:'REGIÃO',w:16},{k:'cidade',h:'CIDADE',w:20},{k:'enderecoId',h:'END_ID',w:16},
+      {k:'siteId',h:'SITE',w:16},{k:'filaAtual',h:'FILA ATUAL',w:40},{k:'dataCriacao',h:'CRIAÇÃO',w:18,dt:1}
+    ], null);
 
-    // ---- Sites Fora (incidentes) ----
-    abaLista('Sites Fora', incE.filter(function (i) { return (i.statusTrat || 'ATIVO').toUpperCase() !== 'RESOLVIDO'; }), [
-      { k: 'horario', h: 'Horário' }, { k: 'downtime', h: 'Duração' }, { k: 'site', h: 'Site' },
-      { k: 'enderecoId', h: 'END_ID' }, { k: 'anf', h: 'ANF' }, { k: 'cidadeUf', h: 'Cidade/UF' },
-      { k: 'regiao', h: 'Região' }, { k: 'causa', h: 'Causa' }, { k: 'causaGrupo', h: 'Causa (grupo)' },
-      { k: 'previsao', h: 'Previsão' }, { k: 'detalhe', h: 'Detalhe' }, { k: 'statusTrat', h: 'Status Trat.' }
-    ]);
+    // ---- Sites Fora (detalhado) ----
+    var incAtivos = incE.filter(function(i){ return (i.statusTrat||'ATIVO').toUpperCase()!=='RESOLVIDO'; });
+    abaLista('SITES FORA', incAtivos, [
+      {k:'horario',h:'HORÁRIO',w:12},{k:'downtime',h:'DURAÇÃO',w:10},{k:'site',h:'SITE',w:20},
+      {k:'enderecoId',h:'END_ID',w:16},{k:'anf',h:'ANF',w:8},{k:'cidadeUf',h:'CIDADE/UF',w:22},
+      {k:'regiao',h:'REGIÃO',w:16},{k:'tecnologia',h:'TECNOLOGIA',w:12},
+      {k:'causa',h:'CAUSA',w:30},{k:'causaGrupo',h:'CAUSA GRUPO',w:20},
+      {k:'detalhe',h:'DETALHE',w:40},{k:'previsao',h:'PREVISÃO',w:14},
+      {k:'statusTrat',h:'STATUS TRAT.',w:16},{k:'infra',h:'INFRA',w:14},{k:'peso',h:'PESO',w:8}
+    ], null);
 
-    // ---- Aging resumo (gráfico) ----
-    abaLista('Aging Resumo', d.aging, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
-    abaLista('Prazos a Vencer', d.prazosVencimento, [{ k: 'label', h: 'Faixa' }, { k: 'total', h: 'Total' }]);
-    abaLista('SLA por Regiao', d.slaPorRegiao, [{ k: 'label', h: 'Região' }, { k: 'dentro', h: 'Dentro SLA' }, { k: 'fora', h: 'Fora SLA' }]);
-    abaLista('Sites Fora por Regiao', d.sitesForaRegiao, [{ k: 'label', h: 'Região' }, { k: 'total', h: 'Total' }]);
-    abaLista('Sites Fora por ANF', tc.porAnf, [{ k: 'anf', h: 'ANF' }, { k: 'total', h: 'Total' }, { k: 'pct', h: '%' }]);
-    abaLista('Top Cidades', tc.cidades, [{ k: 'cidade', h: 'Cidade' }, { k: 'total', h: 'Total' }]);
-    abaLista('Atividades Manuais (resumo)', d.atividadesManuais, [{ k: 'name', h: 'Tipo' }, { k: 'value', h: 'Total' }]);
-    abaLista('Produtividade (resumo)', d.produtividade, [
-      { k: 'categoria', h: 'Categoria' }, { k: 'dentro', h: 'Dentro SLA' },
-      { k: 'fora', h: 'Fora SLA' }, { k: 'preditiva', h: 'Preditiva' }
-    ]);
+    // ---- Backlog por região (resumo) ----
+    abaLista('SLA POR REGIÃO', d.slaPorRegiao||[], [
+      {k:'label',h:'REGIÃO',w:20},{k:'dentro',h:'DENTRO DO SLA',w:16},{k:'fora',h:'FORA DO SLA',w:16}
+    ], [20,16,16]);
 
-    var ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    abaLista('PRAZOS A VENCER', d.prazosVencimento||[], [
+      {k:'label',h:'FAIXA',w:14},{k:'total',h:'TOTAL',w:10}
+    ], [14,10]);
+
+    abaLista('AGING BACKLOG', d.aging||[], [
+      {k:'label',h:'FAIXA',w:14},{k:'total',h:'TOTAL',w:10}
+    ], [14,10]);
+
+    abaLista('SITES FORA POR REGIÃO', d.sitesForaRegiao||[], [
+      {k:'label',h:'REGIÃO',w:20},{k:'total',h:'TOTAL',w:10}
+    ], [20,10]);
+
+    abaLista('PRODUTIVIDADE', d.produtividade||[], [
+      {k:'categoria',h:'CATEGORIA',w:20},{k:'dentro',h:'DENTRO DO SLA',w:16},
+      {k:'fora',h:'FORA DO SLA',w:16},{k:'preditiva',h:'PREDITIVA',w:14}
+    ], null);
+
+    var ts = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
     XLSX.writeFile(wb, 'Dashboard_TRJ_' + ts + '.xlsx');
-    var totalLinhas = tasksE.length + incE.length;
-    U.toast('Excel exportado com ' + totalLinhas + ' registros em ' + wb.SheetNames.length + ' abas!', 'ok');
+    U.toast('Excel exportado com ' + (tasksE.length+incAtivos.length) + ' registros em ' + wb.SheetNames.length + ' abas!', 'ok');
   }
+    if (typeof XLSX === 'undefined') { U.toast('Biblioteca de Excel não carregou. Recarregue a página.', 'err'); return; }
+
 })(window.TRJ = window.TRJ || {});
