@@ -65,7 +65,7 @@
     container.appendChild(kpiGrid);
 
     // ---- charts grid ----
-    var aging = U.chartCard('Aging do Backlog');
+    var aging = U.chartCard('AGING DO BACKLOG');
     // ============================================================
     // HELPERS COMPARTILHADOS DE CÓPIA
     // ============================================================
@@ -169,7 +169,48 @@
       return linhas.join('\n').trim();
     }
 
-    // Prazos a Vencer — toggle de agrupamento
+    // ============================================================
+    // PRAZOS A VENCER — geração de texto
+    // (definidas ANTES dos botões que as chamam)
+    // ============================================================
+    function gerarTextoPrazosRegiao(regiaoFiltro) {
+      var now = Date.now();
+      var tasksVenc = (pageData.tasksEnriched || []).filter(function(t){
+        return t.statusSla === 'DENTRO DO SLA' && t.vencimentoCalc &&
+               (!regiaoFiltro || (t.regiao||'OTHERS') === regiaoFiltro);
+      });
+      var regioesMapa = {};
+      tasksVenc.forEach(function(t){
+        var r = t.regiao||'OTHERS';
+        if(!regioesMapa[r]) regioesMapa[r]=[];
+        regioesMapa[r].push(t);
+      });
+      var linhas = [];
+      Object.keys(regioesMapa).sort().forEach(function(r){
+        var regLabel = (C.REGIAO_LABELS[r]||r).toUpperCase();
+        linhas.push('*' + regLabel + '*');
+        var arr = regioesMapa[r].slice().sort(function(a,b){
+          var pa = parseInt((a.prioridade||'P9').replace(/\D/g,''),10)||9;
+          var pb = parseInt((b.prioridade||'P9').replace(/\D/g,''),10)||9;
+          if(pa!==pb) return pa-pb;
+          return new Date(a.vencimentoCalc).getTime()-new Date(b.vencimentoCalc).getTime();
+        });
+        arr.forEach(function(t){
+          var prio = t.prioridade ? '*' + t.prioridade + '* ' : '';
+          var tsk  = t.osNumero || '—';
+          var site = t.siteId || t.enderecoId || '—';
+          var falha = (t.tipoFalha||'—').toUpperCase();
+          var rest = Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
+          var tempoStr = rest<=0 ? 'VENCIDO' : 'VENCE EM '+fmtMinutos(rest);
+          linhas.push(prio + [tsk, site, falha, tempoStr].filter(Boolean).join(' · '));
+        });
+        linhas.push('');
+      });
+      return linhas.join('\n').trim();
+    }
+    function gerarTextoPrazosTodasRegioes() { return gerarTextoPrazosRegiao(null); }
+
+    // Prazos a Vencer — botão copiar (ao lado do título)
     var vencBtnCopiar = U.h('button', {
       class: 'trj-btn trj-btn-ghost clickable',
       style: { fontSize: '11px', padding: '2px 9px', display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid rgba(255,255,255,.15)' },
@@ -191,10 +232,9 @@
 
     var sfControls = U.h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, [switchSf, btnCopiarTodosSF]);
     var sites = U.chartCard('SITES FORA POR REGIÃO', { rightEl: sfControls });
-    var sites = U.chartCard('Sites Fora por Região', { rightEl: sfControls });
-    var slaReg = U.chartCard('SLA por Região');
-    var manu = U.chartCard('Atividades Manuais', { hint: 'inclui cancelamentos' });
-    var prod = U.chartCard('Produtividade — Encerradas Dentro/Fora do SLA');
+    var slaReg = U.chartCard('SLA POR REGIÃO');
+    var manu = U.chartCard('ATIVIDADES MANUAIS', { hint: 'inclui cancelamentos' });
+    var prod = U.chartCard('PRODUTIVIDADE — ENCERRADAS DENTRO/FORA DO SLA');
     var grid = U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5' }, [aging.card, venc.card, sites.card, slaReg.card, manu.card, prod.card]);
     container.appendChild(grid);
 
@@ -202,46 +242,6 @@
     container.appendChild(buildTopCidades(topCidades, app));
 
     // ---- desenha charts (canvas já no DOM) ----
-    // Gera texto de prazos a vencer para UMA ou TODAS as regiões
-    function gerarTextoPrazosRegiao(regiaoFiltro) {
-      var now = Date.now();
-      var tasksVenc = (pageData.tasksEnriched || []).filter(function(t){
-        return t.statusSla === 'DENTRO DO SLA' && t.vencimentoCalc &&
-               (!regiaoFiltro || (t.regiao||'OTHERS') === regiaoFiltro);
-      });
-      var regioesMapa = {};
-      tasksVenc.forEach(function(t){
-        var r = t.regiao||'OTHERS';
-        if(!regioesMapa[r]) regioesMapa[r]=[];
-        regioesMapa[r].push(t);
-      });
-      var linhas = [];
-      Object.keys(regioesMapa).sort().forEach(function(r){
-        var regLabel = (C.REGIAO_LABELS[r]||r).toUpperCase();
-        linhas.push('*' + regLabel + '*');
-        // Ordenar P1→P5
-        var arr = regioesMapa[r].slice().sort(function(a,b){
-          var pa = parseInt((a.prioridade||'P9').replace(/\D/g,''),10)||9;
-          var pb = parseInt((b.prioridade||'P9').replace(/\D/g,''),10)||9;
-          if(pa!==pb) return pa-pb;
-          return new Date(a.vencimentoCalc).getTime()-new Date(b.vencimentoCalc).getTime();
-        });
-        arr.forEach(function(t){
-          var prio = t.prioridade ? '*' + t.prioridade + '* ' : '';
-          var tsk  = t.osNumero || '—';
-          var site = t.siteId || t.enderecoId || '—';
-          var cid  = (t.cidade||t.cidadeUf||'').replace(/\s*\/.*$/,'').trim().toUpperCase();
-          var falha = (t.tipoFalha||'—').toUpperCase();
-          var rest = Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
-          var tempoStr = rest<=0 ? 'VENCIDO' : 'VENCE EM '+fmtMinutos(rest);
-          var campos = [tsk, site, cid, falha, tempoStr].filter(Boolean);
-          linhas.push(prio + campos.join(' · '));
-        });
-        linhas.push('');
-      });
-      return linhas.join('\n').trim();
-    }
-    function gerarTextoPrazosTodasRegioes(){ return gerarTextoPrazosRegiao(null); }
 
     var aData = d.aging || [], vData = d.prazosVencimento || [], sfData = d.sitesForaRegiao || [], srData = d.slaPorRegiao || [], amData = d.atividadesManuais || [], pData = d.produtividade || [];
     U.barChart(aging.canvas, aData, { onBar: function (i) { app.openDrillTasks({ tipo: 'aging', arg: i }, f, 'AGING: ' + aData[i].label); } });
@@ -271,7 +271,7 @@
             var prio=t.prioridade?'*'+t.prioridade+'* ':'';
             var rest2=Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
             var cid=(t.cidade||t.cidadeUf||'').replace(/\s*\/.*$/,'').trim().toUpperCase();
-            linhas.push(prio+(t.osNumero||'—')+' · '+(t.siteId||t.enderecoId||'—')+' · '+cid+' · '+(t.tipoFalha||'—').toUpperCase()+' · VENCE EM '+fmtMinutos(rest2));
+            linhas.push(prio+(t.osNumero||'—')+' · '+(t.siteId||t.enderecoId||'—')+' · '+(t.tipoFalha||'—').toUpperCase()+' · VENCE EM '+fmtMinutos(rest2));
           });
           linhas.push('');
         });
@@ -311,8 +311,8 @@
     });
 
     // Botões de região no Prazos a Vencer — APÓS todos os charts estarem renderizados
-    // para que eventuais erros aqui não bloqueiem a exibição dos gráficos.
-    try { buildVencRegioeBtns(); } catch (e) { /* botões opcionais — ignora erro */ }
+    // (gerarTextoPrazosRegiao já está definida acima — botão vencBtnCopiar funciona sem buildVencRegioeBtns)
+    try { if (typeof buildVencRegioeBtns === 'function') buildVencRegioeBtns(); } catch (e) { /* opcional */ }
   };
 
   function argAtiv(name) {
@@ -405,14 +405,20 @@
       return item;
     }));
 
-    var total = U.h('div', { class: 'trj-card p-5 flex flex-col items-center justify-center', style: { minWidth: '180px' } }, [
-      U.h('div', { class: 'text-xs uppercase', style: { color: 'var(--trj-muted)' }, text: 'Total Sites Fora' }),
-      U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1', textShadow: '0 0 20px rgba(231,76,60,.4)' }, text: U.fmtNum(tc.totalSitesFora) })
+    var total = U.h('div', {
+      class: 'trj-card p-5 flex flex-col items-center justify-center clickable',
+      style: { minWidth: '180px', cursor: 'pointer', transition: 'box-shadow .15s', border: '2px solid transparent' },
+      title: 'Clique para ver todos os sites fora',
+      onclick: function () { app.openDrillIncidents({ tipo: 'sitesFora', arg: null }, 'TODOS OS SITES FORA'); }
+    }, [
+      U.h('div', { class: 'text-xs uppercase', style: { color: 'var(--trj-muted)' }, text: 'TOTAL SITES FORA' }),
+      U.h('div', { class: 'font-extrabold', style: { fontSize: '56px', color: C.CORES_TRJ.red, lineHeight: '1', textShadow: '0 0 20px rgba(231,76,60,.4)' }, text: U.fmtNum(tc.totalSitesFora) }),
+      U.h('div', { style: { fontSize: '10px', color: 'var(--trj-muted)', marginTop: '4px' }, text: '▼ ver incidentes' })
     ]);
     return U.h('div', { class: 'trj-card p-4' }, [
       U.h('div', { class: 'flex items-center gap-2 mb-3' }, [
         U.h('span', { class: 'trj-chart-dot' }),
-        U.h('h3', { class: 'text-sm font-bold', text: 'Top Cidades — Sites Fora' }),
+        U.h('h3', { class: 'text-sm font-bold', text: 'TOP CIDADES — SITES FORA' }),
         U.h('span', { class: 'text-xs font-normal', style: { color: 'var(--trj-muted)' }, text: '(clique em qualquer cidade ou ANF para detalhar)' })
       ]),
       U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4' }, [
