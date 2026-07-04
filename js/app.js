@@ -254,15 +254,20 @@
   };
 
   // ---------------- DRILL ----------------
-  App.openDrillTasks = function (spec, filtros, title, opts) {
+  App.openDrillTasks = function (spec, filtros, title, opts, onCopy) {
     if (!App.data) return;
     var rows = Comp.drillTasks(App.data.tasksEnriched, spec, filtros || {});
-    U.openModal(title || 'Detalhamento', U.taskTable(rows, opts || {}), { onCopy: function () { return U.taskTableCopyText(rows, title); } });
+    U.openModal(title || 'Detalhamento', U.taskTable(rows, opts || {}), {
+      onCopy: onCopy || function () { return U.taskTableCopyText(rows, title); }
+    });
   };
-  App.openDrillIncidents = function (spec, title) {
+  App.openDrillIncidents = function (spec, title, opts) {
     if (!App.data) return;
+    opts = opts || {};
     var rows = Comp.drillIncidents(App.data.incidentsEnriched, spec);
-    U.openModal(title || 'Detalhamento', U.incidentTable(rows, App.data.tasksEnriched), { onCopy: function () { return U.incidentTableCopyText(rows, title); } });
+    U.openModal(title || 'Detalhamento', U.incidentTable(rows, App.data.tasksEnriched), {
+      onCopy: opts.onCopy || function () { return U.incidentTableCopyText(rows, title); }
+    });
   };
 
   // ---------------- ROTAS ----------------

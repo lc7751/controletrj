@@ -226,8 +226,9 @@
     // Aging
     var agingCount = C.AGING_BUCKETS.map(function () { return 0; });
     backlog.forEach(function (t) {
-      if (!t.dataCriacao) return;
-      var idade = Math.round((now - new Date(t.dataCriacao).getTime()) / 60000);
+      var _agingBase = t.dataCriacaoAS || t.dataCriacao;
+      if (!_agingBase) return;
+      var idade = Math.round((now - new Date(_agingBase).getTime()) / 60000);
       var idx = C.AGING_BUCKETS.findIndex(function (b) { return idade >= b.min && idade < b.max; });
       if (idx >= 0) agingCount[idx]++;
     });
@@ -482,11 +483,12 @@
       case 'aging': {
         var b = C.AGING_BUCKETS[parseInt(arg, 10)]; if (!b) return [];
         return backlog.filter(function (t) {
-          if (!t.dataCriacao) return false;
-          var idade = Math.round((now - new Date(t.dataCriacao).getTime()) / 60000);
+          var _ab = t.dataCriacaoAS || t.dataCriacao;
+          if (!_ab) return false;
+          var idade = Math.round((now - new Date(_ab).getTime()) / 60000);
           return idade >= b.min && idade < b.max;
         }).sort(function (a, b2) {
-          function idadeMin(x) { return Math.round((now - new Date(x.dataCriacao).getTime()) / 60000); }
+          function idadeMin(x) { var _ab2 = x.dataCriacaoAS || x.dataCriacao; return _ab2 ? Math.round((now - new Date(_ab2).getTime()) / 60000) : 0; }
           return idadeMin(a) - idadeMin(b2);
         });
       }

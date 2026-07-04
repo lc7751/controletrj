@@ -44,6 +44,7 @@
     ['siteId',             84, 's'],
     ['tipoFalha',         132, 's'],
     ['isocDJ',            114, 's'],   // DJ — tipo de cliente (ex.: "ISOC SERVICOS FIXO PREMIUM CLASS")
+    ['dataCriacaoAS',      45, 'd'],   // AS — data original de criação (usada para Aging do Backlog)
     ['dataCriacao',       176, 'd'],
     ['quemEncerrou',      180, 's'],
     ['prioridade',        191, 's']
