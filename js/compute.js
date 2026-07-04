@@ -226,9 +226,12 @@
     // Aging
     var agingCount = C.AGING_BUCKETS.map(function () { return 0; });
     backlog.forEach(function (t) {
+      // Aging — usa coluna AS (dataCriacaoAS) se disponível; fallback para dataCriacao
       var _agingBase = t.dataCriacaoAS || t.dataCriacao;
       if (!_agingBase) return;
-      var idade = Math.round((now - new Date(_agingBase).getTime()) / 60000);
+      var _agingDt = (_agingBase instanceof Date) ? _agingBase : D.parsePlatformDate(_agingBase);
+      if (!_agingDt || isNaN(_agingDt.getTime())) return;
+      var idade = Math.round((now - _agingDt.getTime()) / 60000);
       var idx = C.AGING_BUCKETS.findIndex(function (b) { return idade >= b.min && idade < b.max; });
       if (idx >= 0) agingCount[idx]++;
     });
@@ -485,10 +488,17 @@
         return backlog.filter(function (t) {
           var _ab = t.dataCriacaoAS || t.dataCriacao;
           if (!_ab) return false;
-          var idade = Math.round((now - new Date(_ab).getTime()) / 60000);
+          var _dt = (_ab instanceof Date) ? _ab : D.parsePlatformDate(_ab);
+          if (!_dt || isNaN(_dt.getTime())) return false;
+          var idade = Math.round((now - _dt.getTime()) / 60000);
           return idade >= b.min && idade < b.max;
         }).sort(function (a, b2) {
-          function idadeMin(x) { var _ab2 = x.dataCriacaoAS || x.dataCriacao; return _ab2 ? Math.round((now - new Date(_ab2).getTime()) / 60000) : 0; }
+          function idadeMin(x) {
+            var _ab2 = x.dataCriacaoAS || x.dataCriacao;
+            if (!_ab2) return 0;
+            var _dt2 = (_ab2 instanceof Date) ? _ab2 : D.parsePlatformDate(_ab2);
+            return (_dt2 && !isNaN(_dt2.getTime())) ? Math.round((now - _dt2.getTime()) / 60000) : 0;
+          }
           return idadeMin(a) - idadeMin(b2);
         });
       }
@@ -554,12 +564,13 @@
   function drillIncidents(incidentsEnriched, spec) {
     var ativos = incidentsEnriched.filter(function (i) { return up(i.statusTrat) !== 'RESOLVIDO'; });
     var filtrado;
-    if (spec.tipo === 'sitesFora') filtrado = ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; });
-    else if (spec.tipo === 'sitesForaAgrupado') {
-      filtrado = ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; });
-      filtrado = agruparIncidentesPorEndId(filtrado);
-    }
-    else if (spec.tipo === 'anf') filtrado = ativos.filter(function (i) { return (i.anf || '').toString().trim() === spec.arg; });
+    if (spec.tipo === 'sitesFora') {
+      // arg=null significa TODOS os incidentes ativos
+      filtrado = spec.arg == null ? ativos : ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; });
+    } else if (spec.tipo === 'sitesForaAgrupado') {
+      filtrado = spec.arg == null ? agruparIncidentesPorEndId(ativos) :
+        agruparIncidentesPorEndId(ativos.filter(function (i) { return (i.regiao || 'OTHERS') === spec.arg; }));
+    } else if (spec.tipo === 'anf') filtrado = ativos.filter(function (i) { return (i.anf || '').toString().trim() === spec.arg; });
     else if (spec.tipo === 'cidade') filtrado = ativos.filter(function (i) { return up(i.cidade) === up(spec.arg); });
     else filtrado = [];
     return filtrado;
