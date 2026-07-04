@@ -40,12 +40,13 @@
     ['dataBase',           20, 'd'],
     ['vencimentoSla',      21, 'ds'],
     ['enderecoId',         67, 's'],
+    ['motivoCancelamento', 59, 's'],   // BG — diário de trabalho / notas de técnico
     ['siteId',             84, 's'],
     ['tipoFalha',         132, 's'],
+    ['isocDJ',            114, 's'],   // DJ — tipo de cliente (ex.: "ISOC SERVICOS FIXO PREMIUM CLASS")
     ['dataCriacao',       176, 'd'],
     ['quemEncerrou',      180, 's'],
-    ['prioridade',        191, 's'],
-    ['motivoCancelamento', 59, 's']   // coluna BG — identifica se o cancelamento foi por "ASSOCIAÇÃO DE ATIVIDADES" (não-auto) ou automação
+    ['prioridade',        191, 's']
   ];
   F.COLUNAS = COLUNAS;
 
