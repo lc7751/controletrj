@@ -349,8 +349,6 @@
 
     // ---- desenha charts (canvas já no DOM) ----
     var aData = d.aging || [], vData = d.prazosVencimento || [], sfData = d.sitesForaRegiao || [], srData = d.slaPorRegiao || [], amData = d.atividadesManuais || [], pData = d.produtividade || [];
-    // Preenche os botões de região do Prazos a Vencer agora que pageData está disponível
-    buildVencRegioeBtns();
     U.barChart(aging.canvas, aData, { onBar: function (i) { app.openDrillTasks({ tipo: 'aging', arg: i }, f, 'Aging: ' + aData[i].label); } });
     U.hbarChart(venc.canvas, vData, { onBar: function (i) { app.openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A vencer: ' + vData[i].label); } });
     U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label, total: x.total, cor: C.CORES_TRJ.red }; }), {
@@ -380,6 +378,10 @@
         app.openDrillTasks({ tipo: 'produtividadeCat', arg: cat + '|' + lado }, f, titulo, { modoResultado: true });
       }
     });
+
+    // Botões de região no Prazos a Vencer — APÓS todos os charts estarem renderizados
+    // para que eventuais erros aqui não bloqueiem a exibição dos gráficos.
+    try { buildVencRegioeBtns(); } catch (e) { /* botões opcionais — ignora erro */ }
   };
 
   function argAtiv(name) {
