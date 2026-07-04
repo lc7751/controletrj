@@ -504,6 +504,10 @@
     return null;
   }
 
+  U.parseDataHoraBG = parseDataHoraBG;
+  U.extrairDoisBlocosBG = extrairDoisBlocosMaisRecentes;
+  U.isTextoSemAtualizacao = isTextoSemAtualizacao;
+
   // ---------- Correlação entre incidentes (mesmo horário ±4min + ANF/cidade) ----------
   function parseHorarioMin(horario) {
     if (!horario) return null;
