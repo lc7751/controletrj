@@ -410,7 +410,8 @@
     return {
       osNumero: t.osNumero, sequenciaId: t.sequenciaId, tipoAtividade: t.tipoAtividade,
       status: t.status, filaAtual: t.filaAtual, prioridade: t.prioridade,
-      dataCriacao: t.dataCriacao, enderecoId: t.enderecoId, siteId: t.siteId,
+      dataCriacao: t.dataCriacao, dataCriacaoAS: t.dataCriacaoAS,  // AS = "Criação do NTT" (aging)
+      enderecoId: t.enderecoId, siteId: t.siteId,
       cidade: t.cidade, regiao: t.regiao, tipoFalha: t.tipoFalha,
       vencimentoCalc: t.vencimentoCalc, fimCalc: t.fimCalc,
       statusSla: t.statusSla, fonteSla: t.fonteSla, motivoCancelamento: motivoSlim
