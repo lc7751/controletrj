@@ -226,12 +226,19 @@
     // Aging
     var agingCount = C.AGING_BUCKETS.map(function () { return 0; });
     backlog.forEach(function (t) {
-      // Aging — usa coluna AS (dataCriacaoAS) se disponível; fallback para dataCriacao
+      // Aging — usa coluna AS (dataCriacaoAS) se disponível; fallback para dataCriacao.
+      // Tarefas sem nenhuma data válida recebem idade máxima (99999 min ≈ 69 dias)
+      // e caem no último bucket (>96h), garantindo que o total do aging = backlog total.
       var _agingBase = t.dataCriacaoAS || t.dataCriacao;
-      if (!_agingBase) return;
-      var _agingDt = (_agingBase instanceof Date) ? _agingBase : D.parsePlatformDate(_agingBase);
-      if (!_agingDt || isNaN(_agingDt.getTime())) return;
-      var idade = Math.round((now - _agingDt.getTime()) / 60000);
+      var idade;
+      if (!_agingBase) {
+        idade = 99999; // sem data → coloca no bucket >96h
+      } else {
+        var _agingDt = (_agingBase instanceof Date) ? _agingBase : D.parsePlatformDate(_agingBase);
+        idade = (_agingDt && !isNaN(_agingDt.getTime()))
+          ? Math.round((now - _agingDt.getTime()) / 60000)
+          : 99999; // data inválida → idem
+      }
       var idx = C.AGING_BUCKETS.findIndex(function (b) { return idade >= b.min && idade < b.max; });
       if (idx >= 0) agingCount[idx]++;
     });
@@ -487,17 +494,20 @@
         var b = C.AGING_BUCKETS[parseInt(arg, 10)]; if (!b) return [];
         return backlog.filter(function (t) {
           var _ab = t.dataCriacaoAS || t.dataCriacao;
-          if (!_ab) return false;
-          var _dt = (_ab instanceof Date) ? _ab : D.parsePlatformDate(_ab);
-          if (!_dt || isNaN(_dt.getTime())) return false;
-          var idade = Math.round((now - _dt.getTime()) / 60000);
-          return idade >= b.min && idade < b.max;
+          var idade2;
+          if (!_ab) {
+            idade2 = 99999;
+          } else {
+            var _dt = (_ab instanceof Date) ? _ab : D.parsePlatformDate(_ab);
+            idade2 = (_dt && !isNaN(_dt.getTime())) ? Math.round((now - _dt.getTime()) / 60000) : 99999;
+          }
+          return idade2 >= b.min && idade2 < b.max;
         }).sort(function (a, b2) {
           function idadeMin(x) {
             var _ab2 = x.dataCriacaoAS || x.dataCriacao;
-            if (!_ab2) return 0;
+            if (!_ab2) return 99999;
             var _dt2 = (_ab2 instanceof Date) ? _ab2 : D.parsePlatformDate(_ab2);
-            return (_dt2 && !isNaN(_dt2.getTime())) ? Math.round((now - _dt2.getTime()) / 60000) : 0;
+            return (_dt2 && !isNaN(_dt2.getTime())) ? Math.round((now - _dt2.getTime()) / 60000) : 99999;
           }
           return idadeMin(a) - idadeMin(b2);
         });
