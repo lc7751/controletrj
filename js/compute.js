@@ -188,7 +188,11 @@
     var sep = D.separarTicketsManuais(tasks);
     var tickets = sep.tickets, manuais = sep.manuais;
 
-    var backlog = tickets.filter(function (t) { return D.isBacklogStatus(t.status); });
+    // Regra de negócio: tarefas válidas para Backlog Geral e Aging SEMPRE têm dataCriacaoAS.
+    // Tarefas Corretiva sem coluna AS são anomalias tratadas como atividades manuais.
+    var backlog = tickets.filter(function (t) {
+      return D.isBacklogStatus(t.status) && !!t.dataCriacaoAS;
+    });
 
     // Separa CONCLUIDA de CANCELADA — o VBA só conta SLA para CONCLUIDA.
     // CANCELADA corretiva (por automação ou por associação) aparece no donut
@@ -223,22 +227,14 @@
       preditiva: preditiva.length, produtividade: concluidas.length, slaGeral: slaGeral
     };
 
-    // Aging
+    // Aging — backlog já é filtrado para tasks com dataCriacaoAS (regra de negócio).
     var agingCount = C.AGING_BUCKETS.map(function () { return 0; });
     backlog.forEach(function (t) {
-      // Aging — usa coluna AS (dataCriacaoAS) se disponível; fallback para dataCriacao.
-      // Tarefas sem nenhuma data válida recebem idade máxima (99999 min ≈ 69 dias)
-      // e caem no último bucket (>96h), garantindo que o total do aging = backlog total.
-      var _agingBase = t.dataCriacaoAS || t.dataCriacao;
-      var idade;
-      if (!_agingBase) {
-        idade = 99999; // sem data → coloca no bucket >96h
-      } else {
-        var _agingDt = (_agingBase instanceof Date) ? _agingBase : D.parsePlatformDate(_agingBase);
-        idade = (_agingDt && !isNaN(_agingDt.getTime()))
-          ? Math.round((now - _agingDt.getTime()) / 60000)
-          : 99999; // data inválida → idem
-      }
+      // dataCriacaoAS é garantido pelo filtro de backlog acima
+      var _agingDt = (t.dataCriacaoAS instanceof Date) ? t.dataCriacaoAS
+                   : D.parsePlatformDate(t.dataCriacaoAS);
+      if (!_agingDt || isNaN(_agingDt.getTime())) return; // anomalia extrema → ignora
+      var idade = Math.round((now - _agingDt.getTime()) / 60000);
       var idx = C.AGING_BUCKETS.findIndex(function (b) { return idade >= b.min && idade < b.max; });
       if (idx >= 0) agingCount[idx]++;
     });
@@ -492,22 +488,16 @@
       case 'produtividade': return concluidas;
       case 'aging': {
         var b = C.AGING_BUCKETS[parseInt(arg, 10)]; if (!b) return [];
+        // backlog já garante dataCriacaoAS (regra de negócio)
         return backlog.filter(function (t) {
-          var _ab = t.dataCriacaoAS || t.dataCriacao;
-          var idade2;
-          if (!_ab) {
-            idade2 = 99999;
-          } else {
-            var _dt = (_ab instanceof Date) ? _ab : D.parsePlatformDate(_ab);
-            idade2 = (_dt && !isNaN(_dt.getTime())) ? Math.round((now - _dt.getTime()) / 60000) : 99999;
-          }
+          var _dt = (t.dataCriacaoAS instanceof Date) ? t.dataCriacaoAS : D.parsePlatformDate(t.dataCriacaoAS);
+          if (!_dt || isNaN(_dt.getTime())) return false;
+          var idade2 = Math.round((now - _dt.getTime()) / 60000);
           return idade2 >= b.min && idade2 < b.max;
         }).sort(function (a, b2) {
           function idadeMin(x) {
-            var _ab2 = x.dataCriacaoAS || x.dataCriacao;
-            if (!_ab2) return 99999;
-            var _dt2 = (_ab2 instanceof Date) ? _ab2 : D.parsePlatformDate(_ab2);
-            return (_dt2 && !isNaN(_dt2.getTime())) ? Math.round((now - _dt2.getTime()) / 60000) : 99999;
+            var _dt2 = (x.dataCriacaoAS instanceof Date) ? x.dataCriacaoAS : D.parsePlatformDate(x.dataCriacaoAS);
+            return (_dt2 && !isNaN(_dt2.getTime())) ? Math.round((now - _dt2.getTime()) / 60000) : 0;
           }
           return idadeMin(a) - idadeMin(b2);
         });
