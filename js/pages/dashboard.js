@@ -119,11 +119,11 @@
     // SITES FORA — geração de texto para cópia
     // ============================================================
     function gerarTextoSitesFora(regiaoFiltro) {
-      var incAtivos = (pageData.incidentsEnriched || []).filter(function(inc){
+      var incAtivos = (data.incidentsEnriched || []).filter(function(inc){
         return (inc.statusTrat||'').toUpperCase() !== 'RESOLVIDO' &&
                (!regiaoFiltro || (inc.regiao||'OTHERS') === regiaoFiltro);
       });
-      var tasksEnriched = pageData.tasksEnriched || [];
+      var tasksEnriched = data.tasksEnriched || [];
       var regioesMapa = {};
       incAtivos.forEach(function(inc){
         var r = inc.regiao || 'OTHERS';
@@ -175,7 +175,7 @@
     // ============================================================
     function gerarTextoPrazosRegiao(regiaoFiltro) {
       var now = Date.now();
-      var tasksVenc = (pageData.tasksEnriched || []).filter(function(t){
+      var tasksVenc = (data.tasksEnriched || []).filter(function(t){
         return t.statusSla === 'DENTRO DO SLA' && t.vencimentoCalc &&
                (!regiaoFiltro || (t.regiao||'OTHERS') === regiaoFiltro);
       });
@@ -252,7 +252,7 @@
       var onCopyDrill = function () {
         var now = Date.now();
         var b = C.VENCIMENTO_BUCKETS[i];
-        var tasks = (pageData.tasksEnriched || []).filter(function(t){
+        var tasks = (data.tasksEnriched || []).filter(function(t){
           if(t.statusSla!=='DENTRO DO SLA'||!t.vencimentoCalc) return false;
           var rest=Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
           return rest>=0 && rest>=b.min && rest<b.max;
