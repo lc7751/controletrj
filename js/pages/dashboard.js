@@ -76,24 +76,49 @@
       return h + 'h' + (m > 0 ? m + 'min' : '');
     }
 
-    function calcUpdateStr(motivoCancelamento) {
-      if (!motivoCancelamento) return 'SEM ATUALIZAÇÃO';
-      if (U.isTextoSemAtualizacao && U.isTextoSemAtualizacao(motivoCancelamento))
-        return 'SEM ATUALIZAÇÃO';
+    function calcUpdateStr(bg) {
+      // Analisa o BLOCO mais recente do BG (BR DD/MM/YYYY HH:MM:SS e US YYYY-MM-DD HH:MM).
+      // Só classifica como "SEM ATUALIZAÇÃO" se o bloco mais recente for claramente um bot.
+      if (!bg) return 'SEM ATUALIZAÇÃO';
+      var texto = bg.toString();
       var DT_RE = /(\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)/g;
-      var t = (motivoCancelamento||'').toString(), matches = [], m;
-      while ((m = DT_RE.exec(t)) !== null) {
+      var matches = [], m;
+      while ((m = DT_RE.exec(texto)) !== null) {
         var dt = U.parseDataHoraBG ? U.parseDataHoraBG(m[1]) : null;
-        if (dt && !isNaN(dt.getTime())) matches.push(dt);
+        if (dt && !isNaN(dt.getTime())) matches.push({ dt: dt, idx: m.index });
       }
       if (!matches.length) return 'SEM ATUALIZAÇÃO';
-      var maisRec = matches.reduce(function(a,b){ return a>b?a:b; });
-      var diffMin = Math.round((Date.now() - maisRec.getTime()) / 60000);
+      // Ordenar por data DESC → bloco mais recente primeiro
+      matches.sort(function(a, b) { return b.dt - a.dt; });
+      var maisRec = matches[0];
+      // Extrair bloco do timestamp mais recente
+      var allByIdx = matches.slice().sort(function(a, b){ return a.idx - b.idx; });
+      var posInIdx = allByIdx.findIndex(function(x){ return x.idx === maisRec.idx; });
+      var endIdx   = (posInIdx + 1 < allByIdx.length) ? allByIdx[posInIdx + 1].idx : texto.length;
+      var bloco    = texto.slice(maisRec.idx, endIdx);
+      var blocoUp  = bloco.toUpperCase();
+      // Só é "sem update" se o bloco mais recente for um BOT conhecido:
+      // 1. MONITOR CCI com frase padrão
+      var MONITOR_FRASES = ['IDENTIFICAMOS SEU REPARO NA FILA DA TLP', 'IDENTIFICAMOS ALARMES RELACIONADOS AO SEU REPARO'];
+      var ehMonitor = /MONITOR\s*CCI/i.test(bloco) && MONITOR_FRASES.some(function(f){ return blocoUp.indexOf(f) >= 0; });
+      // 2. WFM Agent com formulário puro (sem texto livre de técnico)
+      var ehWFMForm = /WFM\s*Agent/i.test(bloco) && blocoUp.indexOf('ANOTAÇÕES DE TRABALHO') >= 0 &&
+                     (['NOME DA OPERADORA', 'A ATIVIDADE VAI OCASIONAR', 'MOTIVO DA VISITA TÉCNICA']
+                       .filter(function(f){ return blocoUp.indexOf(f) >= 0; }).length >= 2);
+      // 3. WFM Agent com GMG form (apenas quando WFM Agent — humano preenchendo GMG = update válido)
+      var ehGMGBot  = /WFM\s*Agent/i.test(bloco) &&
+                     blocoUp.indexOf('ALTERAÇÃO NO ENVIO') >= 0 &&
+                     blocoUp.indexOf('JUSTIFICATIVA DA SELEÇÃO') >= 0 &&
+                     blocoUp.indexOf('DATA DE ATIVAÇÃO DO GERADOR') >= 0;
+      if (ehMonitor || ehWFMForm || ehGMGBot) return 'SEM ATUALIZAÇÃO';
+      // Calcular tempo desde o timestamp mais recente
+      var diffMin = Math.round((Date.now() - maisRec.dt.getTime()) / 60000);
       if (diffMin < 0) return 'ATUALIZADO AGORA';
       if (diffMin < 60) return 'ATUALIZADO A ' + diffMin + 'min';
-      var h = Math.floor(diffMin/60), mn = diffMin%60;
+      var h = Math.floor(diffMin / 60), mn = diffMin % 60;
       return 'ATUALIZADO A ' + h + 'h' + (mn > 0 ? mn + 'min' : '');
     }
+
 
     function prioLabel(t) {
       return t && t.prioridade ? '*' + t.prioridade + '*' : '';
@@ -118,17 +143,37 @@
     // ============================================================
     // SITES FORA — geração de texto para cópia
     // ============================================================
+    // Sempre agrupa por END_ID na cópia.
+    // Respeita state.regiao e state.prioridade do dashboard.
     function gerarTextoSitesFora(regiaoFiltro) {
+      // Filtro efetivo: parâmetro explícito OU filtro do dashboard
+      var regiaoEfetiva = regiaoFiltro || (state.regiao !== 'TODAS' ? state.regiao : null);
+      var prioFiltro    = state.prioridade !== 'TODAS' ? state.prioridade : null;
+
       var incAtivos = (data.incidentsEnriched || []).filter(function(inc){
         return (inc.statusTrat||'').toUpperCase() !== 'RESOLVIDO' &&
-               (!regiaoFiltro || (inc.regiao||'OTHERS') === regiaoFiltro);
+               (!regiaoEfetiva || (inc.regiao||'OTHERS') === regiaoEfetiva);
       });
       var tasksEnriched = data.tasksEnriched || [];
-      var regioesMapa = {};
+
+      // Agrupar por END_ID (na cópia, sempre agrupado)
+      var endIdMap = {};
       incAtivos.forEach(function(inc){
-        var r = inc.regiao || 'OTHERS';
+        var eid = inc.enderecoId || '_sem_endid_' + inc.site;
+        if (!endIdMap[eid]) endIdMap[eid] = [];
+        endIdMap[eid].push(inc);
+      });
+
+      // Mapear por região
+      var regioesMapa = {};
+      Object.keys(endIdMap).forEach(function(eid){
+        var incs = endIdMap[eid];
+        // Ordenar por horário para pegar o mais antigo como referência
+        incs.sort(function(a,b){ return (a.horario||'').localeCompare(b.horario||''); });
+        var mainInc = incs[0];
+        var r = mainInc.regiao || 'OTHERS';
         if (!regioesMapa[r]) regioesMapa[r] = [];
-        regioesMapa[r].push(inc);
+        regioesMapa[r].push({ eid: eid, incs: incs, mainInc: mainInc });
       });
 
       var linhas = [];
@@ -137,31 +182,44 @@
         linhas.push('*' + regLabel + '*');
         linhas.push('*SITES FORA NA FILA*');
 
+        var grupos = regioesMapa[r];
         var comTSK = [], semTSK = [];
-        regioesMapa[r].forEach(function(inc){
-          var tsk = U.tskAberta ? U.tskAberta(inc, tasksEnriched) : null;
+
+        grupos.forEach(function(grupo){
+          // Buscar TSK na tarefa mais recente para este END_ID
+          var mainInc = grupo.mainInc;
+          var tsk = U.tskAberta ? U.tskAberta(mainInc, tasksEnriched) : null;
+          var tf = tsk ? tasksEnriched.filter(function(t){ return t.osNumero === tsk.osNumero; })[0] : null;
+          // Filtro de prioridade: se há filtro ativo e a TSK não bate, pular
+          if (prioFiltro && tf && tf.prioridade !== prioFiltro) return;
+          if (prioFiltro && !tf) return; // sem TSK e filtro de prio ativo: ignorar
+
           if (tsk) {
-            var tf = tasksEnriched.filter(function(t){ return t.osNumero === tsk.osNumero; })[0];
-            comTSK.push({inc:inc, tsk:tsk, tf:tf});
-          } else semTSK.push(inc);
+            comTSK.push({ grupo: grupo, tsk: tsk, tf: tf });
+          } else {
+            semTSK.push(grupo);
+          }
         });
 
-        // --- TSK first ---
+        // --- Com TSK (primeiro) ---
         comTSK.forEach(function(item){
           var tsk = item.tsk, tf = item.tf;
-          var prio = tf && tf.prioridade ? '*' + tf.prioridade + '* ' : '';
-          var tskNum = tsk.osNumero || 'SEM TSK';
-          var site = (tf && tf.siteId) || item.inc.site || '—';
-          var upd = calcUpdateStr((tf||{}).motivoCancelamento || (tsk||{}).motivoCancelamento);
+          var prio    = tf && tf.prioridade ? '*' + tf.prioridade + '* ' : '';
+          var tskNum  = tsk.osNumero || 'SEM TSK';
+          var site    = (tf && tf.siteId) || item.grupo.mainInc.site || '—';
+          var upd     = calcUpdateStr((tf||{}).motivoCancelamento || (tsk||{}).motivoCancelamento);
           linhas.push(prio + tskNum + ' / ' + site + ' · ' + upd);
         });
 
-        // --- Sem TSK ---
-        semTSK.forEach(function(inc){
-          var hor = inc.horario || '—';
-          var site = inc.site || '—';
-          var tec = inc.tecnologia ? ' (' + inc.tecnologia + ')' : '';
-          linhas.push(hor + ' · SEM TSK · ' + site + tec);
+        // --- Sem TSK: formato "HOR · SEM TSK · SITE1, SITE2 / END_ID" ---
+        semTSK.forEach(function(grupo){
+          var hor  = grupo.mainInc.horario || '—';
+          var endId = grupo.eid.startsWith('_sem_endid_') ? '' : (' / ' + grupo.eid);
+          // Sites únicos do grupo (não repete)
+          var sitesUnicos = [];
+          grupo.incs.forEach(function(i){ if (i.site && sitesUnicos.indexOf(i.site) < 0) sitesUnicos.push(i.site); });
+          var sitesStr = sitesUnicos.join(', ');
+          linhas.push(hor + ' · SEM TSK · ' + sitesStr + endId);
         });
 
         linhas.push('');
@@ -175,9 +233,13 @@
     // ============================================================
     function gerarTextoPrazosRegiao(regiaoFiltro) {
       var now = Date.now();
+      // Filtro efetivo
+      var regiaoEfetiva = regiaoFiltro || (state.regiao !== 'TODAS' ? state.regiao : null);
+      var prioFiltro    = state.prioridade !== 'TODAS' ? state.prioridade : null;
       var tasksVenc = (data.tasksEnriched || []).filter(function(t){
         return t.statusSla === 'DENTRO DO SLA' && t.vencimentoCalc &&
-               (!regiaoFiltro || (t.regiao||'OTHERS') === regiaoFiltro);
+               (!regiaoEfetiva || (t.regiao||'OTHERS') === regiaoEfetiva) &&
+               (!prioFiltro || t.prioridade === prioFiltro);
       });
       var regioesMapa = {};
       tasksVenc.forEach(function(t){
@@ -553,7 +615,7 @@
     abaLista('SITES FORA', incAtivos, [
       {k:'horario',h:'HORÁRIO',w:12},{k:'downtime',h:'DURAÇÃO',w:10},{k:'site',h:'SITE',w:20},
       {k:'enderecoId',h:'END_ID',w:16},{k:'anf',h:'ANF',w:8},{k:'cidadeUf',h:'CIDADE/UF',w:22},
-      {k:'regiao',h:'REGIÃO',w:16},{k:'tecnologia',h:'TECNOLOGIA',w:12},
+      {k:'regiao',h:'REGIÃO',w:16},
       {k:'causa',h:'CAUSA',w:30},{k:'causaGrupo',h:'CAUSA GRUPO',w:20},
       {k:'detalhe',h:'DETALHE',w:40},{k:'previsao',h:'PREVISÃO',w:14},
       {k:'statusTrat',h:'STATUS TRAT.',w:16},{k:'infra',h:'INFRA',w:14},{k:'peso',h:'PESO',w:8}
