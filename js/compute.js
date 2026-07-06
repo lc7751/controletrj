@@ -188,10 +188,13 @@
     var sep = D.separarTicketsManuais(tasks);
     var tickets = sep.tickets, manuais = sep.manuais;
 
-    // Regra de negócio: tarefas válidas para Backlog Geral e Aging SEMPRE têm dataCriacaoAS.
-    // Tarefas Corretiva sem coluna AS são anomalias tratadas como atividades manuais.
+    // Regra de negócio: Backlog Geral e Aging consideram somente "Não Iniciado" e "Iniciado".
+    // PENDENTE fica fora da contabilização principal (continua visível em SLA por Região,
+    // drills detalhados e outras visualizações via isBacklogStatus / isBacklogSimples).
+    var _s = function (t) { var s = (t.status || '').toString().trim().toUpperCase(); return s; };
     var backlog = tickets.filter(function (t) {
-      return D.isBacklogStatus(t.status) && !!t.dataCriacaoAS;
+      var s = _s(t);
+      return (s === 'NÃO INICIADO' || s === 'NAO INICIADO' || s === 'INICIADO') && !!t.dataCriacaoAS;
     });
 
     // Separa CONCLUIDA de CANCELADA — o VBA só conta SLA para CONCLUIDA.
@@ -208,7 +211,12 @@
 
     var fora = backlog.filter(function (t) { return t.statusSla === 'FORA DO SLA'; });
     var dentro = backlog.filter(function (t) { return t.statusSla === 'DENTRO DO SLA'; });
-    var indef = backlog.filter(function (t) { return t.statusSla === 'INDEFINIDO' || t.fonteSla === 'SEM DADOS'; });
+    // Backlog Indefinido = sem prazo definido (INDEFINIDO/SEM DADOS) OU prazo calculado
+    // pelo sistema (SLA CAL = coluna U vazia, prazo estimado por prioridade).
+    // A coluna U vazia indica que não há SLA formal registrado → indefinido para a gestão.
+    var indef = backlog.filter(function (t) {
+      return t.statusSla === 'INDEFINIDO' || t.fonteSla === 'SEM DADOS' || t.fonteSla === 'SLA CAL';
+    });
     var preditiva = tickets.filter(function (t) { return t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA'; });
 
     function encerradaDentro(t) {
@@ -372,7 +380,9 @@
   // ===================== REGIONAL (pagina) =====================
   function isBacklogSimples(status) {
     var s = up(status);
-    return !(s.indexOf('CONCLU') >= 0 || s.indexOf('CANCEL') >= 0);
+    // Somente Não Iniciado e Iniciado — mesmo critério do Backlog Total e Aging.
+    // Pendente fica fora da contabilização principal de SLA.
+    return s === 'NÃO INICIADO' || s === 'NAO INICIADO' || s === 'INICIADO';
   }
   function regionalPage(tasksEnriched) {
     var tasks = D.dedupPorTsk(tasksEnriched).filter(function (t) { return D.isTicketCorretiva(t.tipoAtividade); });
@@ -468,7 +478,11 @@
     });
     var sep = D.separarTicketsManuais(tasks);
     var tickets = sep.tickets, manuais = sep.manuais;
-    var backlog = tickets.filter(function (t) { return D.isBacklogStatus(t.status); });
+    // Backlog contável = Corretiva + Não Iniciado/Iniciado (sem Pendente, mesma regra do dashboard)
+    var backlog = tickets.filter(function (t) {
+      var s = (t.status || '').toString().trim().toUpperCase();
+      return s === 'NÃO INICIADO' || s === 'NAO INICIADO' || s === 'INICIADO';
+    });
     var concluidas = tickets.filter(function (t) {
       var s = (t.status || '').toUpperCase().trim();
       return s === 'CONCLUÍDA' || s === 'CONCLUIDA';
@@ -483,7 +497,7 @@
     switch (tipo) {
       case 'foraSla': return backlog.filter(function (t) { return t.statusSla === 'FORA DO SLA'; });
       case 'backlogTotal': return backlog;
-      case 'backlogIndef': return backlog.filter(function (t) { return t.statusSla === 'INDEFINIDO' || t.fonteSla === 'SEM DADOS'; });
+      case 'backlogIndef': return backlog.filter(function (t) { return t.statusSla === 'INDEFINIDO' || t.fonteSla === 'SEM DADOS' || t.fonteSla === 'SLA CAL'; });
       case 'preditiva': return tickets.filter(function (t) { return t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA'; });
       case 'produtividade': return concluidas;
       case 'aging': {
