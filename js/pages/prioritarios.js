@@ -321,7 +321,7 @@
       },
       onclick: opts.onclick
     }, [
-      U.h('span', { style: { fontSize: '22px' }, text: opts.icon }),
+      opts.icon ? U.h('span', { style: { fontSize: '22px' }, text: opts.icon }) : null,
       U.h('div', { style: { textAlign: 'left' } }, [
         U.h('div', { text: opts.label }),
         U.h('div', { style: { fontSize: '11px', fontWeight: '400', opacity: '0.85' }, text: opts.count + ' tarefa(s) em aberto' })
@@ -372,7 +372,7 @@
     var concMatches = calcMatches();
     var catAtiva = { v: null };
 
-    container.appendChild(U.pageHeader('🎯 Prioritários', 'Casos especiais em monitoramento — clique em uma categoria para ver os detalhes.'));
+    container.appendChild(U.pageHeader('Prioritários', 'Casos especiais em monitoramento — clique em uma categoria para ver os detalhes.'));
 
     var btnRow   = U.h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '20px' } });
     var drillArea = U.h('div', { style: { minHeight: '120px' } });
@@ -411,20 +411,20 @@
       }
 
       if (cat === 'b2b') {
-        card.appendChild(headerComCopiar('⭐', 'B2B / Premium — ' + b2bTasks.length + ' caso(s)', '#3498db', function () { return gerarTextoCopia(b2bTasks, 'B2B / PREMIUM'); }));
+        card.appendChild(headerComCopiar('', 'B2B / Premium — ' + b2bTasks.length + ' caso(s)', '#3498db', function () { return gerarTextoCopia(b2bTasks, 'B2B / PREMIUM'); }));
         card.appendChild(tabelaTarefas(b2bTasks, { vazio: 'Nenhum caso B2B / Premium com status Iniciado ou Não Iniciado.' }));
 
       } else if (cat === 'backbone') {
-        card.appendChild(headerComCopiar('⚡', 'Backbone / Longa Distância — ' + backboneTasks.length + ' caso(s)', '#e74c3c', function () { return gerarTextoCopia(backboneTasks, 'BACKBONE / LONGA DISTÂNCIA'); }));
+        card.appendChild(headerComCopiar('', 'Backbone / Longa Distância — ' + backboneTasks.length + ' caso(s)', '#e74c3c', function () { return gerarTextoCopia(backboneTasks, 'BACKBONE / LONGA DISTÂNCIA'); }));
         card.appendChild(tabelaTarefas(backboneTasks, { vazio: 'Nenhuma tarefa com Longa Distância no diário.' }));
 
       } else if (cat === 'conc') {
-        card.appendChild(headerComCopiar('📍', 'Concentradores — ' + concMatches.length + ' alerta(s)', '#9b59b6', function () { return gerarTextoCopiaConc(concMatches); }));
+        card.appendChild(headerComCopiar('', 'Concentradores — ' + concMatches.length + ' alerta(s)', '#9b59b6', function () { return gerarTextoCopiaConc(concMatches); }));
         card.appendChild(formConcentradores(function () { concMatches = calcMatches(); setCategoria('conc'); }));
         card.appendChild(listaConcentradores(carregarConc(), function () { concMatches = calcMatches(); setCategoria('conc'); }));
         if (concMatches.length > 0) {
           card.appendChild(U.h('hr', { style: { margin: '12px 0', borderColor: 'var(--trj-border)' } }));
-          card.appendChild(U.h('p', { style: { fontWeight: '700', fontSize: '13px', marginBottom: '8px', color: '#9b59b6' }, text: '🔔 Alertas ativos:' }));
+          card.appendChild(U.h('p', { style: { fontWeight: '700', fontSize: '13px', marginBottom: '8px', color: '#9b59b6' }, text: 'Alertas ativos:' }));
           card.appendChild(tabelaConcentradores(concMatches));
         }
       }

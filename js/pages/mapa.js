@@ -1,13 +1,16 @@
 /* ============================================================
  * Página: Mapa Operacional TRJ
  * ============================================================
- * Mapa Leaflet com:
- *  • Marcadores de incidentes ativos (sites fora, FLAG 1)
- *  • Toggle para exibir FLAG 0 (demais sites)
- *  • Polylines de enlaces MW (por fornecedor, coloridas)
- *  • Marcadores Hub FO com ícones distintos
+ * Mapa Leaflet com dados de sites vindos da ponte local
+ * (http://localhost:5057/api/mapa) que acessa o PHP interno
+ * via VPN, ou fallback para dados importados do Genesis HTML.
+ *
+ * Exibe:
+ *  • Marcadores dos sites fora (FLAG 1 por padrão)
+ *  • Toggle FLAG 0 (demais sites)
+ *  • Polylines enlaces MW (coloridas por fornecedor)
+ *  • Marcadores Hub FO
  *  • Busca por site, END_ID ou cidade
- *  • Dados de coordenadas extraídos do Genesis HTML
  * ============================================================ */
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
@@ -16,112 +19,396 @@
   var LS_COORDS = 'trj_coordMap';
   var LS_MW     = 'trj_mwData';
   var LS_FO     = 'trj_foData';
+  var PONTE_URL = 'http://localhost:5057';
 
-  // Cores por fornecedor MW (iguais às do Genesis)
+  // ── Cores exatas do mapa original ───────────────────────────
   var MW_CORES = {
-    'NOKIA': '#9b59b6', 'HUAWEI': '#e74c3c', 'CERAGON': '#f0b429',
-    'ERICSSON': '#2c3e80', 'SIAE': '#14c8f0', 'ZTE': '#2ecc71',
-    'default': '#7f8c8d'
+    'NOKIA':    '#800080',
+    'HUAWEI':   '#d20014',
+    'CERAGON':  '#dcf014',
+    'ERICSSON': '#000078',
+    'SIAE':     '#14c8f0',
+    'ZTE':      '#2ecc71',
+    'default':  '#7f8c8d'
   };
 
-  // ── Carregar dados do localStorage ──────────────────────────
-  function carregarCoords() {
-    try { return JSON.parse(localStorage.getItem(LS_COORDS) || '{}') || {}; } catch(e){ return {}; }
+  // ── Utilitários de storage ─────────────────────────────────
+  function loadLS(key) {
+    try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch(e){ return null; }
   }
-  function carregarMW() {
-    try { return JSON.parse(localStorage.getItem(LS_MW) || '[]') || []; } catch(e){ return []; }
+  function saveLS(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch(e){}
   }
-  function carregarFO() {
-    try { return JSON.parse(localStorage.getItem(LS_FO) || '[]') || []; } catch(e){ return []; }
+  function salvarMapaDados(coordMap, mwData, foData) {
+    saveLS(LS_COORDS, coordMap);
+    saveLS(LS_MW, mwData);
+    saveLS(LS_FO, foData);
   }
-  function salvarDados(coordMap, mwData, foData) {
-    try {
-      localStorage.setItem(LS_COORDS, JSON.stringify(coordMap));
-      localStorage.setItem(LS_MW,     JSON.stringify(mwData));
-      localStorage.setItem(LS_FO,     JSON.stringify(foData));
-    } catch(e) { console.warn('Mapa: erro ao salvar no localStorage', e); }
-  }
-  TRJ.mapaSetDados = salvarDados; // Exposto para genesis.js chamar
+  TRJ.mapaSetDados = salvarMapaDados;
 
-  // ── Parsear Genesis HTML e extrair mwData/foData/coordMap ──
+  // ── Parsear Genesis HTML → coordenadas + mwData + foData ──
   function parseGenesisParaMapa(htmlText) {
-    var scriptM = htmlText.match(/mwData\s*=\s*(\[[\s\S]*?\]);/);
-    var scriptF = htmlText.match(/foData\s*=\s*(\[[\s\S]*?\]);/);
-    function cleanJSON(raw) {
-      return raw.replace(/\u00a0/g,'').replace(/\\u00a0/g,'');
+    function cleanJSON(raw) { return raw.replace(/\u00a0/g,'').replace(/\\u00a0/g,''); }
+    function extract(pattern) {
+      var m = htmlText.match(pattern);
+      if (!m) return [];
+      try { return JSON.parse(cleanJSON(m[1])); } catch(e){ return []; }
     }
-    var mwData = [], foData = [];
-    if (scriptM) { try { mwData = JSON.parse(cleanJSON(scriptM[1])); } catch(e){} }
-    if (scriptF) { try { foData = JSON.parse(cleanJSON(scriptF[1])); } catch(e){} }
+    var mwData = extract(/mwData\s*=\s*(\[[\s\S]*?\]);/);
+    var foData = extract(/foData\s*=\s*(\[[\s\S]*?\]);/);
 
-    function parseCoord(s) {
-      try { return parseFloat(String(s).replace(/\u00a0/g,'').replace(',','.')); }
-      catch(e){ return null; }
-    }
+    function pc(s){ try { return parseFloat(String(s).replace(/\u00a0/g,'').replace(',','.')); } catch(e){ return null; } }
     var coordMap = {};
     mwData.forEach(function(link) {
-      var enlace = link.Enlace2 || '';
-      var partes = enlace.split(' - ').map(function(p){ return p.trim(); }).filter(Boolean);
-      var lats = [parseCoord(link.LAT_A), parseCoord(link.LAT_B)];
-      var lons = [parseCoord(link.LONG_A), parseCoord(link.LONG_B)];
-      partes.slice(0,2).forEach(function(eid, idx) {
-        if (lats[idx] && lons[idx] && eid && !coordMap[eid]) {
-          coordMap[eid] = [lats[idx], lons[idx]];
-        }
+      var parts = (link.Enlace2||'').split(' - ').map(function(p){ return p.trim(); }).filter(Boolean);
+      var coords = [[pc(link.LAT_A), pc(link.LONG_A)], [pc(link.LAT_B), pc(link.LONG_B)]];
+      parts.slice(0,2).forEach(function(eid, idx) {
+        if (coords[idx][0] && coords[idx][1] && eid && !coordMap[eid]) coordMap[eid] = coords[idx];
       });
     });
     foData.forEach(function(hub) {
-      var hubStr = hub.HUB || '';
-      var m = hubStr.match(/\((\w+)\)/);
-      var eid = m ? m[1] : (hub.NEName || '');
-      var lat = parseCoord(hub.LAT_A), lon = parseCoord(hub.LONG_A);
+      var m = (hub.HUB||'').match(/\((\w+)\)/);
+      var eid = m ? m[1] : (hub.NEName||'');
+      var lat = pc(hub.LAT_A), lon = pc(hub.LONG_A);
       if (lat && lon && eid && !coordMap[eid]) coordMap[eid] = [lat, lon];
     });
 
-    salvarDados(coordMap, mwData, foData);
-    return { coordMap: coordMap, mwData: mwData, foData: foData };
+    salvarMapaDados(coordMap, mwData, foData);
+    return { coordMap: coordMap, mwData: mwData, foData: foData, coordCount: Object.keys(coordMap).length };
   }
   TRJ.mapaParseGenesis = parseGenesisParaMapa;
 
-  // ── PÁGINA PRINCIPAL ─────────────────────────────────────────
+  // ── PÁGINA ─────────────────────────────────────────────────
   TRJ.pages.mapa = function(container, ctx) {
-    var app      = ctx.app;
-    var data     = ctx.data || {};
+    var data      = ctx.data || {};
     var incidents = data.incidentsEnriched || [];
-    var coordMap = carregarCoords();
-    var mwData   = carregarMW();
-    var foData   = carregarFO();
+    var tasks     = data.tasksEnriched     || [];
 
-    var temDados = Object.keys(coordMap).length > 0;
+    var coordMap  = loadLS(LS_COORDS) || {};
+    var mwData    = loadLS(LS_MW)     || [];
+    var foData    = loadLS(LS_FO)     || [];
 
-    // ── Layout ──────────────────────────────────────────────────
-    container.appendChild(U.pageHeader('🗺️ Mapa Operacional',
-      'Incidentes ativos georreferenciados, enlaces MW e hubs FO.'));
-
-    // Barra de controles
-    var searchInput = U.h('input', {
-      class: 'trj-input', placeholder: '🔍  Buscar por site, END_ID ou cidade...',
-      style: { flex: '1', maxWidth: '360px', fontSize: '13px' }
+    // ── Construir lookup ENDID → {site} a partir das tarefas ─
+    var siteByEndId = {};
+    tasks.forEach(function(t) {
+      var eid = (t.enderecoId||'').trim();
+      if (eid && !siteByEndId[eid]) siteByEndId[eid] = t.siteId || '';
+    });
+    incidents.forEach(function(i) {
+      var eid = (i.enderecoId||i.endId||'').trim();
+      if (eid && !siteByEndId[eid]) siteByEndId[eid] = i.site || '';
     });
 
-    var chkFlag0  = U.h('input', { type: 'checkbox' });
-    var chkMW     = U.h('input', { type: 'checkbox' }); chkMW.checked = true;
-    var chkFO     = U.h('input', { type: 'checkbox' }); chkFO.checked = false;
+    // Estado do mapa
+    var mapState = { showFlag0: false, showMW: true, showFO: false, flagFilter: '1' };
+    var mapInstance = null, layers = {};
+    var sitesFlag1 = [], sitesFlag0Raw = [];
 
-    var lblFlag0 = U.h('label', { style: {display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',cursor:'pointer',whiteSpace:'nowrap'} }, [chkFlag0, U.h('span',{text:'FLAG 0 (demais sites)'})]);
-    var lblMW    = U.h('label', { style: {display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',cursor:'pointer',whiteSpace:'nowrap'} }, [chkMW, U.h('span',{text:'Enlaces MW'})]);
-    var lblFO    = U.h('label', { style: {display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',cursor:'pointer',whiteSpace:'nowrap'} }, [chkFO, U.h('span',{text:'Hubs FO'})]);
+    // ── Header ─────────────────────────────────────────────────
+    container.appendChild(U.pageHeader('Mapa Operacional',
+      'Sites fora georreferenciados, enlaces MW e hubs FO em tempo real.'));
 
-    // Contadores
-    var statsEl = U.h('div', { style: {fontSize:'12px',color:'var(--trj-muted)',display:'flex',gap:'16px',alignItems:'center',flexWrap:'wrap'} });
+    // ── Barra de controles ─────────────────────────────────────
+    var searchInput = U.h('input', {
+      class: 'trj-input',
+      placeholder: 'Buscar por site, END_ID ou cidade...',
+      style: { flex: '1', maxWidth: '340px', fontSize: '13px' }
+    });
 
-    // Botão de importar Genesis
-    var btnImport = U.h('button', {
+    function mkCheck(label) {
+      var chk = U.h('input', { type: 'checkbox' });
+      var lbl = U.h('label', { style: { display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',cursor:'pointer',whiteSpace:'nowrap' }}, [chk, U.h('span',{text:label})]);
+      return { chk: chk, el: lbl };
+    }
+
+    var ckFlag0 = mkCheck('FLAG 0 (demais sites)');
+    var ckMW    = mkCheck('Enlaces MW'); ckMW.chk.checked = true;
+    var ckFO    = mkCheck('Hubs FO');
+
+    var statsEl = U.h('div', { style: { fontSize:'12px', color:'var(--trj-muted)', display:'flex', gap:'14px', flexWrap:'wrap', alignItems:'center' } });
+
+    // Botão buscar via ponte
+    var btnPonte = U.h('button', {
       class: 'trj-btn trj-btn-primary clickable',
-      style: { fontSize: '12px', padding: '4px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px' }
-    }, [U.h('span',{text:'📡'}), U.h('span',{text:'Importar Genesis (coordenadas)'})]);
-    var fileInput = U.h('input', { type: 'file', accept: '.html,.htm', style: { display: 'none' } });
+      style: { fontSize:'12px', padding:'4px 14px', display:'inline-flex', alignItems:'center', gap:'6px' }
+    }, [U.h('span',{text:'Buscar sites (ponte + VPN)' })]);
+
+    // Botão importar HTML (fallback)
+    var btnImport = U.h('button', {
+      class: 'trj-btn trj-btn-ghost clickable',
+      style: { fontSize:'12px', padding:'4px 12px', display:'inline-flex', alignItems:'center', gap:'6px', opacity:'0.8' }
+    }, [U.h('span',{text:'Importar Genesis HTML' })]);
+    var fileInput = U.h('input', { type:'file', accept:'.html,.htm', style:{ display:'none' } });
     container.appendChild(fileInput);
+
+    var ctrlBar = U.h('div', {
+      style: { display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', marginBottom:'10px',
+               padding:'10px 14px', background:'var(--trj-card)', borderRadius:'10px', border:'1px solid var(--trj-border)',
+               // z-index garante que barra de controles fique sobre o mapa mas abaixo da sidebar
+               position:'relative', zIndex:'1' }
+    }, [searchInput, ckFlag0.el, ckMW.el, ckFO.el,
+        U.h('div', {style:{marginLeft:'auto',display:'flex',gap:'8px'}}, [btnPonte, btnImport])]);
+    container.appendChild(ctrlBar);
+    container.appendChild(statsEl);
+
+    // ── Container do mapa ──────────────────────────────────────
+    // z-index do mapa menor que a sidebar (a sidebar usa z-index 200+)
+    var mapDiv = U.h('div', {
+      id: 'trj-mapa-leaflet',
+      style: { height:'65vh', borderRadius:'12px', overflow:'hidden',
+               border:'1px solid var(--trj-border)', marginTop:'10px',
+               position:'relative', zIndex:'0' }
+    });
+    container.appendChild(mapDiv);
+
+    // ── Legenda completa ───────────────────────────────────────
+    var legItems = [
+      { cor:'#e74c3c', shape:'circle', label:'Site fora — sem TSK' },
+      { cor:'#3498db', shape:'circle', label:'Site fora — com TSK' },
+      { cor:'#f0b429', shape:'circle', label:'Site fora — recente (<1h)' },
+      { cor:'#888',    shape:'circle', label:'FLAG 0 (demais sites)' },
+      { cor:'#800080', shape:'line', label:'MW Nokia' },
+      { cor:'#d20014', shape:'line', label:'MW Huawei' },
+      { cor:'#dcf014', shape:'line', label:'MW Ceragon' },
+      { cor:'#000078', shape:'line', label:'MW Ericsson' },
+      { cor:'#14c8f0', shape:'line', label:'MW SIAE' },
+      { cor:'#2ecc71', shape:'square', label:'Hub FO' },
+    ];
+    var legEl = U.h('div', { style: { display:'flex', gap:'12px', flexWrap:'wrap', marginTop:'8px', fontSize:'11px', color:'var(--trj-muted)' } },
+      legItems.map(function(item) {
+        var ico;
+        if (item.shape === 'line') {
+          ico = U.h('span', { style: { width:'24px', height:'3px', background:item.cor, display:'inline-block', verticalAlign:'middle' } });
+        } else if (item.shape === 'square') {
+          ico = U.h('span', { style: { width:'10px', height:'10px', background:item.cor, display:'inline-block', borderRadius:'2px', border:'1px solid #fff' } });
+        } else {
+          ico = U.h('span', { style: { width:'10px', height:'10px', borderRadius:'50%', background:item.cor, display:'inline-block', border:'1px solid rgba(255,255,255,.4)' } });
+        }
+        return U.h('div', { style: { display:'flex', alignItems:'center', gap:'5px' } }, [ico, U.h('span',{text:item.label})]);
+      }));
+    container.appendChild(legEl);
+
+    // ── Inicializar Leaflet ───────────────────────────────────
+    function getLeaflet(cb) {
+      if (window.L) { cb(); return; }
+      var css = document.createElement('link');
+      css.rel = 'stylesheet'; css.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
+      document.head.appendChild(css);
+      var js = document.createElement('script');
+      js.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+      js.onload = cb; document.head.appendChild(js);
+    }
+
+    function initMap() {
+      if (mapInstance) return;
+      mapInstance = window.L.map('trj-mapa-leaflet', { preferCanvas: true })
+        .setView([-22.3, -43.1], 8);
+
+      window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap | CARTO',
+        maxZoom: 19
+      }).addTo(mapInstance);
+
+      layers.flag1 = window.L.layerGroup().addTo(mapInstance);
+      layers.flag0 = window.L.layerGroup();
+      layers.mw    = window.L.layerGroup().addTo(mapInstance);
+      layers.fo    = window.L.layerGroup();
+
+      // Eventos de toggle
+      ckFlag0.chk.addEventListener('change', function() { if(ckFlag0.chk.checked) layers.flag0.addTo(mapInstance); else layers.flag0.remove(); });
+      ckMW.chk.addEventListener('change',   function() { if(ckMW.chk.checked)    layers.mw.addTo(mapInstance);    else layers.mw.remove(); });
+      ckFO.chk.addEventListener('change',   function() { if(ckFO.chk.checked)    layers.fo.addTo(mapInstance);    else layers.fo.remove(); });
+
+      // Busca em tempo real
+      var timer = null;
+      searchInput.addEventListener('input', function() {
+        clearTimeout(timer);
+        timer = setTimeout(function() { filtrarMarcadores(searchInput.value.trim().toLowerCase()); }, 200);
+      });
+    }
+
+    function filtrarMarcadores(q) {
+      layers.flag1._layers && Object.values(layers.flag1._layers).forEach(function(m) {
+        var d = m._d || {};
+        var ok = !q || (d.eid||'').toLowerCase().indexOf(q)>=0
+               || (d.site||'').toLowerCase().indexOf(q)>=0
+               || (d.cidade||'').toLowerCase().indexOf(q)>=0;
+        m.setOpacity(ok ? 1 : 0.05);
+        if (ok && m.setIcon) {} // não altera ícone
+      });
+    }
+
+    // ── Ícone DIV customizado ─────────────────────────────────
+    function divIcon(cor, sz, shape) {
+      sz = sz || 14;
+      var html;
+      if (shape === 'square') {
+        html = '<div style="width:' + sz + 'px;height:' + sz + 'px;background:' + cor + ';border:2px solid #fff;border-radius:3px;box-shadow:0 0 4px rgba(0,0,0,.5)"></div>';
+      } else {
+        html = '<div style="width:' + sz + 'px;height:' + sz + 'px;background:' + cor + ';border:2px solid #fff;border-radius:50%;box-shadow:0 0 6px ' + cor + '88"></div>';
+      }
+      return window.L.divIcon({ html:html, className:'', iconSize:[sz,sz], iconAnchor:[sz/2,sz/2], popupAnchor:[0,-sz/2] });
+    }
+
+    // ── Renderizar sites (markerData vindos da ponte ou do coordMap) ──
+    function renderSites(sitesList) {
+      if (!mapInstance) return;
+      layers.flag1.clearLayers();
+      layers.flag0.clearLayers();
+
+      var cTSK = 0, cSemCoord = 0;
+      var tasksAtivas = tasks.filter(function(t){
+        var s=(t.status||'').toUpperCase().trim(); return s==='NÃO INICIADO'||s==='NAO INICIADO'||s==='INICIADO';
+      });
+
+      sitesFlag1 = sitesList.filter(function(s){ return String(s.flag||s.FLAG||'1') === '1'; });
+      sitesFlag0Raw = sitesList.filter(function(s){ return String(s.flag||s.FLAG||'0') === '0'; });
+
+      sitesFlag1.forEach(function(site) {
+        var lat = parseFloat(site.latitude || site.lat || '');
+        var lon = parseFloat(site.longitude || site.lon || '');
+        if (isNaN(lat) || isNaN(lon)) { cSemCoord++; return; }
+
+        var eid    = (site.ENDID || site.endId || '').trim();
+        var nome   = site.NEName || site.nome || siteByEndId[eid] || eid;
+        var cidade = site.municipio || site.cidade || '';
+
+        // Verificar TSK aberta
+        var incMatch = incidents.filter(function(i){ return i.enderecoId === eid; })[0];
+        var tsk = (incMatch && U.tskAberta) ? U.tskAberta(incMatch, tasksAtivas) : null;
+        if (tsk) cTSK++;
+
+        // Cor baseada no tempo (como o original)
+        var tempo = parseInt(site.tempo || '99', 10);
+        var cor = tsk ? '#3498db' : (tempo === 0 ? '#f0b429' : '#e74c3c');
+
+        var marker = window.L.marker([lat, lon], { icon: divIcon(cor, 14) });
+        marker._d = { eid:eid, site:nome, cidade:cidade };
+
+        var popContent = '<div style="font:12px ui-monospace,monospace;min-width:200px;padding:4px">'
+          + '<b style="color:' + cor + ';font-size:13px">' + nome + '</b><br>'
+          + '<span style="color:#888">END_ID:</span> ' + eid + '<br>'
+          + (cidade ? '<span style="color:#888">Cidade:</span> ' + cidade + '<br>' : '')
+          + '<span style="color:#888">Queda:</span> ' + (site.queda||'—') + '<br>'
+          + (site.evento ? '<span style="color:#888">Evento:</span> ' + site.evento + '<br>' : '')
+          + (site.previsao ? '<span style="color:#888">Previsão:</span> ' + site.previsao + '<br>' : '')
+          + (site.celulas ? '<span style="color:#888">Células:</span> ' + site.celulas + '<br>' : '')
+          + (tsk ? '<span style="color:#3498db;font-weight:700">TSK: ' + tsk.osNumero + '</span>' : '<span style="color:#e74c3c">Sem TSK aberta</span>')
+          + '</div>';
+        marker.bindPopup(popContent, { maxWidth: 280 });
+        marker.bindTooltip(nome + ' (' + eid + ')', { direction:'top' });
+        marker.addTo(layers.flag1);
+      });
+
+      // FLAG 0
+      sitesFlag0Raw.forEach(function(site) {
+        var lat = parseFloat(site.latitude||site.lat||'');
+        var lon = parseFloat(site.longitude||site.lon||'');
+        if (isNaN(lat) || isNaN(lon)) return;
+        var eid  = (site.ENDID||site.endId||'').trim();
+        var nome = site.NEName || site.nome || siteByEndId[eid] || eid;
+        var m = window.L.circleMarker([lat,lon], { radius:4, color:'#555', fillColor:'#777', fillOpacity:0.5, weight:1 });
+        m._d = { eid:eid, site:nome, cidade:site.municipio||'' };
+        m.bindTooltip(nome + ' (' + eid + ')', { direction:'top' });
+        m.addTo(layers.flag0);
+      });
+
+      updateStats(sitesFlag1.length, cTSK, cSemCoord);
+    }
+
+    // ── Renderizar MW + FO (static, from stored data) ──────────
+    function renderEstaticos() {
+      if (!mapInstance) return;
+      layers.mw.clearLayers();
+      layers.fo.clearLayers();
+
+      mwData.forEach(function(link) {
+        function pc(s){ try { return parseFloat(String(s).replace(/\u00a0/g,'').replace(',','.')); } catch(e){ return null; } }
+        var latA=pc(link.LAT_A), lonA=pc(link.LONG_A), latB=pc(link.LAT_B), lonB=pc(link.LONG_B);
+        if (!latA||!lonA||!latB||!lonB) return;
+        var forn  = (link.FORNECEDOR||'').toUpperCase();
+        var cor   = MW_CORES[forn] || MW_CORES.default;
+        var enlace = (link.Enlace&&link.Enlace.trim().length>5) ? link.Enlace : (link.Enlace2||'');
+        var line = window.L.polyline([[latA,lonA],[latB,lonB]], {
+          color:cor, weight:5, opacity:0.65,
+          dashArray: forn==='CERAGON'?'6,4':null
+        });
+        line.bindPopup('<b>Enlace:</b> ' + enlace + '<br><b>Fornecedor:</b> ' + (link.FORNECEDOR||'—')
+          + (link.PROJETO ? '<br><b>Projeto:</b> ' + link.PROJETO : ''), { maxWidth:220 });
+        line.addTo(layers.mw);
+      });
+
+      foData.forEach(function(hub) {
+        function pc(s){ try { return parseFloat(String(s).replace(/\u00a0/g,'').replace(',','.')); } catch(e){ return null; } }
+        var lat=pc(hub.LAT_A), lon=pc(hub.LONG_A);
+        if (!lat||!lon) return;
+        var m = window.L.marker([lat,lon], { icon: divIcon('#2ecc71', 10, 'square') });
+        m.bindPopup('<b>' + (hub.HUB||hub.NEName||'—') + '</b><br>' + (hub.FORNECEDOR||'') + (hub.PROJETO?' | '+hub.PROJETO:''));
+        m.bindTooltip(hub.NEName||hub.HUB||'', { direction:'top' });
+        m.addTo(layers.fo);
+      });
+    }
+
+    // ── Renderizar usando coordMap (fallback sem ponte) ────────
+    function renderComCoordMap() {
+      var incAtivos = incidents.filter(function(i){ return (i.statusTrat||'').toUpperCase()!=='RESOLVIDO'; });
+      var fakeMarkers = incAtivos.map(function(inc) {
+        var eid = (inc.enderecoId||'').trim();
+        var coords = coordMap[eid];
+        if (!coords) return null;
+        return { ENDID:eid, NEName:inc.site||siteByEndId[eid]||eid, latitude:coords[0], longitude:coords[1],
+                 municipio:(inc.cidadeUf||'').split('/')[0].trim(), queda:inc.horario||'', flag:1,
+                 evento:inc.causa||'', previsao:'' };
+      }).filter(Boolean);
+
+      var flag0Fake = Object.keys(coordMap)
+        .filter(function(eid){ return !incAtivos.find(function(i){ return i.enderecoId===eid; }); })
+        .slice(0, 3000)
+        .map(function(eid) {
+          var c = coordMap[eid];
+          return { ENDID:eid, NEName:siteByEndId[eid]||eid, latitude:c[0], longitude:c[1], flag:0 };
+        });
+
+      renderSites(fakeMarkers.concat(flag0Fake));
+    }
+
+    function updateStats(total, comTSK, semCoord) {
+      statsEl.innerHTML = '';
+      var items = [
+        { text:'Sites fora no mapa: ' + total, cor:'#e74c3c' },
+        { text:'Com TSK aberta: ' + comTSK, cor:'#3498db' },
+        { text:'Sem coordenadas: ' + semCoord, cor:'var(--trj-muted)' },
+        { text:'Enlaces MW: ' + mwData.length, cor:'var(--trj-muted)' },
+        { text:'Hubs FO: ' + foData.length, cor:'#2ecc71' },
+      ];
+      items.forEach(function(item) {
+        statsEl.appendChild(U.h('span', { style:{ fontSize:'12px', color:item.cor } }, item.text));
+      });
+    }
+
+    // ── Buscar via ponte ────────────────────────────────────────
+    function buscarViaPonte() {
+      btnPonte.textContent = 'Buscando...';
+      btnPonte.disabled = true;
+      fetch(PONTE_URL + '/api/saude')
+        .then(function(r) { return r.json(); })
+        .then(function() {
+          return fetch(PONTE_URL + '/api/mapa?flag=');
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(json) {
+          if (json.erro) { U.toast('Erro da ponte: ' + json.erro, 'err'); return; }
+          var sites = json.sites || [];
+          U.toast('Mapa: ' + sites.length + ' sites carregados via ponte.', 'ok');
+          getLeaflet(function() { initMap(); renderSites(sites); renderEstaticos(); });
+        })
+        .catch(function(e) {
+          U.toast('Ponte não disponível. Use "Importar Genesis HTML" ou inicie o ponte_trj.py.', 'err');
+        })
+        .finally(function() { btnPonte.textContent = 'Buscar sites (ponte + VPN)'; btnPonte.disabled = false; });
+    }
+
+    btnPonte.addEventListener('click', buscarViaPonte);
     btnImport.addEventListener('click', function(){ fileInput.click(); });
     fileInput.addEventListener('change', function(e) {
       var file = e.target.files[0]; if (!file) return;
@@ -129,236 +416,29 @@
       reader.onload = function(ev) {
         var result = parseGenesisParaMapa(ev.target.result);
         coordMap = result.coordMap; mwData = result.mwData; foData = result.foData;
-        U.toast('Genesis importado: ' + Object.keys(coordMap).length + ' sites com coordenadas.', 'ok');
+        U.toast('Genesis: ' + result.coordCount + ' coords importadas.', 'ok');
         fileInput.value = '';
-        renderMapa();
+        getLeaflet(function() { initMap(); renderComCoordMap(); renderEstaticos(); });
       };
       reader.readAsText(file, 'utf-8');
     });
 
-    var controles = U.h('div', { style: {display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap',marginBottom:'12px',padding:'10px 14px',background:'var(--trj-card)',borderRadius:'10px',border:'1px solid var(--trj-border)'} }, [
-      searchInput, lblFlag0, lblMW, lblFO, statsEl,
-      U.h('div', {style:{marginLeft:'auto'}}, btnImport)
-    ]);
-    container.appendChild(controles);
+    // ── Iniciar mapa automaticamente se tiver dados ────────────
+    var temMW = mwData.length > 0;
+    var temCoords = Object.keys(coordMap).length > 0;
 
-    // Container do mapa
-    var mapDiv = U.h('div', { id: 'trj-mapa', style: { height: '70vh', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--trj-border)' } });
-    container.appendChild(mapDiv);
-
-    // ── Legenda ──────────────────────────────────────────────────
-    var legendEl = U.h('div', { style: {display:'flex',gap:'16px',flexWrap:'wrap',marginTop:'10px',fontSize:'11px',color:'var(--trj-muted)'} }, [
-      U.h('div',{style:{display:'flex',alignItems:'center',gap:'5px'}}, [U.h('span',{style:{width:'12px',height:'12px',borderRadius:'50%',background:'#e74c3c',display:'inline-block'}}), U.h('span',{text:'Site fora (FLAG 1)'})]),
-      U.h('div',{style:{display:'flex',alignItems:'center',gap:'5px'}}, [U.h('span',{style:{width:'12px',height:'12px',borderRadius:'50%',background:'#3498db',display:'inline-block'}}), U.h('span',{text:'Com TSK aberta'})]),
-      U.h('div',{style:{display:'flex',alignItems:'center',gap:'5px'}}, [U.h('span',{style:{width:'12px',height:'12px',borderRadius:'50%',background:'#9aa5b1',border:'1px solid #666',display:'inline-block'}}), U.h('span',{text:'FLAG 0'})]),
-      U.h('div',{style:{display:'flex',alignItems:'center',gap:'5px'}}, [U.h('span',{style:{width:'22px',height:'3px',background:'#9b59b6',display:'inline-block'}}), U.h('span',{text:'MW Nokia'})]),
-      U.h('div',{style:{display:'flex',alignItems:'center',gap:'5px'}}, [U.h('span',{style:{width:'22px',height:'3px',background:'#e74c3c',display:'inline-block'}}), U.h('span',{text:'MW Huawei'})]),
-      U.h('div',{style:{display:'flex',alignItems:'center',gap:'5px'}}, [U.h('span',{style:{width:'22px',height:'3px',background:'#f0b429',display:'inline-block'}}), U.h('span',{text:'MW Ceragon'})]),
-      U.h('div',{style:{display:'flex',alignItems:'center',gap:'5px'}}, [U.h('span',{style:{width:'12px',height:'12px',borderRadius:'2px',background:'#2ecc71',display:'inline-block'}}), U.h('span',{text:'Hub FO'})]),
-    ]);
-    container.appendChild(legendEl);
-
-    // ── Inicializar Leaflet ──────────────────────────────────────
-    var mapInstance = null;
-    var layerIncidentes = null, layerFlag0 = null, layerMW = null, layerFO = null;
-    var allIncMarkers = [], allFlag0Markers = [], allMWLines = [], allFOMarkers = [];
-
-    function getLeaflet(cb) {
-      if (window.L) { cb(); return; }
-      var cssLink = document.createElement('link');
-      cssLink.rel = 'stylesheet'; cssLink.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-      document.head.appendChild(cssLink);
-      var script = document.createElement('script');
-      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-      script.onload = cb; document.head.appendChild(script);
-    }
-
-    function renderMapa() {
-      getLeaflet(function() {
-        if (!mapInstance) {
-          mapInstance = window.L.map('trj-mapa', { preferCanvas: true })
-            .setView([-22.3, -43.1], 8);
-
-          // Tile escuro (CartoDB Dark)
-          window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
-            maxZoom: 19
-          }).addTo(mapInstance);
-
-          layerIncidentes = window.L.layerGroup().addTo(mapInstance);
-          layerFlag0      = window.L.layerGroup(); // OFF por padrão
-          layerMW         = window.L.layerGroup().addTo(mapInstance);
-          layerFO         = window.L.layerGroup(); // OFF por padrão
-
-          setupEventos();
-        } else {
-          layerIncidentes.clearLayers();
-          layerFlag0.clearLayers();
-          layerMW.clearLayers();
-          layerFO.clearLayers();
-          allIncMarkers = []; allFlag0Markers = []; allMWLines = []; allFOMarkers = [];
-        }
-
-        var incAtivos = incidents.filter(function(i){ return (i.statusTrat||'').toUpperCase() !== 'RESOLVIDO'; });
-        var tasksEnriched = data.tasksEnriched || [];
-
-        // Função para obter ícone SVG como URL
-        function svgIcon(cor, size, shape) {
-          size = size || 14;
-          var svg;
-          if (shape === 'square') {
-            svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '">'
-              + '<rect width="' + size + '" height="' + size + '" rx="3" fill="' + cor + '" stroke="#fff" stroke-width="1.5"/></svg>';
-          } else {
-            svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + (size+4) + '">'
-              + '<circle cx="' + (size/2) + '" cy="' + (size/2) + '" r="' + (size/2-1) + '" fill="' + cor + '" stroke="#fff" stroke-width="1.5"/>'
-              + '<polygon points="' + (size/2-3) + ',' + (size-1) + ' ' + (size/2+3) + ',' + (size-1) + ' ' + (size/2) + ',' + (size+3) + '" fill="' + cor + '"/></svg>';
-          }
-          return window.L.divIcon({
-            html: svg, className: '', iconSize: [size, shape==='square'?size:size+4],
-            iconAnchor: [size/2, shape==='square'?size/2:size+4], popupAnchor: [0, -(size+4)]
-          });
-        }
-
-        // ── Marcadores de incidentes (FLAG 1) ──────────────────
-        var countComCoord = 0, countSemCoord = 0, countComTSK = 0;
-        incAtivos.forEach(function(inc) {
-          var eid  = inc.enderecoId || '';
-          var coords = coordMap[eid];
-          if (!coords) { countSemCoord++; return; }
-          countComCoord++;
-
-          var tsk = U.tskAberta ? U.tskAberta(inc, tasksEnriched) : null;
-          if (tsk) countComTSK++;
-          var cor = tsk ? '#3498db' : '#e74c3c';
-
-          var marker = window.L.marker(coords, { icon: svgIcon(cor, 14) });
-          var causa = inc.causa || inc.causaGrupo || '/';
-          var popContent = '<div style="font-family:ui-monospace,monospace;font-size:12px;min-width:180px">'
-            + '<b style="color:' + cor + '">' + (inc.site || eid) + '</b><br>'
-            + '<span style="color:#888">END_ID:</span> ' + eid + '<br>'
-            + '<span style="color:#888">Horário:</span> ' + (inc.horario || '—') + '<br>'
-            + '<span style="color:#888">Duração:</span> ' + (inc.downtime || '—') + '<br>'
-            + '<span style="color:#888">Causa:</span> ' + causa + '<br>'
-            + (tsk ? '<span style="color:#888">TSK:</span> <b>' + tsk.osNumero + '</b><br>' : '')
-            + '<span style="color:#888">Cidade:</span> ' + (inc.cidadeUf || '—') + '</div>';
-          marker.bindPopup(popContent);
-          marker.bindTooltip(inc.site || eid, { permanent: false, direction: 'top' });
-          marker._dados = { eid: eid, site: inc.site || '', cidade: (inc.cidadeUf||'').split('/')[0].trim() };
-          allIncMarkers.push(marker);
-          marker.addTo(layerIncidentes);
-        });
-
-        // ── Marcadores FLAG 0 (sites coord sem incidente ativo) ─
-        var eidsAtivos = new Set(incAtivos.map(function(i){ return i.enderecoId||''; }));
-        Object.keys(coordMap).forEach(function(eid) {
-          if (eidsAtivos.has(eid)) return;
-          var coords = coordMap[eid];
-          var marker = window.L.circleMarker(coords, {
-            radius: 4, color: '#555', fillColor: '#777', fillOpacity: 0.5, weight: 1
-          });
-          marker.bindTooltip(eid, { permanent: false, direction: 'top' });
-          marker._dados = { eid: eid, site: eid, cidade: '' };
-          allFlag0Markers.push(marker);
-          marker.addTo(layerFlag0);
-        });
-
-        // ── Polylines MW ──────────────────────────────────────────
-        mwData.forEach(function(link) {
-          function pc(s){ try { return parseFloat(String(s).replace(/\u00a0/g,'').replace(',','.')); } catch(e){ return null; } }
-          var latA = pc(link.LAT_A), lonA = pc(link.LONG_A);
-          var latB = pc(link.LAT_B), lonB = pc(link.LONG_B);
-          if (!latA || !lonA || !latB || !lonB) return;
-          var forn = (link.FORNECEDOR || '').toUpperCase();
-          var cor = MW_CORES[forn] || MW_CORES.default;
-          var enlace = link.Enlace2 || link.Enlace || '';
-          var line = window.L.polyline([[latA, lonA], [latB, lonB]], {
-            color: cor, weight: 1.5, opacity: 0.6, dashArray: forn === 'CERAGON' ? '4,4' : null
-          });
-          line.bindPopup('<b>' + enlace + '</b><br>' + (link.FORNECEDOR || '') + (link.PROJETO ? '<br>' + link.PROJETO : ''));
-          allMWLines.push(line);
-          line.addTo(layerMW);
-        });
-
-        // ── Marcadores Hub FO ──────────────────────────────────────
-        foData.forEach(function(hub) {
-          function pc(s){ try { return parseFloat(String(s).replace(/\u00a0/g,'').replace(',','.')); } catch(e){ return null; } }
-          var lat = pc(hub.LAT_A), lon = pc(hub.LONG_A);
-          if (!lat || !lon) return;
-          var marker = window.L.marker([lat, lon], { icon: svgIcon('#2ecc71', 10, 'square') });
-          marker.bindPopup('<b>' + (hub.HUB || hub.NEName || '') + '</b><br>'
-            + (hub.FORNECEDOR||'') + (hub.PROJETO ? ' | ' + hub.PROJETO : ''));
-          allFOMarkers.push(marker);
-          marker.addTo(layerFO);
-        });
-
-        // Atualizar contadores
-        statsEl.innerHTML = '';
-        statsEl.appendChild(U.h('span',{text:'🔴 ' + countComCoord + ' sites fora no mapa'}));
-        if (countComTSK) statsEl.appendChild(U.h('span',{text:'🔵 ' + countComTSK + ' com TSK'}));
-        if (countSemCoord) statsEl.appendChild(U.h('span',{style:{color:'var(--trj-muted)'},text:'⚠️ ' + countSemCoord + ' sem coord'}));
-        statsEl.appendChild(U.h('span',{text:'📡 ' + mwData.length + ' enlaces MW'}));
-        statsEl.appendChild(U.h('span',{text:'🟢 ' + foData.length + ' hubs FO'}));
-      });
-    }
-
-    function setupEventos() {
-      chkFlag0.addEventListener('change', function(){
-        if (chkFlag0.checked) layerFlag0.addTo(mapInstance);
-        else layerFlag0.remove();
-      });
-      chkMW.addEventListener('change', function(){
-        if (chkMW.checked) layerMW.addTo(mapInstance);
-        else layerMW.remove();
-      });
-      chkFO.addEventListener('change', function(){
-        if (chkFO.checked) layerFO.addTo(mapInstance);
-        else layerFO.remove();
-      });
-
-      // Busca em tempo real
-      var searchTimer = null;
-      searchInput.addEventListener('input', function() {
-        clearTimeout(searchTimer);
-        searchTimer = setTimeout(function() {
-          var q = searchInput.value.trim().toLowerCase();
-          function match(m) {
-            if (!q) return true;
-            var d = m._dados || {};
-            return (d.eid||'').toLowerCase().indexOf(q) >= 0
-              || (d.site||'').toLowerCase().indexOf(q) >= 0
-              || (d.cidade||'').toLowerCase().indexOf(q) >= 0;
-          }
-          allIncMarkers.forEach(function(m){ m.setOpacity(match(m) ? 1 : 0.1); });
-          allFlag0Markers.forEach(function(m){ m.setStyle({ fillOpacity: match(m) ? 0.5 : 0.03, opacity: match(m) ? 0.5 : 0.03 }); });
-
-          // Zoom para resultados
-          if (q.length >= 3 && mapInstance) {
-            var found = allIncMarkers.filter(match);
-            if (found.length > 0 && found.length <= 5) {
-              var bounds = window.L.latLngBounds(found.map(function(m){ return m.getLatLng(); }));
-              mapInstance.fitBounds(bounds.pad(0.3));
-            }
-          }
-        }, 250);
-      });
-    }
-
-    if (!temDados) {
-      // Banner de aviso se não tiver dados
-      var banner = U.h('div', {
-        style: { padding: '16px', background: 'rgba(240,180,41,.15)', border: '1px solid rgba(240,180,41,.4)', borderRadius: '10px', marginBottom: '12px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '12px' }
-      }, [
-        U.h('span', { style: { fontSize: '24px' }, text: '⚠️' }),
-        U.h('div', null, [
-          U.h('b', { text: 'Sem coordenadas carregadas' }),
-          U.h('p', { style: { margin: '4px 0 0', color: 'var(--trj-muted)', fontSize: '12px' }, text: 'Clique em "Importar Genesis" e selecione o arquivo HTML do painel G.E.N.E.S.I.S para carregar os dados de mapa.' })
-        ])
-      ]);
-      container.insertBefore(banner, controles.nextSibling);
-    }
-
-    renderMapa();
+    getLeaflet(function() {
+      initMap();
+      if (temCoords || incidents.length > 0) {
+        renderComCoordMap();
+      }
+      if (temMW) {
+        renderEstaticos();
+      }
+      if (!temCoords) {
+        U.toast('Clique em "Buscar sites" (com ponte+VPN) ou "Importar Genesis HTML" para ver os marcadores.', 'ok');
+      }
+    });
   };
 
 })(window.TRJ = window.TRJ || {});
