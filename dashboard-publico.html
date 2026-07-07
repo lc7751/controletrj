@@ -114,14 +114,30 @@ body { min-height: 100vh; }
     var incAtivos = (raw.incidentsEnriched || []).filter(function (i) {
       return (i.statusTrat || 'ATIVO').toUpperCase() !== 'RESOLVIDO';
     });
-    // "Com TSK": somente tarefas Não Iniciadas ou Iniciadas (não Pendente)
+    // "Com TSK": somente Não Iniciado + Iniciado, contabilizado por END_ID
+    // (igual ao drilldown — tskAberta pega a TSK mais recente por END_ID;
+    //  múltiplos sites no mesmo END_ID contam como 1 TSK)
     var tasksAtivas = (raw.tasksEnriched || []).filter(function (t) {
       var s = (t.status || '').toString().trim().toUpperCase();
       return s === 'NÃO INICIADO' || s === 'NAO INICIADO' || s === 'INICIADO';
     });
+
+    // Contar total de incidentes por região (1 por incidente)
     incAtivos.forEach(function (i) {
       var r = i.regiao || 'OTHERS';
       contagemTotal[r] = (contagemTotal[r] || 0) + 1;
+    });
+
+    // Contar TSKs por END_ID (1 por END_ID, mesmo que tenha múltiplos sites)
+    // Agrupa incidentes por END_ID por região, verifica tskAberta uma vez por END_ID
+    var endIdVisto = {};  // endId → já contado
+    incAtivos.forEach(function (i) {
+      var endId = (i.enderecoId || i.endId || '').toString().trim();
+      if (!endId) return;  // sem END_ID: não conta
+      var r = i.regiao || 'OTHERS';
+      var chave = r + '|' + endId;
+      if (endIdVisto[chave]) return;  // END_ID já contabilizado nesta região
+      endIdVisto[chave] = true;
       var tsk = U.tskAberta ? U.tskAberta(i, tasksAtivas) : null;
       if (tsk) contagemComTSK[r] = (contagemComTSK[r] || 0) + 1;
     });
