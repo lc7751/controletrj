@@ -601,8 +601,11 @@
       if (modoCancelamento) lastCell = U.cancelamentoBadge(t);
       else if (modoResultado) lastCell = U.resultadoSlaBadge(t);
       else lastCell = U.vencimentoBadge(t.vencimentoCalc);
-      // Criação NTT: usa dataCriacaoAS (col AS), fallback para dataCriacao se ausente
-      var criacaoNTT = t.dataCriacaoAS || t.dataCriacao;
+      // Criação NTT: parsePlatformDate() antes de formatarDataCompacta()
+      // garante que "12/06/2026" seja interpretado como 12 de junho (BR),
+      // não como dezembro 6 (US) que new Date() faria.
+      var rawNTT = t.dataCriacaoAS || t.dataCriacao;
+      var dtNTT = rawNTT ? (D.parsePlatformDate ? D.parsePlatformDate(rawNTT) : null) : null;
       return h('tr', null, [
         h('td', { text: C.REGIAO_LABELS[t.regiao] || t.regiao || '—' }),
         h('td', { text: t.osNumero || '—' }),
@@ -610,7 +613,7 @@
         h('td', { text: t.cidade || '—' }),
         h('td', { text: t.tipoFalha || '—' }),
         h('td', { text: t.prioridade || '—' }),
-        h('td', { text: criacaoNTT ? D.formatarDataCompacta(criacaoNTT) : '—' }),
+        h('td', { text: dtNTT ? D.formatarDataCompacta(dtNTT) : '—' }),
         h('td', null, lastCell)
       ]);
     });
