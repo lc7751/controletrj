@@ -494,26 +494,38 @@
     // Prioridade numérica pra ordenação (P1=1 … P5=5, sem prioridade = 999)
     function priNum(t) { var m = (t.prioridade || '').match(/\d+/); return m ? parseInt(m[0], 10) : 999; }
 
+    // helper de ordenação: por região, depois P1→P5
+    function sortRegiaoP(arr) {
+      var regiaoOrder = C.REGIOES || [];
+      function priNum(t) { var m = (t.prioridade || '').match(/\d+/); return m ? parseInt(m[0], 10) : 999; }
+      function regIdx(t) { var i = regiaoOrder.indexOf(t.regiao || 'OTHERS'); return i >= 0 ? i : 999; }
+      return arr.slice().sort(function (a, b) {
+        var dr = regIdx(a) - regIdx(b); if (dr !== 0) return dr;
+        return priNum(a) - priNum(b);
+      });
+    }
+
     switch (tipo) {
-      case 'foraSla': return backlog.filter(function (t) { return t.statusSla === 'FORA DO SLA'; });
-      case 'backlogTotal': return backlog;
-      case 'backlogIndef': return backlog.filter(function (t) { return t.statusSla === 'INDEFINIDO' || t.fonteSla === 'SEM DADOS' || t.fonteSla === 'SLA CAL'; });
+      case 'foraSla': return sortRegiaoP(backlog.filter(function (t) { return t.statusSla === 'FORA DO SLA'; }));
+      case 'backlogTotal': return sortRegiaoP(backlog);
+      case 'backlogIndef': return sortRegiaoP(backlog.filter(function (t) { return t.statusSla === 'INDEFINIDO' || t.fonteSla === 'SEM DADOS' || t.fonteSla === 'SLA CAL'; }));
       case 'preditiva': return tickets.filter(function (t) { return t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA'; });
       case 'produtividade': return concluidas;
       case 'aging': {
         var b = C.AGING_BUCKETS[parseInt(arg, 10)]; if (!b) return [];
-        // backlog já garante dataCriacaoAS (regra de negócio)
+        // Ordem crescente: tarefa mais antiga (menor dataCriacaoAS) primeiro
         return backlog.filter(function (t) {
           var _dt = (t.dataCriacaoAS instanceof Date) ? t.dataCriacaoAS : D.parsePlatformDate(t.dataCriacaoAS);
           if (!_dt || isNaN(_dt.getTime())) return false;
           var idade2 = Math.round((now - _dt.getTime()) / 60000);
           return idade2 >= b.min && idade2 < b.max;
         }).sort(function (a, b2) {
-          function idadeMin(x) {
-            var _dt2 = (x.dataCriacaoAS instanceof Date) ? x.dataCriacaoAS : D.parsePlatformDate(x.dataCriacaoAS);
-            return (_dt2 && !isNaN(_dt2.getTime())) ? Math.round((now - _dt2.getTime()) / 60000) : 0;
+          // ascendente por data de criação = mais antiga primeiro
+          function dtMs(x) {
+            var _d = (x.dataCriacaoAS instanceof Date) ? x.dataCriacaoAS : D.parsePlatformDate(x.dataCriacaoAS);
+            return (_d && !isNaN(_d.getTime())) ? _d.getTime() : 0;
           }
-          return idadeMin(a) - idadeMin(b2);
+          return dtMs(a) - dtMs(b2);
         });
       }
       case 'vencimento': {

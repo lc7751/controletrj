@@ -595,12 +595,14 @@
     var modoResultado = opts.modoResultado;
     var modoCancelamento = opts.modoCancelamento;
     var colLabel = modoCancelamento ? 'Tipo Cancelamento' : (modoResultado ? 'Resultado SLA' : 'Vencimento');
-    var thead = h('thead', null, h('tr', null, ['Região', 'TSK', 'Site', 'Cidade', 'Falha', 'P', 'Criação', colLabel].map(function (t) { return h('th', { text: t }); })));
+    var thead = h('thead', null, h('tr', null, ['Região', 'TSK', 'Site', 'Cidade', 'Falha', 'P', 'Criação NTT', colLabel].map(function (t) { return h('th', { text: t }); })));
     var body = rows.slice(0, 1000).map(function (t) {
       var lastCell;
       if (modoCancelamento) lastCell = U.cancelamentoBadge(t);
       else if (modoResultado) lastCell = U.resultadoSlaBadge(t);
       else lastCell = U.vencimentoBadge(t.vencimentoCalc);
+      // Criação NTT: usa dataCriacaoAS (col AS), fallback para dataCriacao se ausente
+      var criacaoNTT = t.dataCriacaoAS || t.dataCriacao;
       return h('tr', null, [
         h('td', { text: C.REGIAO_LABELS[t.regiao] || t.regiao || '—' }),
         h('td', { text: t.osNumero || '—' }),
@@ -608,7 +610,7 @@
         h('td', { text: t.cidade || '—' }),
         h('td', { text: t.tipoFalha || '—' }),
         h('td', { text: t.prioridade || '—' }),
-        h('td', { text: t.dataCriacao ? D.formatarDataCompacta(t.dataCriacao) : '—' }),
+        h('td', { text: criacaoNTT ? D.formatarDataCompacta(criacaoNTT) : '—' }),
         h('td', null, lastCell)
       ]);
     });
