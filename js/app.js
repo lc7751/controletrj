@@ -23,6 +23,7 @@
 
   var ICONS = {
     dashboard: '<path d="M3 13h8V3H3zM13 21h8V3h-8zM3 21h8v-6H3z"/>',
+    mapa: '<path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/><circle cx="6" cy="12" r="1.5" fill="currentColor"/><circle cx="18" cy="9" r="1.5" fill="currentColor"/>',
     priority: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" fill="rgba(255,140,0,.25)" stroke="var(--trj-primary)"/>',
     sla: '<path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/>',
     regional: '<path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/>',
@@ -41,6 +42,7 @@
   var LINKS = [
     { hash: '#/dashboard', label: 'Dashboard', ico: 'dashboard' },
     { hash: '#/prioritarios', label: 'Prioritários', ico: 'priority' },
+    { hash: '#/mapa', label: 'Mapa Operacional', ico: 'mapa' },
     { hash: '#/sla', label: 'SLA / Aderência', ico: 'sla' },
     { hash: '#/regional', label: 'Visão Regional', ico: 'regional' },
     { hash: '#/sites-fora', label: 'Sites Fora (Incidentes)', ico: 'sites' },
@@ -274,6 +276,7 @@
   var ROUTES = {
     '#/dashboard': 'dashboard',
     '#/prioritarios': 'prioritarios',
+    '#/mapa': 'mapa',
     '#/sla': 'sla',
     '#/regional': 'regional',
     '#/sites-fora': 'sitesFora',
