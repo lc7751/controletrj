@@ -107,25 +107,47 @@ body { min-height: 100vh; }
   // ── Tela de boas-vindas ─────────────────────────────────────────────────────
   function renderWelcome() {
     root.innerHTML = '';
-    var contagem = {};
-    raw.incidentsEnriched.forEach(function (i) {
-      if ((i.statusTrat || 'ATIVO').toUpperCase() === 'RESOLVIDO') return;
-      var r = i.regiao || 'OTHERS'; contagem[r] = (contagem[r] || 0) + 1;
+    // Contar incidentes ativos por região
+    var contagemTotal = {}, contagemComTSK = {};
+    var incAtivos = (raw.incidentsEnriched || []).filter(function (i) {
+      return (i.statusTrat || 'ATIVO').toUpperCase() !== 'RESOLVIDO';
     });
+    incAtivos.forEach(function (i) {
+      var r = i.regiao || 'OTHERS';
+      contagemTotal[r] = (contagemTotal[r] || 0) + 1;
+      // Conta como "com TSK" se houver tarefa aberta associada ao END_ID
+      var tsk = U.tskAberta ? U.tskAberta(i, raw.tasksEnriched || []) : null;
+      if (tsk) contagemComTSK[r] = (contagemComTSK[r] || 0) + 1;
+    });
+
+    // Regiões visíveis: excluir OTHERS (aparece em todas as visualizações mas
+    // não é uma região selecionável — mantida para exibição nos gráficos)
+    var regioesSelecionaveis = C.REGIOES.filter(function (r) { return r !== 'OTHERS'; });
+
     var wrap = U.h('div', { class: 'welcome-wrap' }, [
       U.h('img', { src: 'assets/logo-trj.png', alt: '', class: 'welcome-logo' }),
       U.h('div', { class: 'welcome-title trj-heading', text: 'BEM-VINDO, GESTOR' }),
       U.h('div', { class: 'welcome-sub', text: 'Escolha sua região para visualização' }),
-      U.h('div', { class: 'regiao-grid' }, C.REGIOES.map(function (r) {
-        return U.h('button', { class: 'regiao-btn', onclick: function () { escolherRegiao(r); } }, [
+      U.h('div', {
+        class: 'regiao-grid',
+        style: { display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '16px', padding: '8px 0' }
+      }, regioesSelecionaveis.map(function (r) {
+        var total  = contagemTotal[r] || 0;
+        var comTSK = contagemComTSK[r] || 0;
+        return U.h('button', {
+          class: 'regiao-btn',
+          style: { minWidth: '160px', flex: '0 1 auto' },
+          onclick: function () { escolherRegiao(r); }
+        }, [
           U.h('div', { class: 'ic', html: REGIAO_ICONS_SVG[r] || REGIAO_ICONS_SVG['OTHERS'] }),
-          U.h('div', { class: 'nome', text: C.REGIAO_LABELS[r] || r }),
-          U.h('div', { class: 'qtd', text: (contagem[r] || 0) + ' site(s) fora' })
+          U.h('div', { class: 'nome', text: (C.REGIAO_LABELS[r] || r).toUpperCase() }),
+          U.h('div', { class: 'qtd', text: total + ' site(s) fora' }),
+          U.h('div', { class: 'qtd', style: { fontSize: '11px', opacity: '0.85', marginTop: '2px' }, text: comTSK + ' site(s) com TSK' })
         ]);
       })),
       U.h('button', { class: 'visao-geral-btn', onclick: function () { state.regiao = 'TODAS'; view = 'dashboard'; renderDashboard(); } }, [
         U.h('span', { text: '🌐' }),
-        U.h('span', { text: 'Visão geral — Todas as regiões' })
+        U.h('span', { text: 'VISÃO GERAL — TODAS AS REGIÕES' })
       ])
     ]);
     root.appendChild(wrap);
@@ -299,7 +321,7 @@ body { min-height: 100vh; }
       { label: 'BACKLOG TOTAL', value: d.kpis ? d.kpis.backlogTotal : 0, cor: C.CORES_TRJ.orange, spec: { tipo: 'backlog' }, t: 'Backlog total' },
       { label: 'BACKLOG INDEFINIDO', value: d.kpis ? d.kpis.backlogIndef : 0, cor: C.CORES_TRJ.orange2, spec: { tipo: 'backlogIndef' }, t: 'Backlog indefinido' },
       { label: 'PREDITIVA', value: d.kpis ? d.kpis.preditiva : 0, cor: '#3498db', spec: { tipo: 'preditiva' }, t: 'Preditiva' },
-      { label: 'PRODUTIVIDADE', value: d.kpis ? d.kpis.produtividade : 0, cor: C.CORES_TRJ.green, spec: null, t: '' },
+      { label: 'PRODUTIVIDADE', value: d.kpis ? d.kpis.produtividade : 0, cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, opts: { modoResultado: true }, t: 'TSKs concluídas' },
       { label: 'SLA GERAL', value: d.kpis ? (d.kpis.slaGeral + '%') : '—', cor: d.kpis && d.kpis.slaGeral >= 85 ? C.CORES_TRJ.green : C.CORES_TRJ.red, spec: null, t: '' }
     ];
 
@@ -311,7 +333,7 @@ body { min-height: 100vh; }
     ]);
     root.appendChild(U.h('div', { class: 'pub-topbar' }, [btnVoltar, liveEl]));
     root.appendChild(U.h('div', { class: 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4' }, kpis.map(function (k) {
-      return U.kpiCard({ label: k.label, value: k.value, cor: k.cor, onClick: k.spec ? function () { openDrillTasks(k.spec, f, k.t); } : null });
+      return U.kpiCard({ label: k.label, value: k.value, cor: k.cor, onClick: k.spec ? function (kk) { return function () { openDrillTasks(kk.spec, f, kk.t, kk.opts || {}); }; }(k) : null });
     })));
 
     // Charts: Aging + Prazos a Vencer (com botão copiar)
