@@ -186,7 +186,35 @@
         }
         return U.h('div', { style: { display:'flex', alignItems:'center', gap:'5px' } }, [ico, U.h('span',{text:item.label})]);
       }));
+    // Associar cliques nas legendas aos toggles de camada
+    // Map: legenda → checkbox correspondente
     container.appendChild(legEl);
+    legEl.querySelectorAll('div').forEach(function(el, idx) {
+      el.style.cursor = 'pointer';
+      el.style.userSelect = 'none';
+      el.title = 'Clique para mostrar/ocultar';
+      el.addEventListener('click', function() {
+        if (idx <= 2) {
+          // Sites fora FLAG 1 — toggle mostra/oculta layer
+          if (mapInstance) {
+            if (mapInstance.hasLayer(layers.flag1)) layers.flag1.remove();
+            else layers.flag1.addTo(mapInstance);
+          }
+        } else if (idx === 3) {
+          // FLAG 0
+          ckFlag0.chk.checked = !ckFlag0.chk.checked;
+          ckFlag0.chk.dispatchEvent(new Event('change'));
+        } else if (idx >= 4 && idx <= 8) {
+          // Links MW
+          ckMW.chk.checked = !ckMW.chk.checked;
+          ckMW.chk.dispatchEvent(new Event('change'));
+        } else if (idx === 9) {
+          // Hubs FO
+          ckFO.chk.checked = !ckFO.chk.checked;
+          ckFO.chk.dispatchEvent(new Event('change'));
+        }
+      });
+    });
 
     // ── Inicializar Leaflet ───────────────────────────────────
     function getLeaflet(cb) {
@@ -228,14 +256,24 @@
     }
 
     function filtrarMarcadores(q) {
-      layers.flag1._layers && Object.values(layers.flag1._layers).forEach(function(m) {
+      if (!layers.flag1) return;
+      var matched = [];
+      Object.values(layers.flag1._layers || {}).forEach(function(m) {
         var d = m._d || {};
         var ok = !q || (d.eid||'').toLowerCase().indexOf(q)>=0
                || (d.site||'').toLowerCase().indexOf(q)>=0
                || (d.cidade||'').toLowerCase().indexOf(q)>=0;
-        m.setOpacity(ok ? 1 : 0.05);
-        if (ok && m.setIcon) {} // não altera ícone
+        m.setOpacity(ok ? 1 : 0.07);
+        if (ok) matched.push(m);
       });
+      // Zoom nos resultados encontrados
+      if (q && matched.length > 0 && matched.length <= 30 && mapInstance) {
+        var bounds = window.L.latLngBounds(matched.map(function(m){ return m.getLatLng(); }));
+        mapInstance.fitBounds(bounds.pad(0.3), { maxZoom: 14 });
+      } else if (!q && mapInstance) {
+        // Restaurar opacidade e zoom padrão
+        Object.values(layers.flag1._layers || {}).forEach(function(m){ m.setOpacity(1); });
+      }
     }
 
     // ── Ícone DIV customizado ─────────────────────────────────
@@ -261,8 +299,12 @@
         var s=(t.status||'').toUpperCase().trim(); return s==='NÃO INICIADO'||s==='NAO INICIADO'||s==='INICIADO';
       });
 
-      sitesFlag1 = sitesList.filter(function(s){ return String(s.flag||s.FLAG||'1') === '1'; });
-      sitesFlag0Raw = sitesList.filter(function(s){ return String(s.flag||s.FLAG||'0') === '0'; });
+      function _getFlag(s) {
+        var f = (s.flag !== undefined) ? s.flag : ((s.FLAG !== undefined) ? s.FLAG : 1);
+        return String(f);
+      }
+      sitesFlag1 = sitesList.filter(function(s){ return _getFlag(s) === '1'; });
+      sitesFlag0Raw = sitesList.filter(function(s){ return _getFlag(s) === '0'; });
 
       sitesFlag1.forEach(function(site) {
         var lat = parseFloat(site.latitude || site.lat || '');
@@ -350,26 +392,66 @@
     }
 
     // ── Renderizar usando coordMap (fallback sem ponte) ────────
+    // FLAG 1 = apenas incidentes ativos (sites fora reais)
+    // FLAG 0 = todos os demais sites do coordMap (mostrado só se checkbox ativo)
     function renderComCoordMap() {
-      var incAtivos = incidents.filter(function(i){ return (i.statusTrat||'').toUpperCase()!=='RESOLVIDO'; });
-      var fakeMarkers = incAtivos.map(function(inc) {
+      if (!mapInstance) return;
+      layers.flag1.clearLayers();
+      layers.flag0.clearLayers();
+
+      var incAtivos = incidents.filter(function(i){
+        return (i.statusTrat||'').toUpperCase() !== 'RESOLVIDO';
+      });
+      var tasksAtivas = tasks.filter(function(t){
+        var s=(t.status||'').toUpperCase().trim();
+        return s==='NÃO INICIADO'||s==='NAO INICIADO'||s==='INICIADO';
+      });
+      var eidsAtivos = {};
+      incAtivos.forEach(function(i){ eidsAtivos[i.enderecoId||''] = i; });
+
+      var cTSK = 0, cSemCoord = 0;
+
+      // ── FLAG 1: só incidentes reais ──
+      incAtivos.forEach(function(inc) {
         var eid = (inc.enderecoId||'').trim();
         var coords = coordMap[eid];
-        if (!coords) return null;
-        return { ENDID:eid, NEName:inc.site||siteByEndId[eid]||eid, latitude:coords[0], longitude:coords[1],
-                 municipio:(inc.cidadeUf||'').split('/')[0].trim(), queda:inc.horario||'', flag:1,
-                 evento:inc.causa||'', previsao:'' };
-      }).filter(Boolean);
+        if (!coords) { cSemCoord++; return; }
+        var nome = inc.site || siteByEndId[eid] || eid;
+        var tsk = U.tskAberta ? U.tskAberta(inc, tasksAtivas) : null;
+        if (tsk) cTSK++;
+        var tempo = 99; // fallback; pode calcular a partir de inc.horario se necessário
+        var cor = tsk ? '#3498db' : '#e74c3c';
+        var marker = window.L.marker(coords, { icon: divIcon(cor, 14) });
+        marker._d = { eid:eid, site:nome, cidade:(inc.cidadeUf||'').split('/')[0].trim() };
+        var popContent = '<div style="font:12px ui-monospace,monospace;min-width:200px;padding:4px">'
+          + '<b style="color:' + cor + ';font-size:13px">' + nome + '</b><br>'
+          + '<span style="color:#888">END_ID:</span> ' + eid + '<br>'
+          + ((inc.cidadeUf) ? '<span style="color:#888">Cidade:</span> ' + inc.cidadeUf + '<br>' : '')
+          + '<span style="color:#888">Queda:</span> ' + (inc.horario||'—') + '<br>'
+          + '<span style="color:#888">Duração:</span> ' + (inc.downtime||'—') + '<br>'
+          + '<span style="color:#888">Causa:</span> ' + (inc.causa||'/') + '<br>'
+          + (tsk ? '<span style="color:#3498db;font-weight:700">TSK: ' + tsk.osNumero + '</span>'
+                 : '<span style="color:#e74c3c">Sem TSK aberta</span>')
+          + '</div>';
+        marker.bindPopup(popContent, { maxWidth:280 });
+        marker.bindTooltip(nome + ' (' + eid + ')', { direction:'top' });
+        marker.addTo(layers.flag1);
+      });
 
-      var flag0Fake = Object.keys(coordMap)
-        .filter(function(eid){ return !incAtivos.find(function(i){ return i.enderecoId===eid; }); })
-        .slice(0, 3000)
-        .map(function(eid) {
-          var c = coordMap[eid];
-          return { ENDID:eid, NEName:siteByEndId[eid]||eid, latitude:c[0], longitude:c[1], flag:0 };
+      // ── FLAG 0: demais sites do coordMap (não são incidentes ativos) ──
+      Object.keys(coordMap).slice(0, 3000).forEach(function(eid) {
+        if (eidsAtivos[eid]) return; // já está no FLAG 1
+        var c = coordMap[eid];
+        var nome = siteByEndId[eid] || eid;
+        var m = window.L.circleMarker(c, {
+          radius:4, color:'#444', fillColor:'#666', fillOpacity:0.45, weight:1
         });
+        m._d = { eid:eid, site:nome, cidade:'' };
+        m.bindTooltip(nome + ' (' + eid + ')', { direction:'top' });
+        m.addTo(layers.flag0);
+      });
 
-      renderSites(fakeMarkers.concat(flag0Fake));
+      updateStats(incAtivos.length, cTSK, cSemCoord);
     }
 
     function updateStats(total, comTSK, semCoord) {
@@ -399,8 +481,27 @@
         .then(function(json) {
           if (json.erro) { U.toast('Erro da ponte: ' + json.erro, 'err'); return; }
           var sites = json.sites || [];
-          U.toast('Mapa: ' + sites.length + ' sites carregados via ponte.', 'ok');
-          getLeaflet(function() { initMap(); renderSites(sites); renderEstaticos(); });
+          // Separar: sites fora reais (flag=1) e demais (flag=0)
+          // A ponte retorna TODOS — usamos só os flag=1 para atualizar o mapa de incidentes
+          U.toast('Mapa: ' + sites.length + ' sites da ponte. Atualizando incidentes...', 'ok');
+          getLeaflet(function() {
+            initMap();
+            // Renderizar base (coordMap) primeiro, depois sobrescrever FLAG 1 com dados da ponte
+            if (Object.keys(coordMap).length > 0) renderComCoordMap();
+            renderEstaticos();
+            // Sobrescrever FLAG 1 com dados reais da ponte (que têm lat/lon preciso)
+            layers.flag1.clearLayers();
+            var ponte_flag1 = sites.filter(function(s){
+              var f = (s.flag !== undefined) ? s.flag : ((s.FLAG !== undefined) ? s.FLAG : 1);
+              return String(f) === '1';
+            });
+            if (ponte_flag1.length > 0) {
+              renderSites(ponte_flag1.concat(sites.filter(function(s){
+                var f = (s.flag !== undefined) ? s.flag : ((s.FLAG !== undefined) ? s.FLAG : 1);
+                return String(f) === '0';
+              })));
+            }
+          });
         })
         .catch(function(e) {
           U.toast('Ponte não disponível. Use "Importar Genesis HTML" ou inicie o ponte_trj.py.', 'err');
@@ -424,19 +525,19 @@
     });
 
     // ── Iniciar mapa automaticamente se tiver dados ────────────
-    var temMW = mwData.length > 0;
+    var temMW     = mwData.length > 0;
     var temCoords = Object.keys(coordMap).length > 0;
+    var temInc    = incidents.filter(function(i){ return (i.statusTrat||'').toUpperCase()!=='RESOLVIDO'; }).length > 0;
 
     getLeaflet(function() {
       initMap();
-      if (temCoords || incidents.length > 0) {
+      renderEstaticos(); // MW e FO sempre (se tiver dados)
+      if (temCoords || temInc) {
+        // Renderiza: incidentes como flag1 (vermelho) e coordMap como flag0 (cinza)
         renderComCoordMap();
       }
-      if (temMW) {
-        renderEstaticos();
-      }
-      if (!temCoords) {
-        U.toast('Clique em "Buscar sites" (com ponte+VPN) ou "Importar Genesis HTML" para ver os marcadores.', 'ok');
+      if (!temCoords && !temInc) {
+        U.toast('Clique em "Buscar sites (ponte + VPN)" ou "Importar Genesis HTML" para carregar os marcadores.', 'ok');
       }
     });
   };
