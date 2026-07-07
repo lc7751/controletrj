@@ -6,6 +6,7 @@
 <title>Controle TRJ · Dashboard (visualização pública)</title>
 <link rel="icon" href="assets/logo-trj.png">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
@@ -23,17 +24,18 @@
 <script src="js/ui.js"></script>
 <style>
 body { min-height: 100vh; }
-#root { max-width: 1400px; margin: 0 auto; padding: 22px; position: relative; z-index: 1; }
+#root { max-width: 1800px; margin: 0 auto; padding: 22px 28px; position: relative; z-index: 1; }
 
 /* ---- Tela de boas-vindas ---- */
 .welcome-wrap { min-height: 86vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
 .welcome-logo { width: 64px; height: 64px; object-fit: contain; margin-bottom: 18px; filter: drop-shadow(0 0 16px var(--trj-primary)); }
 .welcome-title { font-family: 'Sora', sans-serif; font-size: 30px; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 6px; }
 .welcome-sub { color: var(--trj-muted); font-size: 15px; margin-bottom: 34px; }
-.regiao-grid { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 14px; max-width: 760px; width: 100%; margin-bottom: 16px; }
+.regiao-grid { display: flex; flex-direction: row; flex-wrap: nowrap; justify-content: center; gap: 12px; width: 100%; margin-bottom: 16px; }
+@media (max-width: 900px) { .regiao-grid { flex-wrap: wrap; } }
 @media (max-width: 640px) { .regiao-grid { grid-template-columns: repeat(2, 1fr); } }
 .regiao-btn {
-  position: relative; overflow: hidden; background: var(--trj-card); border: 1px solid var(--trj-border);
+  position: relative; overflow: hidden; flex: 0 1 160px; min-width: 140px; max-width: 200px; background: var(--trj-card); border: 1px solid var(--trj-border);
   border-radius: 14px; padding: 22px 14px; cursor: pointer; transition: transform .22s cubic-bezier(.4,0,.2,1), border-color .22s ease, box-shadow .22s ease;
   display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--trj-fg);
 }
@@ -112,11 +114,15 @@ body { min-height: 100vh; }
     var incAtivos = (raw.incidentsEnriched || []).filter(function (i) {
       return (i.statusTrat || 'ATIVO').toUpperCase() !== 'RESOLVIDO';
     });
+    // "Com TSK": somente tarefas Não Iniciadas ou Iniciadas (não Pendente)
+    var tasksAtivas = (raw.tasksEnriched || []).filter(function (t) {
+      var s = (t.status || '').toString().trim().toUpperCase();
+      return s === 'NÃO INICIADO' || s === 'NAO INICIADO' || s === 'INICIADO';
+    });
     incAtivos.forEach(function (i) {
       var r = i.regiao || 'OTHERS';
       contagemTotal[r] = (contagemTotal[r] || 0) + 1;
-      // Conta como "com TSK" se houver tarefa aberta associada ao END_ID
-      var tsk = U.tskAberta ? U.tskAberta(i, raw.tasksEnriched || []) : null;
+      var tsk = U.tskAberta ? U.tskAberta(i, tasksAtivas) : null;
       if (tsk) contagemComTSK[r] = (contagemComTSK[r] || 0) + 1;
     });
 
@@ -310,6 +316,55 @@ body { min-height: 100vh; }
   }
   function gerarTextoPrazosTodasRegioes() { return gerarTextoPrazosRegiao(null); }
 
+  // ── Export Excel (versão simplificada para dashboard público) ──────────
+  function exportarExcelPublico(d, tasksEnriched, incEnriched) {
+    if (typeof XLSX === 'undefined') { U.toast('Biblioteca Excel não carregou.','err'); return; }
+    var wb = XLSX.utils.book_new();
+    function aba(nome, aoa, ws_cols) {
+      var ws = XLSX.utils.aoa_to_sheet(aoa);
+      if (!ws['!freeze']) ws['!freeze'] = { ySplit: 1 };
+      if (ws_cols) ws['!cols'] = ws_cols.map(function(w){ return { wch: w }; });
+      XLSX.utils.book_append_sheet(wb, ws, nome.slice(0,31));
+    }
+    var K = d.kpis || {};
+    aba('DASHBOARD', [
+      ['INDICADOR','VALOR'],
+      ['FORA DO SLA', K.foraSla||0], ['BACKLOG TOTAL', K.backlogTotal||0],
+      ['BACKLOG INDEFINIDO', K.backlogIndef||0], ['PREDITIVA', K.preditiva||0],
+      ['PRODUTIVIDADE', K.produtividade||0], ['SLA GERAL (%)', K.slaGeral||0],
+      ['REGION', state.regiao], ['PRIORIDADE', state.prioridade],
+      ['GERADO EM', new Date().toLocaleString('pt-BR')]
+    ], [40, 20]);
+    var D2 = TRJ.domain;
+    var sep = D2.separarTicketsManuais(tasksEnriched||[]);
+    var tickets = sep.tickets;
+    var backlog = tickets.filter(function(t){
+      var s=(t.status||'').toUpperCase().trim();
+      return (s==='NÃO INICIADO'||s==='NAO INICIADO'||s==='INICIADO')&&!!t.dataCriacaoAS;
+    });
+    var cols = [['TSK',20],['STATUS',14],['PRIORIDADE',12],['REGIÃO',16],['CIDADE',20],['END_ID',16],['SITE',16],['TIPO FALHA',22],['FILA',40],['SLA',16],['CRIAÇÃO NTT',20]];
+    var hdrs = cols.map(function(c){return c[0];});
+    var aoa = [hdrs].concat(backlog.slice(0,2000).map(function(t){
+      return [t.osNumero,t.status,t.prioridade,t.regiao,t.cidade,t.enderecoId,t.siteId,t.tipoFalha,t.filaAtual,t.statusSla,t.dataCriacaoAS];
+    }));
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!freeze'] = { ySplit:1 };
+    ws['!cols'] = cols.map(function(c){return {wch:c[1]};});
+    XLSX.utils.book_append_sheet(wb, ws, 'BACKLOG');
+    var incAtivos = (incEnriched||[]).filter(function(i){ return (i.statusTrat||'ATIVO').toUpperCase()!=='RESOLVIDO'; });
+    var aoa2 = [['HORÁRIO','DURAÇÃO','SITE','END_ID','CIDADE/UF','REGIÃO','CAUSA','DETALHE','STATUS']]
+      .concat(incAtivos.map(function(i){
+        return [i.horario,i.downtime,i.site,i.enderecoId,i.cidadeUf,i.regiao,i.causa,i.detalhe,i.statusTrat];
+      }));
+    var ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+    ws2['!freeze'] = {ySplit:1};
+    ws2['!cols'] = [12,10,20,16,22,16,30,40,16].map(function(w){return{wch:w};});
+    XLSX.utils.book_append_sheet(wb, ws2, 'SITES FORA');
+    var ts = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
+    XLSX.writeFile(wb, 'Dashboard_TRJ_Pub_' + ts + '.xlsx');
+    U.toast('Excel exportado!', 'ok');
+  }
+
   // ── Dashboard ───────────────────────────────────────────────────────────────
   function renderDashboard() {
     root.innerHTML = '';
@@ -318,11 +373,11 @@ body { min-height: 100vh; }
     var topCidades = d.topCidades || {};
     var kpis = [
       { label: 'FORA DO SLA', value: d.kpis ? d.kpis.foraSla : 0, cor: C.CORES_TRJ.red, spec: { tipo: 'foraSla' }, t: 'Fora do SLA' },
-      { label: 'BACKLOG TOTAL', value: d.kpis ? d.kpis.backlogTotal : 0, cor: C.CORES_TRJ.orange, spec: { tipo: 'backlog' }, t: 'Backlog total' },
+      { label: 'BACKLOG TOTAL', value: d.kpis ? d.kpis.backlogTotal : 0, cor: C.CORES_TRJ.orange, spec: { tipo: 'backlogTotal' }, t: 'Backlog total' },
       { label: 'BACKLOG INDEFINIDO', value: d.kpis ? d.kpis.backlogIndef : 0, cor: C.CORES_TRJ.orange2, spec: { tipo: 'backlogIndef' }, t: 'Backlog indefinido' },
       { label: 'PREDITIVA', value: d.kpis ? d.kpis.preditiva : 0, cor: '#3498db', spec: { tipo: 'preditiva' }, t: 'Preditiva' },
       { label: 'PRODUTIVIDADE', value: d.kpis ? d.kpis.produtividade : 0, cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, opts: { modoResultado: true }, t: 'TSKs concluídas' },
-      { label: 'SLA GERAL', value: d.kpis ? (d.kpis.slaGeral + '%') : '—', cor: d.kpis && d.kpis.slaGeral >= 85 ? C.CORES_TRJ.green : C.CORES_TRJ.red, spec: null, t: '' }
+      { label: 'SLA GERAL', value: d.kpis ? (d.kpis.slaGeral + '%') : '—', cor: C.CORES_TRJ.green, spec: { tipo: 'produtividade' }, opts: { modoResultado: true }, t: 'TSKs concluídas — % dentro do prazo' }
     ];
 
     // Topbar
@@ -331,7 +386,30 @@ body { min-height: 100vh; }
       U.h('span', { class: 'dot' }),
       U.h('span', { text: savedAt ? 'Atualizado em ' + new Date(savedAt).toLocaleString('pt-BR') : 'Dados publicados' })
     ]);
-    root.appendChild(U.h('div', { class: 'pub-topbar' }, [btnVoltar, liveEl]));
+    // Filtro de prioridade
+    var prioSelect = U.h('select', {
+      class: 'trj-btn trj-btn-ghost',
+      style: { padding: '4px 10px', fontSize: '12px', cursor: 'pointer', border: '1px solid rgba(255,255,255,.15)', borderRadius: '6px', background: 'var(--trj-card2)', color: 'var(--trj-text)' }
+    }, [U.h('option', { value: 'TODAS', text: 'Todas as prioridades' })]
+    .concat(['P1','P2','P3','P4','P5'].map(function(p){ return U.h('option', { value: p, text: p }); })));
+    prioSelect.value = state.prioridade || 'TODAS';
+    prioSelect.addEventListener('change', function () {
+      state.prioridade = prioSelect.value;
+      root.innerHTML = ''; renderDashboard();
+    });
+
+    root.appendChild(U.h('div', { class: 'pub-topbar' }, [
+      btnVoltar,
+      liveEl,
+      U.h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, [
+        prioSelect,
+        U.h('button', {
+          class: 'trj-btn clickable',
+          style: { fontSize: '12px', padding: '4px 12px', background: 'rgba(46,204,113,.15)', color: '#2ecc71', border: '1px solid rgba(46,204,113,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '5px' },
+          onclick: function () { exportarExcelPublico(d, raw.tasksEnriched, raw.incidentsEnriched); }
+        }, [U.h('span', {text:'📊'}), U.h('span', {text:'Excel'})])
+      ])
+    ]));
     root.appendChild(U.h('div', { class: 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4' }, kpis.map(function (k) {
       return U.kpiCard({ label: k.label, value: k.value, cor: k.cor, onClick: k.spec ? function (kk) { return function () { openDrillTasks(kk.spec, f, kk.t, kk.opts || {}); }; }(k) : null });
     })));
