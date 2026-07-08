@@ -192,9 +192,10 @@
       }));
     // Associar cliques nas legendas aos toggles de camada
     container.appendChild(legEl);
-    legEl.querySelectorAll('div').forEach(function(el, idx) {
+    // Usar children diretos para não capturar divs aninhados (causariam retângulos brancos)
+    Array.prototype.forEach.call(legEl.children, function(el, idx) {
       var item = legItems[idx];
-      if (item.noClick) { el.title = ''; return; } // item apenas informativo, não clicável
+      if (!item || item.noClick) { return; }
       el.style.cursor = 'pointer';
       el.style.userSelect = 'none';
       el.title = 'Clique para mostrar/ocultar';
