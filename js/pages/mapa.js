@@ -81,6 +81,7 @@
   // ── PÁGINA ─────────────────────────────────────────────────
   TRJ.pages.mapa = function(container, ctx) {
     var data      = ctx.data || {};
+    var readOnly  = !!ctx.readOnly; // true no dashboard público: oculta botões de atualização
     var incidents = data.incidentsEnriched || [];
     var tasks     = data.tasksEnriched     || [];
 
@@ -146,8 +147,8 @@
                padding:'10px 14px', background:'var(--trj-card)', borderRadius:'10px', border:'1px solid var(--trj-border)',
                // z-index garante que barra de controles fique sobre o mapa mas abaixo da sidebar
                position:'relative', zIndex:'1' }
-    }, [searchInput, ckFlag0.el, ckMW.el, ckFO.el,
-        U.h('div', {style:{marginLeft:'auto',display:'flex',gap:'8px'}}, [btnPonte, btnImport])]);
+    }, [searchInput, ckFlag0.el, ckMW.el, ckFO.el]
+       .concat(readOnly ? [] : [U.h('div', {style:{marginLeft:'auto',display:'flex',gap:'8px'}}, [btnPonte, btnImport])]));
     container.appendChild(ctrlBar);
     container.appendChild(statsEl);
 
@@ -173,23 +174,27 @@
       { cor:'#000078', shape:'line', label:'MW Ericsson' },
       { cor:'#14c8f0', shape:'line', label:'MW SIAE' },
       { cor:'#2ecc71', shape:'square', label:'Hub FO' },
+      { cor:'#aaa', shape:'thickline', label:'Linha grossa = enlace de site fora', noClick:true },
     ];
     var legEl = U.h('div', { style: { display:'flex', gap:'12px', flexWrap:'wrap', marginTop:'8px', fontSize:'11px', color:'var(--trj-muted)' } },
       legItems.map(function(item) {
         var ico;
-        if (item.shape === 'line') {
+        if (item.shape === 'thickline') {
+          ico = U.h('span', { style: { width:'24px', height:'5px', background:item.cor, display:'inline-block', verticalAlign:'middle', borderRadius:'2px' } });
+        } else if (item.shape === 'line') {
           ico = U.h('span', { style: { width:'24px', height:'3px', background:item.cor, display:'inline-block', verticalAlign:'middle' } });
         } else if (item.shape === 'square') {
           ico = U.h('span', { style: { width:'10px', height:'10px', background:item.cor, display:'inline-block', borderRadius:'2px', border:'1px solid #fff' } });
         } else {
           ico = U.h('span', { style: { width:'10px', height:'10px', borderRadius:'50%', background:item.cor, display:'inline-block', border:'1px solid rgba(255,255,255,.4)' } });
         }
-        return U.h('div', { style: { display:'flex', alignItems:'center', gap:'5px' } }, [ico, U.h('span',{text:item.label})]);
+        return U.h('div', { style: { display:'flex', alignItems:'center', gap:'5px', opacity: item.noClick ? '0.7' : '1' } }, [ico, U.h('span',{text:item.label})]);
       }));
     // Associar cliques nas legendas aos toggles de camada
-    // Map: legenda → checkbox correspondente
     container.appendChild(legEl);
     legEl.querySelectorAll('div').forEach(function(el, idx) {
+      var item = legItems[idx];
+      if (item.noClick) { el.title = ''; return; } // item apenas informativo, não clicável
       el.style.cursor = 'pointer';
       el.style.userSelect = 'none';
       el.title = 'Clique para mostrar/ocultar';
@@ -205,7 +210,7 @@
           ckFlag0.chk.checked = !ckFlag0.chk.checked;
           ckFlag0.chk.dispatchEvent(new Event('change'));
         } else if (idx >= 4 && idx <= 8) {
-          // Links MW
+          // Links MW — toggle geral (afeta mwFlag1 e, se FLAG0 ativo, mwFlag0)
           ckMW.chk.checked = !ckMW.chk.checked;
           ckMW.chk.dispatchEvent(new Event('change'));
         } else if (idx === 9) {
@@ -239,12 +244,30 @@
 
       layers.flag1 = window.L.layerGroup().addTo(mapInstance);
       layers.flag0 = window.L.layerGroup();
-      layers.mw    = window.L.layerGroup().addTo(mapInstance);
+      layers.mw    = window.L.layerGroup().addTo(mapInstance);      // mantido por compatibilidade (não usado diretamente)
+      layers.mwFlag1 = window.L.layerGroup().addTo(mapInstance);    // enlaces conectados a sites FORA (FLAG 1) — sempre visível
+      layers.mwFlag0 = window.L.layerGroup();                        // demais enlaces — só visível se FLAG 0 também estiver ativo
       layers.fo    = window.L.layerGroup();
 
       // Eventos de toggle
-      ckFlag0.chk.addEventListener('change', function() { if(ckFlag0.chk.checked) layers.flag0.addTo(mapInstance); else layers.flag0.remove(); });
-      ckMW.chk.addEventListener('change',   function() { if(ckMW.chk.checked)    layers.mw.addTo(mapInstance);    else layers.mw.remove(); });
+      ckFlag0.chk.addEventListener('change', function() {
+        if (ckFlag0.chk.checked) {
+          layers.flag0.addTo(mapInstance);
+          if (ckMW.chk.checked) layers.mwFlag0.addTo(mapInstance);
+        } else {
+          layers.flag0.remove();
+          layers.mwFlag0.remove();
+        }
+      });
+      ckMW.chk.addEventListener('change', function() {
+        if (ckMW.chk.checked) {
+          layers.mwFlag1.addTo(mapInstance);
+          if (ckFlag0.chk.checked) layers.mwFlag0.addTo(mapInstance);
+        } else {
+          layers.mwFlag1.remove();
+          layers.mwFlag0.remove();
+        }
+      });
       ckFO.chk.addEventListener('change',   function() { if(ckFO.chk.checked)    layers.fo.addTo(mapInstance);    else layers.fo.remove(); });
 
       // Busca em tempo real
@@ -359,10 +382,29 @@
     }
 
     // ── Renderizar MW + FO (static, from stored data) ──────────
+    // Retorna o conjunto de END_IDs atualmente em FLAG 1 (incidentes ativos)
+    function getEidsAtivos() {
+      var eidsAtivos = {};
+      incidents.forEach(function(i) {
+        if ((i.statusTrat||'').toUpperCase() === 'RESOLVIDO') return;
+        var eid = (i.enderecoId||'').trim();
+        if (eid) eidsAtivos[eid] = true;
+      });
+      // Também considera os sites vindos da ponte, se disponíveis
+      sitesFlag1.forEach(function(s) {
+        var eid = (s.ENDID||s.endId||'').trim();
+        if (eid) eidsAtivos[eid] = true;
+      });
+      return eidsAtivos;
+    }
+
     function renderEstaticos() {
       if (!mapInstance) return;
-      layers.mw.clearLayers();
+      layers.mwFlag1.clearLayers();
+      layers.mwFlag0.clearLayers();
       layers.fo.clearLayers();
+
+      var eidsAtivos = getEidsAtivos();
 
       mwData.forEach(function(link) {
         function pc(s){ try { return parseFloat(String(s).replace(/\u00a0/g,'').replace(',','.')); } catch(e){ return null; } }
@@ -371,13 +413,23 @@
         var forn  = (link.FORNECEDOR||'').toUpperCase();
         var cor   = MW_CORES[forn] || MW_CORES.default;
         var enlace = (link.Enlace&&link.Enlace.trim().length>5) ? link.Enlace : (link.Enlace2||'');
+
+        // Verifica se algum dos dois lados do enlace conecta a um site em FLAG 1
+        var parts = (link.Enlace2||'').split(' - ').map(function(p){ return p.trim(); });
+        var conectaFlag1 = parts.some(function(eid){ return eidsAtivos[eid]; });
+
         var line = window.L.polyline([[latA,lonA],[latB,lonB]], {
-          color:cor, weight:5, opacity:0.65,
+          color:cor, weight: conectaFlag1 ? 6 : 5, opacity: conectaFlag1 ? 0.85 : 0.5,
           dashArray: forn==='CERAGON'?'6,4':null
         });
         line.bindPopup('<b>Enlace:</b> ' + enlace + '<br><b>Fornecedor:</b> ' + (link.FORNECEDOR||'—')
-          + (link.PROJETO ? '<br><b>Projeto:</b> ' + link.PROJETO : ''), { maxWidth:220 });
-        line.addTo(layers.mw);
+          + (link.PROJETO ? '<br><b>Projeto:</b> ' + link.PROJETO : '')
+          + (conectaFlag1 ? '<br><span style="color:#e74c3c">⬤ Conectado a site fora</span>' : ''), { maxWidth:240 });
+
+        // Prioritário (conecta a FLAG 1) fica sempre na camada visível por padrão.
+        // Demais só aparecem quando FLAG 0 também estiver ativo.
+        if (conectaFlag1) line.addTo(layers.mwFlag1);
+        else line.addTo(layers.mwFlag0);
       });
 
       foData.forEach(function(hub) {
@@ -389,7 +441,12 @@
         m.bindTooltip(hub.NEName||hub.HUB||'', { direction:'top' });
         m.addTo(layers.fo);
       });
+
+      // Ajustar visibilidade conforme estado atual dos checkboxes
+      if (!ckFlag0.chk.checked) layers.mwFlag0.remove();
+      else if (ckMW.chk.checked) layers.mwFlag0.addTo(mapInstance);
     }
+
 
     // ── Renderizar usando coordMap (fallback sem ponte) ────────
     // FLAG 1 = apenas incidentes ativos (sites fora reais)
@@ -486,21 +543,11 @@
           U.toast('Mapa: ' + sites.length + ' sites da ponte. Atualizando incidentes...', 'ok');
           getLeaflet(function() {
             initMap();
-            // Renderizar base (coordMap) primeiro, depois sobrescrever FLAG 1 com dados da ponte
-            if (Object.keys(coordMap).length > 0) renderComCoordMap();
-            renderEstaticos();
-            // Sobrescrever FLAG 1 com dados reais da ponte (que têm lat/lon preciso)
+            // 1) Renderiza os sites primeiro (popula sitesFlag1/sitesFlag0Raw)
             layers.flag1.clearLayers();
-            var ponte_flag1 = sites.filter(function(s){
-              var f = (s.flag !== undefined) ? s.flag : ((s.FLAG !== undefined) ? s.FLAG : 1);
-              return String(f) === '1';
-            });
-            if (ponte_flag1.length > 0) {
-              renderSites(ponte_flag1.concat(sites.filter(function(s){
-                var f = (s.flag !== undefined) ? s.flag : ((s.FLAG !== undefined) ? s.FLAG : 1);
-                return String(f) === '0';
-              })));
-            }
+            renderSites(sites);
+            // 2) SÓ DEPOIS renderiza MW/FO — assim eidsAtivos já reflete os dados da ponte
+            renderEstaticos();
           });
         })
         .catch(function(e) {
@@ -531,11 +578,12 @@
 
     getLeaflet(function() {
       initMap();
-      renderEstaticos(); // MW e FO sempre (se tiver dados)
+      // Renderiza sites PRIMEIRO (popula sitesFlag1) — depois os enlaces MW/FO
+      // usam essa informação para saber quais linhas conectam a sites fora.
       if (temCoords || temInc) {
-        // Renderiza: incidentes como flag1 (vermelho) e coordMap como flag0 (cinza)
         renderComCoordMap();
       }
+      renderEstaticos(); // MW e FO — já sabe quais eids estão em FLAG 1
       if (!temCoords && !temInc) {
         U.toast('Clique em "Buscar sites (ponte + VPN)" ou "Importar Genesis HTML" para carregar os marcadores.', 'ok');
       }

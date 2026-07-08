@@ -77,11 +77,13 @@
     }
 
     function calcUpdateStr(bg) {
-      // Analisa o BLOCO mais recente do BG (BR DD/MM/YYYY HH:MM:SS e US YYYY-MM-DD HH:MM).
+      // Analisa o BLOCO mais recente do BG (BR DD/MM/YYYY HH:MM:SS, YYYY-MM-DD HH:MM,
+      // DD/MM HH:MM sem ano, e HH:MM sozinho — réplica fiel do VBA ExtrairUltimaDataHora).
       // Só classifica como "SEM ATUALIZAÇÃO" se o bloco mais recente for claramente um bot.
       if (!bg) return 'SEM ATUALIZAÇÃO';
       var texto = bg.toString();
-      var DT_RE = /(\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)/g;
+      var DT_RE = U.BG_TIMESTAMP_RE ? new RegExp(U.BG_TIMESTAMP_RE.source, 'g')
+        : /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}:\d{2}(?::\d{2})?)/g;
       var matches = [], m;
       while ((m = DT_RE.exec(texto)) !== null) {
         var dt = U.parseDataHoraBG ? U.parseDataHoraBG(m[1]) : null;
