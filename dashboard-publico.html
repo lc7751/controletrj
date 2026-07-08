@@ -22,6 +22,7 @@
 <script src="js/domain.js"></script>
 <script src="js/compute.js"></script>
 <script src="js/ui.js"></script>
+<script src="js/pages/mapa.js"></script>
 <style>
 body { min-height: 100vh; }
 #root { max-width: 1800px; margin: 0 auto; padding: 22px 28px; position: relative; z-index: 1; }
@@ -104,7 +105,34 @@ body { min-height: 100vh; }
     }
   }
 
-  function renderView() { if (view === 'welcome') renderWelcome(); else renderDashboard(); }
+  function renderView() {
+    if (view === 'welcome') renderWelcome();
+    else if (view === 'mapa') renderMapaPublico();
+    else renderDashboard();
+  }
+
+  // ── Mapa Operacional (versão pública, sem botão de atualização) ────────────
+  function renderMapaPublico() {
+    root.innerHTML = '';
+    var btnVoltarMapa = U.h('button', {
+      class: 'trj-btn trj-btn-ghost clickable', text: '← Dashboard',
+      onclick: function () { view = 'dashboard'; renderView(); }
+    });
+    root.appendChild(U.h('div', { class: 'pub-topbar' }, [btnVoltarMapa, liveElGlobal()]));
+    var mapaContainer = U.h('div');
+    root.appendChild(mapaContainer);
+    if (TRJ.pages && TRJ.pages.mapa) {
+      TRJ.pages.mapa(mapaContainer, { data: raw, readOnly: true });
+    } else {
+      mapaContainer.appendChild(U.h('p', { style:{color:'var(--trj-muted)',padding:'20px'}, text:'Módulo de mapa não carregado.' }));
+    }
+  }
+  function liveElGlobal() {
+    return U.h('div', { class: 'pub-live' }, [
+      U.h('span', { class: 'dot' }),
+      U.h('span', { text: savedAt ? 'Atualizado em ' + new Date(savedAt).toLocaleString('pt-BR') : 'Dados publicados' })
+    ]);
+  }
 
   // ── Tela de boas-vindas ─────────────────────────────────────────────────────
   function renderWelcome() {
@@ -419,6 +447,11 @@ body { min-height: 100vh; }
       liveEl,
       U.h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, [
         prioSelect,
+        U.h('button', {
+          class: 'trj-btn clickable',
+          style: { fontSize: '12px', padding: '4px 12px', background: 'rgba(52,152,219,.15)', color: '#3498db', border: '1px solid rgba(52,152,219,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '5px' },
+          onclick: function () { view = 'mapa'; renderView(); }
+        }, [U.h('span', {text:'Mapa'})]),
         U.h('button', {
           class: 'trj-btn clickable',
           style: { fontSize: '12px', padding: '4px 12px', background: 'rgba(46,204,113,.15)', color: '#2ecc71', border: '1px solid rgba(46,204,113,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '5px' },
