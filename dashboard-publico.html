@@ -481,8 +481,8 @@ body { min-height: 100vh; }
     var venc = U.chartCard('PRAZOS A VENCER', { rightEl: vencBtnCopiar });
 
     // Sites Fora: toggle + botão copiar
-    var sfAgrupar = { value: false };
-    var switchSf = U.switch(false, 'AGRUPAR POR END_ID', function (v) { sfAgrupar.value = v; });
+    var sfAgrupar = { value: true };
+    var switchSf = U.switch(true, 'AGRUPAR POR END_ID', function (v) { sfAgrupar.value = v; });
     var btnCopiarSF = U.h('button', {
       class: 'trj-btn trj-btn-ghost clickable',
       style: { fontSize: '11px', padding: '2px 9px', display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid rgba(255,255,255,.15)' },
