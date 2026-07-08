@@ -478,13 +478,30 @@
       });
     }
     sortDesc(ativos);
-    var candidatos = ativos;
-    var melhor = candidatos[0];
+    var melhor = ativos[0];
+
+    // O row com maior sequenciaId pode ter BG vazio (update de status sem diary).
+    // Buscar o motivoCancelamento (BG) mais recente com conteúdo real, igual ao VBA
+    // que concatenava todos os updates do diário.
+    var bgPrincipal = (melhor.motivoCancelamento || '').trim();
+    var bgSlimPattern = /^(ASSOCIAÇÃO DE ATIVIDADES|AUTOMACAO|AUTOMAÇÃO)$/i;
+    if (!bgPrincipal || bgSlimPattern.test(bgPrincipal)) {
+      // Procurar em TODOS os rows da mesma TSK, do mais recente para o mais antigo
+      var todosTSK = tasksEnriched.filter(function (t) {
+        return t.osNumero === melhor.osNumero;
+      });
+      todosTSK.sort(function (a, b) { return (Number(b.sequenciaId)||0) - (Number(a.sequenciaId)||0); });
+      for (var ri = 0; ri < todosTSK.length; ri++) {
+        var bg = (todosTSK[ri].motivoCancelamento || '').trim();
+        if (bg && !bgSlimPattern.test(bg)) { bgPrincipal = bg; break; }
+      }
+    }
+
     return {
       osNumero: melhor.osNumero,
       status: melhor.status || null,
       filaAtual: melhor.filaAtual || null,
-      motivoCancelamento: melhor.motivoCancelamento || null,
+      motivoCancelamento: bgPrincipal || melhor.motivoCancelamento || null,
       total: candidatos.length,
       sequenciaId: melhor.sequenciaId
     };
@@ -843,6 +860,7 @@
   // Réplica o pattern do VBA ExtrairUltimaDataHora / UltimaMensagemEhVerificandoAcionamento.
   var BG_TIMESTAMP_RE = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}:\d{2}(?::\d{2})?)/g;
   U.BG_TIMESTAMP_RE = BG_TIMESTAMP_RE;
+  U.classificarUltimoBloco = classificarUltimoBloco;
 
   // Extrai TODOS os timestamps do texto BG e retorna o bloco (timestamp + texto seguinte)
   // cuja data seja a MAIS RECENTE — igual ao ExtrairUltimaDataHora + UltimaMensagem do VBA.
