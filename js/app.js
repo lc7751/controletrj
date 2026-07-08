@@ -323,15 +323,62 @@
   async function startApp() {
     document.getElementById('login-screen').style.display = 'none';
     buildShell();
+    render(); // renderiza imediatamente com dados vazios — sem esperar o carregamento
+    // Carregamento em background com mensagens de progresso
+    _loadComProgresso();
+  }
+
+  async function _loadComProgresso() {
+    var msgs = [
+      'Verificando configurações...',
+      'Lendo dados em memória...',
+      'Buscando localização dos sites...',
+      'Calculando backlog e SLA...',
+      'Finalizando...'
+    ];
+    var pct = 0;
+    function mostrarProgresso(i) {
+      pct = Math.round((i / msgs.length) * 100);
+      U.loadingMsg && U.loadingMsg(msgs[i] || '...', pct);
+      U.loading(true);
+    }
     try {
-      await App.loadAll();
+      mostrarProgresso(0);
+      var cfgRes = await TRJ.api.getConfig().catch(function(){ return null; });
+      var config = (cfgRes && cfgRes.config) || {};
+
+      mostrarProgresso(1);
+      var rawTasks = (TRJ.files && TRJ.files.getTasks()) || [];
+      var rawInc   = (TRJ.files && TRJ.files.getIncidents()) || [];
+      var prazoMap = D.montarPrazoMap(prazoOverride(config));
+
+      mostrarProgresso(2);
+      var ids      = Comp.collectIds(rawTasks, rawInc);
+      var validMap = {};
+      if (ids.length) {
+        try { var lk = await TRJ.api.lookupCities(ids); validMap = (lk && lk.map) || {}; }
+        catch (e) { validMap = {}; }
+      }
+
+      mostrarProgresso(3);
+      var now = new Date();
+      App.data = {
+        config: config, prazoMap: prazoMap, validMap: validMap,
+        rawTasks: rawTasks, rawInc: rawInc,
+        tasksEnriched:    Comp.enrichTasks(rawTasks, validMap, prazoMap, now),
+        incidentsEnriched: Comp.enrichIncidents(rawInc, validMap),
+        loadedAt: now
+      };
+
+      mostrarProgresso(4);
       buildShell();
       render();
       ensureMonitor();
     } catch (e) {
-      // token expirado -> volta pro login
       if (/token/i.test(e.message || '')) { doLogout(); showLogin(e.message); return; }
       U.toast(e.message || 'Erro ao carregar dados.', 'err');
+    } finally {
+      U.loading(false);
     }
     if (TRJ.config.AUTO_REFRESH_SEG > 0) {
       if (App._timer) clearInterval(App._timer);

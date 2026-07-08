@@ -79,7 +79,11 @@
     if (!l) {
       l = h('div', { id: 'trj-loading' }, [
         h('div', { class: 'trj-spin' }),
-        h('div', { id: 'trj-loading-msg', style: { color: 'var(--trj-muted)' } })
+        h('div', { id: 'trj-loading-msg', style: { color: 'var(--trj-fg)', fontSize: '13px', marginTop: '12px', fontWeight: '600' } }),
+        h('div', { id: 'trj-loading-sub', style: { color: 'var(--trj-muted)', fontSize: '11px', marginTop: '4px' } }),
+        h('div', { style: { width: '180px', height: '3px', background: 'rgba(255,255,255,.1)', borderRadius: '4px', marginTop: '14px', overflow: 'hidden' } }, [
+          h('div', { id: 'trj-loading-bar', style: { height: '3px', borderRadius: '4px', background: 'var(--trj-primary)', width: '0%', transition: 'width .4s ease' } })
+        ])
       ]);
       document.body.appendChild(l);
     }
@@ -89,6 +93,21 @@
     ensureLoading().classList.toggle('show', !!show);
     var m = document.getElementById('trj-loading-msg');
     if (m) m.textContent = msg || '';
+    if (!show) {
+      var bar = document.getElementById('trj-loading-bar');
+      if (bar) bar.style.width = '0%';
+      var sub = document.getElementById('trj-loading-sub');
+      if (sub) sub.textContent = '';
+    }
+  };
+  U.loadingMsg = function (msg, pct) {
+    ensureLoading().classList.add('show');
+    var m = document.getElementById('trj-loading-msg');
+    if (m) m.textContent = msg || '';
+    var bar = document.getElementById('trj-loading-bar');
+    if (bar) bar.style.width = (pct || 0) + '%';
+    var sub = document.getElementById('trj-loading-sub');
+    if (sub) sub.textContent = pct != null ? pct + '%' : '';
   };
 
   // ---------- modal ----------
@@ -851,24 +870,30 @@
   // Classifica o estado do Último Update baseado na lógica do VBA:
   //   'sem'         → BG vazio, frase padrão bot/MONITOR CCI, ou formulário WFM puro
   //   'acionamento' → bloco mais recente contém "VERIFICANDO ACIONAMENTO"
-  //   'ok'          → tem texto real de técnico no bloco mais recente
+  //   'ok'          → tem texto real de técnico NO DIA ATUAL
+  //   'antigo'      → tem texto real de técnico, mas de ontem ou anterior
   function classificarUltimoBloco(bgTexto) {
-    if (isTextoSemAtualizacao(bgTexto)) return { estado: 'sem', texto: null };
+    if (isTextoSemAtualizacao(bgTexto)) return { estado: 'sem', texto: null, dt: null };
     var bloco = extrairBlocoMaisRecente(bgTexto);
-    if (!bloco) return { estado: 'sem', texto: bgTexto ? bgTexto.toString().trim() : null };
+    if (!bloco) return { estado: 'sem', texto: bgTexto ? bgTexto.toString().trim() : null, dt: null };
     var txtUpper = bloco.texto.toUpperCase();
-    if (txtUpper.indexOf('VERIFICANDO ACIONAMENTO') >= 0) return { estado: 'acionamento', texto: bloco.texto };
-    // MONITOR CCI com frase padrão → classificar como sem atualização
+    if (txtUpper.indexOf('VERIFICANDO ACIONAMENTO') >= 0) return { estado: 'acionamento', texto: bloco.texto, dt: bloco.dt };
+    // MONITOR CCI com frase padrão → sem atualização
     if (txtUpper.indexOf('MONITOR CCI') >= 0) {
       for (var fi = 0; fi < FRASES_PADRAO_BOT.length; fi++) {
         if (txtUpper.indexOf(FRASES_PADRAO_BOT[fi].toUpperCase()) >= 0) {
-          return { estado: 'sem', texto: null };
+          return { estado: 'sem', texto: null, dt: null };
         }
       }
-      // MONITOR CCI com texto diferente das frases padrão → pode ser acionamento
-      return { estado: 'acionamento', texto: bloco.texto };
+      return { estado: 'acionamento', texto: bloco.texto, dt: bloco.dt };
     }
-    return { estado: 'ok', texto: bloco.texto };
+    // Verificar se a atualização é de hoje ou de outro dia
+    var agora = new Date();
+    var ehHoje = bloco.dt &&
+      bloco.dt.getDate() === agora.getDate() &&
+      bloco.dt.getMonth() === agora.getMonth() &&
+      bloco.dt.getFullYear() === agora.getFullYear();
+    return { estado: ehHoje ? 'ok' : 'antigo', texto: bloco.texto, dt: bloco.dt };
   }
 
   // Extrai os 2 blocos mais recentes (penúltimo + último) para o modal.
@@ -935,6 +960,26 @@
       return btnAc;
     }
 
+    // Estado 'antigo' — ícone de folha com brilho amarelo/muted + badge de data
+    if (estado === 'antigo') {
+      var dtLabel = '';
+      if (resultado.dt) {
+        var ontem = new Date(); ontem.setDate(ontem.getDate()-1);
+        var ehOntem = resultado.dt.getDate()===ontem.getDate() && resultado.dt.getMonth()===ontem.getMonth();
+        dtLabel = ehOntem ? 'ontem' : (resultado.dt.getDate()+'/'+(resultado.dt.getMonth()+1));
+      }
+      var btnAnt = h('button', {
+        class: 'trj-btn',
+        style: { background:'transparent', border:'none', padding:'2px 4px', cursor:'pointer', display:'inline-flex', alignItems:'center', gap:'3px', color:'var(--trj-muted)', opacity:'0.8' },
+        title: (previewHover||'') + (dtLabel?' ('+dtLabel+')':''),
+        onclick: abrirModal
+      }, [
+        h('span', { html: ICONE_FOLHA_SVG }),
+        dtLabel ? h('span', { style:{fontSize:'9px',fontWeight:'700',background:'rgba(240,180,41,.2)',color:'#f0b429',borderRadius:'3px',padding:'1px 3px',lineHeight:'1.3'}, text: dtLabel }) : null
+      ].filter(Boolean));
+      return btnAnt;
+    }
+
     // Estado 'ok' — ícone de folha verde, tooltip com preview
     return h('button', {
       class: 'trj-btn',
@@ -945,23 +990,22 @@
   };
 
   U.devFooter = function () {
-    function card(initials, cor, role, name, email) {
-      return h('div', { class: 'trj-dev-card' }, [
-        h('div', { class: 'trj-dev-avatar', style: { background: cor }, text: initials }),
-        h('div', null, [
-          h('div', { class: 'trj-dev-role', style: { color: cor }, text: role }),
-          h('div', { class: 'trj-dev-name', text: name }),
-          h('a', { class: 'trj-dev-email', href: 'mailto:' + email, text: email })
-        ])
+    function pessoa(role, name, email, cor) {
+      return h('div', { style: { display:'inline-flex', alignItems:'center', gap:'6px', flexWrap:'wrap', justifyContent:'center' } }, [
+        h('span', { style:{ color:cor, fontWeight:'600', fontSize:'10px' }, text: role + ':' }),
+        h('span', { style:{ fontSize:'10px', color:'var(--trj-muted)' }, text: name }),
+        h('a', { href:'mailto:'+email, style:{ fontSize:'10px', color:'var(--trj-muted)', opacity:'.7', textDecoration:'none' }, text:'<'+email+'>' })
       ]);
     }
-    return h('div', { class: 'trj-dev-footer' }, [
-      h('div', { class: 'trj-dev-footer-title', text: 'Equipe de Desenvolvimento' }),
-      h('div', { class: 'trj-dev-cards' }, [
-        card('LI', 'var(--trj-primary)', 'Desenvolvedor', 'Lucas Infante', 'lucas.esao7751@gmail.com'),
-        card('BA', 'var(--trj-blue)', 'Idealizador', 'Bruno Augusto', 'bruno.augusto.bafs@gmail.com')
+    return h('div', {
+      style: { marginTop:'28px', paddingTop:'10px', borderTop:'1px solid var(--trj-border)', textAlign:'center', color:'var(--trj-muted)', fontSize:'10px', opacity:'.65', lineHeight:'1.7' }
+    }, [
+      h('div', { style:{marginBottom:'3px', fontWeight:'600', letterSpacing:'.04em', fontSize:'10px', textTransform:'uppercase', opacity:'.8' }, text:'Equipe de Desenvolvimento' }),
+      h('div', { style:{display:'flex', gap:'14px', justifyContent:'center', flexWrap:'wrap'} }, [
+        pessoa('Dev', 'Lucas Infante', 'lucas.esao7751@gmail.com', 'var(--trj-primary)'),
+        pessoa('Idealizador', 'Bruno Augusto', 'bruno.augusto.bafs@gmail.com', 'var(--trj-blue)')
       ]),
-      h('div', { class: 'trj-dev-footer-copy', text: 'Controle operacional TIM - TLP  ·  Todos os direitos reservados' })
+      h('div', { style:{marginTop:'3px', fontSize:'9px', opacity:'.6'}, text:'Controle operacional TIM · TLP' })
     ]);
   };
 
