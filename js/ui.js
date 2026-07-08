@@ -785,21 +785,45 @@
     return false;
   }
 
-  // Parseia data no formato DD/MM/YYYY HH:MM:SS, DD/MM/YY HH:MM, YYYY-MM-DD HH:MM etc.
+  // Parseia data no formato DD/MM/YYYY HH:MM:SS, DD/MM/YY HH:MM, YYYY-MM-DD HH:MM,
+  // DD/MM HH:MM (sem ano — assume ano atual) e HH:MM sozinho (assume hoje; se resultado
+  // cair no futuro, assume ontem). Réplica fiel de ExtrairUltimaDataHora do VBA original.
   function parseDataHoraBG(s) {
     s = (s || '').trim();
     var m;
     // YYYY-MM-DD HH:MM ou YYYY-MM-DD HH:MM:SS
     m = s.match(/^(\d{4})[\/-](\d{2})[\/-](\d{2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
     if (m) return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], m[6]?+m[6]:0);
-    // DD/MM/YYYY HH:MM ou DD/MM/YY HH:MM
+    // DD/MM/YYYY HH:MM ou DD/MM/YY HH:MM (com ano)
     m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
     if (m) {
       var ano = +m[3]; if (ano < 100) ano += 2000;
       return new Date(ano, +m[2]-1, +m[1], +m[4], +m[5], m[6]?+m[6]:0);
     }
+    // DD/MM HH:MM (sem ano) — assume o ano atual, igual ao VBA
+    m = s.match(/^(\d{1,2})[\/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (m) {
+      var anoAtual = new Date().getFullYear();
+      return new Date(anoAtual, +m[2]-1, +m[1], +m[3], +m[4], m[5]?+m[5]:0);
+    }
+    // HH:MM ou HH:MM:SS sozinho — assume hoje; se resultado cair no futuro, assume ontem
+    m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (m) {
+      var hh = +m[1], mm = +m[2], ss = m[3] ? +m[3] : 0;
+      if (hh > 23 || mm > 59 || ss > 59) return null;
+      var agora = new Date();
+      var dt = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate(), hh, mm, ss);
+      if (dt.getTime() > agora.getTime()) dt.setDate(dt.getDate() - 1); // igual ao VBA: DateAdd("d", -1, dt)
+      return dt;
+    }
     return null;
   }
+
+  // Regex unificada de captura de timestamps no texto BG — ORDEM IMPORTA:
+  // do padrão mais específico (com ano) ao menos específico (só hora).
+  // Réplica o pattern do VBA ExtrairUltimaDataHora / UltimaMensagemEhVerificandoAcionamento.
+  var BG_TIMESTAMP_RE = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}:\d{2}(?::\d{2})?)/g;
+  U.BG_TIMESTAMP_RE = BG_TIMESTAMP_RE;
 
   // Extrai TODOS os timestamps do texto BG e retorna o bloco (timestamp + texto seguinte)
   // cuja data seja a MAIS RECENTE — igual ao ExtrairUltimaDataHora + UltimaMensagem do VBA.
@@ -807,7 +831,7 @@
   function extrairBlocoMaisRecente(bgTexto) {
     if (!bgTexto) return null;
     var texto = bgTexto.toString();
-    var DT_RE = /(\d{4}[\/-]\d{2}[\/-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)/g;
+    var DT_RE = new RegExp(BG_TIMESTAMP_RE.source, 'g');
     var matches = [], m;
     while ((m = DT_RE.exec(texto)) !== null) {
       var dt = parseDataHoraBG(m[1]);
@@ -851,7 +875,7 @@
   function extrairDoisBlocosMaisRecentes(bgTexto) {
     if (!bgTexto) return [];
     var texto = bgTexto.toString();
-    var DT_RE = /(\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)/g;
+    var DT_RE = new RegExp(BG_TIMESTAMP_RE.source, 'g');
     var matches = [], m;
     while ((m = DT_RE.exec(texto)) !== null) {
       var dt = parseDataHoraBG(m[1]);
