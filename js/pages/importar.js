@@ -210,8 +210,13 @@
         accept: '.xlsx,.xls', multiple: false,
         statusOk: false,
         onFile: async function (files) {
+          // Normaliza para array (o dropzone pode passar File único ou FileList)
+          var filesArray = (files instanceof File) ? [files]
+                         : (files && typeof files[Symbol.iterator] === 'function') ? Array.from(files)
+                         : [files];
           // Filtrar só o tipo correto
-          var validos = Array.from(files).filter(function (f) {
+          var validos = filesArray.filter(function (f) {
+            if (!f || !f.name) return false;
             var isNa = FS.isNaoAgendada ? FS.isNaoAgendada(f.name) : (f.name.toLowerCase().indexOf('nao') >= 0 && f.name.toLowerCase().indexOf('agendad') >= 0);
             return opts.tipo === 'na' ? isNa : !isNa;
           });

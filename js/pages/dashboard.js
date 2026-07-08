@@ -285,8 +285,8 @@
     // ============================================================
     // SITES FORA — toggle + botão copiar todos
     // ============================================================
-    var sfAgrupar = { value: false };
-    var switchSf = U.switch(false, 'AGRUPAR POR END_ID', function(v){ sfAgrupar.value = v; });
+    var sfAgrupar = { value: true };
+    var switchSf = U.switch(true, 'AGRUPAR POR END_ID', function(v){ sfAgrupar.value = v; });
 
     var btnCopiarTodosSF = U.h('button', {
       class: 'trj-btn trj-btn-ghost clickable',

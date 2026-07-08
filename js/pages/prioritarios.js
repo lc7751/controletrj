@@ -64,37 +64,66 @@
   // ── ícone folha ──────────────────────────────────────────────────────
   var FOLHA = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
 
-  // ── bgCell: último update estilo Sites Fora ───────────────────────────
+  // ── bgCell: ícone de update (igual ao ultimoUpdateCell do dashboard) ──
+  // Não mostra prévia do texto — só ícone com tooltip. Clicar abre modal.
+  var ICONE_FOLHA_PRIO = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17 8C8 10 5.9 16.17 3.82 21.34L5.71 22l1-2.3A4.49 4.49 0 0 0 8 20C19 20 22 3 22 3c-1 2-8 5.25-8 5.25S17 5 17 8z"/></svg>';
   function bgCell(t) {
     var bg = t.motivoCancelamento || '';
-    if (!bg || !U.extrairDoisBlocosBG) {
-      return U.h('span', { style: { color: 'var(--trj-muted)', fontSize: '11px' }, text: '—' });
-    }
-    var semUpd = U.isTextoSemAtualizacao && U.isTextoSemAtualizacao(bg);
-    var dois   = U.extrairDoisBlocosBG(bg);
-    if (semUpd || !dois.length) {
+    // Sem BG: ponto pulsante vermelho
+    if (!bg.trim() || !U.classificarUltimoBloco) {
       return U.h('span', {
-        class: 'trj-badge',
-        style: { background: 'rgba(231,76,60,.14)', color: '#e74c3c', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px' },
-        title: 'Nenhuma atualização do técnico'
-      }, [U.h('span', { class: 'trj-pulse-dot' }), U.h('span', { text: 'Sem update' })]);
+        style: { display:'inline-flex', alignItems:'center', justifyContent:'center', width:'28px' },
+        title: 'Sem atualização'
+      }, [U.h('span', { class: 'trj-pulse-dot' })]);
     }
-    var ultimo = dois[0] || '';
-    var semPfx = ultimo.replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s*-?\s*/, '').trim();
-    var resumo = semPfx.slice(0, 35) + (semPfx.length > 35 ? '…' : '');
-    return U.h('button', {
-      class: 'trj-btn trj-btn-ghost',
-      style: { fontSize: '11px', padding: '2px 6px', display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--trj-green)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-      title: ultimo,
-      onclick: function (ev) {
-        ev.stopPropagation();
-        var el = U.h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' } }, [
-          U.h('b', { text: '── Último ──\n\n' }), U.h('span', { text: dois[0] || '' }),
-          dois[1] ? U.h('span', { text: '\n\n── Penúltimo ──\n\n' + dois[1] }) : null
-        ]);
-        U.openModal('BG — ' + (t.osNumero || ''), el);
+    var resultado = U.classificarUltimoBloco(bg);
+    var estado = resultado.estado;
+
+    function abrirModal(ev) {
+      ev.stopPropagation();
+      var dois = U.extrairDoisBlocosBG ? U.extrairDoisBlocosBG(bg) : [];
+      var conteudo = dois.length > 1
+        ? '── Último ──\n\n' + dois[0] + '\n\n── Penúltimo ──\n\n' + dois[1]
+        : (dois[0] || bg || '—');
+      var el = U.h('div', { style: { whiteSpace:'pre-wrap', fontFamily:'ui-monospace,monospace', fontSize:'12px', maxHeight:'60vh', overflowY:'auto', padding:'12px', lineHeight:'1.6', background:'var(--trj-card2)', borderRadius:'8px' }, text: conteudo });
+      U.openModal('Último Update — ' + (t.osNumero || ''), el);
+    }
+
+    // Tooltip: texto do bloco mais recente sem o timestamp no início
+    var preview = (resultado.texto || '').replace(/^\d{1,2}[\/-]\d{1,2}[\/-]?\d{0,4}\s*\d{1,2}:\d{2}(?::\d{2})?\s*-?\s*/, '').trim().slice(0, 120);
+
+    if (estado === 'sem') {
+      return U.h('span', {
+        style: { display:'inline-flex', alignItems:'center', justifyContent:'center', width:'28px' },
+        title: 'Sem atualização do técnico'
+      }, [U.h('span', { class: 'trj-pulse-dot' })]);
+    }
+    if (estado === 'acionamento') {
+      return U.h('button', {
+        class: 'trj-btn', style: { background:'transparent', border:'none', padding:'2px 4px', cursor:'pointer', display:'inline-flex', alignItems:'center', color:'var(--trj-primary)' },
+        title: preview || 'Verificando acionamento', onclick: abrirModal
+      }, [U.h('span', { html: ICONE_FOLHA_PRIO })]);
+    }
+    if (estado === 'antigo') {
+      var dtLabel = '';
+      if (resultado.dt) {
+        var ontem = new Date(); ontem.setDate(ontem.getDate()-1);
+        var ehOntem = resultado.dt.getDate()===ontem.getDate() && resultado.dt.getMonth()===ontem.getMonth();
+        dtLabel = ehOntem ? 'ontem' : (resultado.dt.getDate()+'/'+(resultado.dt.getMonth()+1));
       }
-    }, [U.h('span', { html: FOLHA }), U.h('span', { text: resumo })]);
+      return U.h('button', {
+        class: 'trj-btn', style: { background:'transparent', border:'none', padding:'2px 4px', cursor:'pointer', display:'inline-flex', alignItems:'center', gap:'3px', color:'var(--trj-muted)' },
+        title: preview + (dtLabel?' ('+dtLabel+')':''), onclick: abrirModal
+      }, [
+        U.h('span', { html: ICONE_FOLHA_PRIO }),
+        dtLabel ? U.h('span', { style:{fontSize:'9px',fontWeight:'700',background:'rgba(240,180,41,.2)',color:'#f0b429',borderRadius:'3px',padding:'1px 3px'}, text: dtLabel }) : null
+      ].filter(Boolean));
+    }
+    // ok — folha verde
+    return U.h('button', {
+      class: 'trj-btn', style: { background:'transparent', border:'none', padding:'2px 4px', cursor:'pointer', display:'inline-flex', alignItems:'center', color:'var(--trj-green)' },
+      title: preview, onclick: abrirModal
+    }, [U.h('span', { html: ICONE_FOLHA_PRIO })]);
   }
 
   // ── status badge ─────────────────────────────────────────────────────
@@ -198,7 +227,7 @@
       return U.h('p', { style: { color: 'var(--trj-muted)', fontSize: '13px', fontStyle: 'italic', textAlign: 'center', padding: '24px 0' }, text: opts.vazio || 'Nenhum resultado.' });
     }
     var thead = U.h('thead', null, U.h('tr', null,
-      ['Status', 'TSK', 'NE / Site', 'END_ID', 'Falha', 'Fila Atual', 'BG — Último Update']
+      ['Status', 'TSK', 'NE / Site', 'END_ID', 'Falha', 'Fila Atual', 'ÚLTIMO UPDATE']
         .map(function (t) { return U.h('th', { text: t }); })));
     var tbody = U.h('tbody', null, rows.map(function (t) {
       return U.h('tr', null, [
@@ -224,7 +253,7 @@
     var sections = [];
     if (tarefas.length) {
       var thead = U.h('thead', null, U.h('tr', null,
-        ['Status', 'TSK', 'NE / Site', 'END_ID', 'Falha', 'Fila Atual', 'BG — Último Update', 'Anotação']
+        ['Status', 'TSK', 'NE / Site', 'END_ID', 'Falha', 'Fila Atual', 'ÚLTIMO UPDATE', 'Anotação']
           .map(function (h) { return U.h('th', { text: h }); })));
       var tbody = U.h('tbody', null, tarefas.map(function (m) {
         var t = m.data;
