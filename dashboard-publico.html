@@ -198,6 +198,14 @@ body { min-height: 100vh; }
       U.h('button', { class: 'visao-geral-btn', onclick: function () { state.regiao = 'TODAS'; view = 'dashboard'; renderDashboard(); } }, [
         U.h('span', { text: '🌐' }),
         U.h('span', { text: 'VISÃO GERAL — TODAS AS REGIÕES' })
+      ]),
+      U.h('button', {
+        class: 'visao-geral-btn',
+        style: { marginTop: '8px', background: 'rgba(52,152,219,.08)', borderColor: 'rgba(52,152,219,.3)', color: 'var(--trj-fg)' },
+        onclick: function () { view = 'mapa'; renderView(); }
+      }, [
+        U.h('span', { text: '🗺️' }),
+        U.h('span', { text: 'MAPA OPERACIONAL — SITES FORA' })
       ])
     ]);
     root.appendChild(wrap);
