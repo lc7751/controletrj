@@ -100,28 +100,42 @@ body { min-height: 100vh; }
       raw.incidentsEnriched = json.data.incidentsEnriched || [];
       savedAt = json.savedAt || null;
 
-      // Sincronizar dados do mapa para o localStorage deste dispositivo
-      // Assim o mapa funciona em qualquer PC/celular que abrir o dashboard público
+      // Sincronizar dados do mapa para o localStorage E para o objeto raw
+      // (raw é usado diretamente pelo renderMapaPublico, evitando race condition)
       function _lsSave(key, val) {
         try { if (val) localStorage.setItem(key, JSON.stringify(val)); } catch(e){}
       }
       if (json.data.mapaCoordMap) {
+        raw._mapaCoordMap = json.data.mapaCoordMap;
         _lsSave('trj_coordMap', json.data.mapaCoordMap);
+      } else {
+        // Tentar recuperar do localStorage como fallback
+        try { raw._mapaCoordMap = JSON.parse(localStorage.getItem('trj_coordMap') || 'null'); } catch(e){}
       }
       if (json.data.mapaMwSlim && json.data.mapaMwSlim.length) {
-        // Restaurar para o formato completo que mapa.js espera
         var mwFull = json.data.mapaMwSlim.map(function(l) {
           return { Enlace2:l.E2, LAT_A:l.LA, LONG_A:l.LO, LAT_B:l.LB, LONG_B:l.LOB, FORNECEDOR:l.F };
         });
+        raw._mapaMwData = mwFull;
         _lsSave('trj_mwData', mwFull);
+      } else {
+        try { raw._mapaMwData = JSON.parse(localStorage.getItem('trj_mwData') || 'null'); } catch(e){}
       }
       if (json.data.mapaFoSlim && json.data.mapaFoSlim.length) {
         var foFull = json.data.mapaFoSlim.map(function(h) {
           return { NEName:h.N, HUB:h.H, LAT_A:h.LA, LONG_A:h.LO, FORNECEDOR:h.F };
         });
+        raw._mapaFoData = foFull;
         _lsSave('trj_foData', foFull);
+      } else {
+        try { raw._mapaFoData = JSON.parse(localStorage.getItem('trj_foData') || 'null'); } catch(e){}
       }
       renderView();
+      // Se o usuário já estava na aba de mapa, re-renderizar com os dados novos
+      if (view === 'mapa' && root.querySelector('#trj-mapa-leaflet')) {
+        root.innerHTML = '';
+        renderMapaPublico();
+      }
     } catch (e) {
       if (!silencioso) root.innerHTML = '<div class="text-center py-20" style="color:var(--trj-red)">Não foi possível carregar: ' + U.esc(e.message || String(e)) + '</div>';
     }
@@ -144,7 +158,14 @@ body { min-height: 100vh; }
     var mapaContainer = U.h('div');
     root.appendChild(mapaContainer);
     if (TRJ.pages && TRJ.pages.mapa) {
-      TRJ.pages.mapa(mapaContainer, { data: raw, readOnly: true });
+      TRJ.pages.mapa(mapaContainer, {
+        data: raw,
+        readOnly: true,
+        // Passar dados do mapa diretamente pelo contexto (evita depender só do localStorage)
+        mapaCoordMap: raw._mapaCoordMap || null,
+        mapaMwData:   raw._mapaMwData   || null,
+        mapaFoData:   raw._mapaFoData   || null
+      });
     } else {
       mapaContainer.appendChild(U.h('p', { style:{color:'var(--trj-muted)',padding:'20px'}, text:'Módulo de mapa não carregado.' }));
     }
@@ -168,8 +189,11 @@ body { min-height: 100vh; }
     // (igual ao drilldown — tskAberta pega a TSK mais recente por END_ID;
     //  múltiplos sites no mesmo END_ID contam como 1 TSK)
     var tasksAtivas = (raw.tasksEnriched || []).filter(function (t) {
-      var s = (t.status || '').toString().trim().toUpperCase();
-      return s === 'NÃO INICIADO' || s === 'NAO INICIADO' || s === 'INICIADO';
+      var s = (t.status || '').toString().trim().toUpperCase()
+              .replace(/[ÁÀÂÃ]/g,'A').replace(/Ã/g,'A');
+      // aceitar variações: NÃO INICIADO, NAO INICIADO, NÃO INICIADO, INICIADO
+      return s.indexOf('INICIADO') >= 0 && s !== 'CONCLUIDA' && s !== 'CONCLUÍDA' &&
+             s !== 'CANCELADA' && s !== 'CANCELADO';
     });
 
     // Contar total de incidentes por região (1 por incidente)
