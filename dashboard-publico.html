@@ -99,6 +99,28 @@ body { min-height: 100vh; }
       raw.tasksEnriched = json.data.tasksEnriched || [];
       raw.incidentsEnriched = json.data.incidentsEnriched || [];
       savedAt = json.savedAt || null;
+
+      // Sincronizar dados do mapa para o localStorage deste dispositivo
+      // Assim o mapa funciona em qualquer PC/celular que abrir o dashboard público
+      function _lsSave(key, val) {
+        try { if (val) localStorage.setItem(key, JSON.stringify(val)); } catch(e){}
+      }
+      if (json.data.mapaCoordMap) {
+        _lsSave('trj_coordMap', json.data.mapaCoordMap);
+      }
+      if (json.data.mapaMwSlim && json.data.mapaMwSlim.length) {
+        // Restaurar para o formato completo que mapa.js espera
+        var mwFull = json.data.mapaMwSlim.map(function(l) {
+          return { Enlace2:l.E2, LAT_A:l.LA, LONG_A:l.LO, LAT_B:l.LB, LONG_B:l.LOB, FORNECEDOR:l.F };
+        });
+        _lsSave('trj_mwData', mwFull);
+      }
+      if (json.data.mapaFoSlim && json.data.mapaFoSlim.length) {
+        var foFull = json.data.mapaFoSlim.map(function(h) {
+          return { NEName:h.N, HUB:h.H, LAT_A:h.LA, LONG_A:h.LO, FORNECEDOR:h.F };
+        });
+        _lsSave('trj_foData', foFull);
+      }
       renderView();
     } catch (e) {
       if (!silencioso) root.innerHTML = '<div class="text-center py-20" style="color:var(--trj-red)">Não foi possível carregar: ' + U.esc(e.message || String(e)) + '</div>';
