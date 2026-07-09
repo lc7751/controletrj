@@ -422,9 +422,30 @@
 
   function publicarSnapshotPublico(data) {
     try {
+      // Incluir coordMap no snapshot para que o mapa funcione em qualquer dispositivo.
+      // Publica somente o coordMap (ENDID→[lat,lon]) para manter o payload enxuto.
+      // mwData e foData são grandes demais para o snapshot; ficam no localStorage do usuário.
+      function tryLS(key) {
+        try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch(e){ return null; }
+      }
+      var coordMapLS = tryLS('trj_coordMap') || {};
+      // Slim mwData: só as colunas necessárias para as polylines
+      var mwDataLS = tryLS('trj_mwData') || [];
+      var mwSlim = mwDataLS.length > 0 ? mwDataLS.map(function(l) {
+        return { E2:l.Enlace2||'', LA:l.LAT_A, LO:l.LONG_A, LB:l.LAT_B, LOB:l.LONG_B, F:l.FORNECEDOR||'' };
+      }) : null;
+      // Slim foData: só as colunas necessárias para os marcadores
+      var foDataLS = tryLS('trj_foData') || [];
+      var foSlim = foDataLS.length > 0 ? foDataLS.map(function(h) {
+        return { N:h.NEName||'', H:h.HUB||'', LA:h.LAT_A, LO:h.LONG_A, F:h.FORNECEDOR||'' };
+      }) : null;
+
       var payload = {
-        tasksEnriched: (data.tasksEnriched || []).map(slimTaskForPublish),
-        incidentsEnriched: data.incidentsEnriched || []
+        tasksEnriched:     (data.tasksEnriched || []).map(slimTaskForPublish),
+        incidentsEnriched: data.incidentsEnriched || [],
+        mapaCoordMap: Object.keys(coordMapLS).length > 0 ? coordMapLS : null,
+        mapaMwSlim:   mwSlim,
+        mapaFoSlim:   foSlim
       };
       var jsonStr = JSON.stringify(payload);
       if (jsonStr === _ultimoSnapshotJSON) return;
