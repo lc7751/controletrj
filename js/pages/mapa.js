@@ -81,13 +81,15 @@
   // ── PÁGINA ─────────────────────────────────────────────────
   TRJ.pages.mapa = function(container, ctx) {
     var data      = ctx.data || {};
-    var readOnly  = !!ctx.readOnly; // true no dashboard público: oculta botões de atualização
+    var readOnly  = !!ctx.readOnly;
     var incidents = data.incidentsEnriched || [];
     var tasks     = data.tasksEnriched     || [];
 
-    var coordMap  = loadLS(LS_COORDS) || {};
-    var mwData    = loadLS(LS_MW)     || [];
-    var foData    = loadLS(LS_FO)     || [];
+    // Dados de mapa: contexto (prioritário) > localStorage > vazio
+    // O contexto já vem preenchido pelo dashboard público quando carrega o snapshot.
+    var coordMap = ctx.mapaCoordMap || loadLS(LS_COORDS) || {};
+    var mwData   = ctx.mapaMwData   || loadLS(LS_MW)     || [];
+    var foData   = ctx.mapaFoData   || loadLS(LS_FO)     || [];
 
     // ── Construir lookup ENDID → {site} a partir das tarefas ─
     var siteByEndId = {};
