@@ -1,288 +1,323 @@
-/* Página: SLA / Aderência — redesign completo */
+/* Página: SLA / Aderência */
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
   var U = TRJ.ui, C = TRJ.constants, Comp = TRJ.compute;
 
-  var COR_DENTRO = '#2ecc71';
-  var COR_FORA   = '#e74c3c';
-  var COR_ORANGE = '#f0b429';
+  /* Metas por prioridade (conforme especificado) */
+  var META_PRIO = { P1: 80, P2: 75, P3: 70, P4: 70, P5: 70 };
+  var COR_DENTRO = C.CORES_TRJ.green;   /* #2ecc71 */
+  var COR_FORA   = C.CORES_TRJ.red;     /* #e74c3c */
+  var COR_WARN   = C.CORES_TRJ.orange;  /* #ff8c00 */
 
-  function pctCor(pct) { return pct >= 90 ? COR_DENTRO : pct >= 70 ? COR_ORANGE : COR_FORA; }
-
-  /* ── Cria donut via Chart.js (sem usar U.donutChart para ter controle total) ── */
-  function mkDonut(canvas, dentro, fora, opts) {
-    opts = opts || {};
-    var total = dentro + fora;
-    var pct   = total > 0 ? Math.round((dentro / total) * 100 * 10) / 10 : 0;
-    var border = getComputedStyle(document.body).getPropertyValue('--trj-card').trim() || '#1a1a2a';
-
-    if (window.Chart) {
-      var ch = new window.Chart(canvas, {
-        type: 'doughnut',
-        data: {
-          labels: ['Dentro do SLA', 'Fora do SLA'],
-          datasets: [{ data: [dentro, fora],
-            backgroundColor: [COR_DENTRO, COR_FORA],
-            hoverBackgroundColor: ['#27ae60','#c0392b'],
-            borderColor: border, borderWidth: 3, hoverBorderWidth: 0
-          }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false, cutout: '70%',
-          plugins: { legend: { display: false }, tooltip: {
-            callbacks: { label: function(ctx) { return ' ' + ctx.label + ': ' + ctx.raw + ' (' + (total>0?Math.round(ctx.raw/total*100):0) + '%)'; } }
-          }},
-          onClick: opts.onClick ? function(ev, els) { if (els && els.length) opts.onClick(els[0].index); } : undefined,
-          animation: { duration: 600, easing: 'easeInOutQuart' }
-        }
-      });
-      return { chart: ch, pct: pct };
-    }
-    return { pct: pct };
+  function corPrioridade(prio, pct) {
+    var meta = META_PRIO[prio] || 70;
+    return pct >= meta ? COR_DENTRO : COR_FORA;
+  }
+  function corGeral(pct) {
+    return pct >= 80 ? COR_DENTRO : pct >= 65 ? COR_WARN : COR_FORA;
   }
 
-  /* ── PÁGINA ─────────────────────────────────────────────────────────── */
+  /* Donut direto no Chart.js — sem legenda, sem anotações externas */
+  function mkDonut(canvas, dentro, fora, onClick) {
+    var border = '#13131a';
+    if (!window.Chart) return;
+    new window.Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels: ['Dentro do SLA', 'Fora do SLA'],
+        datasets: [{ data: [dentro, fora],
+          backgroundColor: [COR_DENTRO, COR_FORA],
+          hoverBackgroundColor: ['#27ae60','#c0392b'],
+          borderColor: border, borderWidth: 3
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '68%',
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: { label: function(c) {
+            var tot = dentro + fora;
+            return ' ' + c.label + ': ' + c.raw + (tot>0 ? ' ('+Math.round(c.raw/tot*100)+'%)' : '');
+          }}
+        }},
+        onClick: onClick ? function(ev, els) { if (els && els.length) onClick(els[0].index); } : undefined,
+        animation: { duration: 500 }
+      }
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════════════ */
   TRJ.pages.sla = function (container, ctx) {
     var data = ctx.data, app = ctx.app;
     if (!data) {
-      container.appendChild(U.h('div', { class: 'trj-card p-6 text-center', text: 'Sem dados para exibir.' }));
+      container.appendChild(U.h('div', { class:'trj-card p-6 text-center', text:'Sem dados.' }));
       return;
     }
 
-    var tasks = data.tasksEnriched || [];
-    var state = { regiao: 'TODAS', prioridade: 'TODAS' };
+    var tasks  = data.tasksEnriched || [];
+    var estado = { regiao:'TODAS', prioridade:'TODAS' };
 
-    container.appendChild(U.pageHeader('SLA / Aderência', 'Clique nas prioridades ou regiões para detalhar.'));
+    container.appendChild(U.pageHeader('SLA / Aderência',
+      'Aderência por prioridade e região. Clique para detalhar.'));
 
-    /* ── Filtros ──────────────────────────────────────────────────────── */
-    var selReg  = U.h('select', { class: 'trj-btn trj-btn-ghost', style: { fontSize:'12px', padding:'6px 14px', cursor:'pointer' } },
-      [U.h('option', { value:'TODAS', text:'Todas as regiões' })]
-      .concat(C.REGIOES.filter(function(r){ return r !== 'OTHERS'; }).map(function(r) {
-        return U.h('option', { value: r, text: C.REGIAO_LABELS[r] || r });
-      })));
-    var selPrio = U.h('select', { class: 'trj-btn trj-btn-ghost', style: { fontSize:'12px', padding:'6px 14px', cursor:'pointer' } },
-      [U.h('option', { value:'TODAS', text:'Todas as prioridades' })]
-      .concat(['P1','P2','P3','P4','P5'].map(function(p) { return U.h('option', { value:p, text:p }); })));
+    /* ── Filtros ───────────────────────────────────────────────── */
+    function mkSelect(options) {
+      var sel = U.h('select', { class:'trj-select',
+        style:{ padding:'6px 12px', fontSize:'12px', cursor:'pointer',
+                minWidth:'160px', borderRadius:'8px' }
+      }, options.map(function(o){ return U.h('option', { value:o.v, text:o.t }); }));
+      return sel;
+    }
 
-    var conteudo = U.h('div');
-    function renderTudo() {
-      conteudo.innerHTML = '';
+    var selReg  = mkSelect(
+      [{ v:'TODAS', t:'Todas as regiões' }]
+      .concat(C.REGIOES.filter(function(r){ return r !== 'OTHERS'; })
+              .map(function(r){ return { v:r, t:C.REGIAO_LABELS[r]||r }; })));
+    var selPrio = mkSelect(
+      [{ v:'TODAS', t:'Todas as prioridades' }]
+      .concat(['P1','P2','P3','P4','P5'].map(function(p){ return { v:p, t:p }; })));
+
+    /* Legenda de cores */
+    function legItem(cor, label) {
+      return U.h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', fontSize:'12px', color:'var(--trj-muted)' } }, [
+        U.h('span', { style:{ width:'10px', height:'10px', borderRadius:'50%', background:cor, display:'inline-block' } }),
+        U.h('span', { text: label })
+      ]);
+    }
+
+    var topBar = U.h('div', {
+      style:{ display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap', marginBottom:'18px' }
+    }, [
+      selReg, selPrio,
+      U.h('div', { style:{ marginLeft:'auto', display:'flex', gap:'14px' } }, [
+        legItem(COR_DENTRO, 'Dentro do SLA'),
+        legItem(COR_FORA,   'Fora do SLA')
+      ])
+    ]);
+    container.appendChild(topBar);
+
+    var area = U.h('div');
+    container.appendChild(area);
+
+    /* ── Renderização principal ────────────────────────────────── */
+    function render() {
+      area.innerHTML = '';
+
+      /* Filtrar tasks */
       var tf = tasks.filter(function(t) {
-        if (state.regiao   !== 'TODAS' && (t.regiao   || 'OTHERS') !== state.regiao)   return false;
-        if (state.prioridade !== 'TODAS' && (t.prioridade || '')    !== state.prioridade) return false;
+        if (estado.regiao    !== 'TODAS' && (t.regiao    || 'OTHERS') !== estado.regiao)    return false;
+        if (estado.prioridade !== 'TODAS' && (t.prioridade || '')     !== estado.prioridade) return false;
         return true;
       });
-      var d = Comp.slaPage(tf, data.prazoMap) || {};
-      buildView(d);
-    }
 
-    selReg.addEventListener('change',  function(){ state.regiao    = selReg.value;  renderTudo(); });
-    selPrio.addEventListener('change', function(){ state.prioridade = selPrio.value; renderTudo(); });
+      var d   = Comp.slaPage(tf, data.prazoMap) || {};
+      var por = d.porPrioridade || [];
+      var reg = d.porRegiao     || [];
+      var ger = d.geral         || { pct:0, dentro:0, fora:0 };
 
-    container.appendChild(U.h('div', {
-      style: { display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap', marginBottom:'18px' }
-    }, [
-      U.h('span', { style:{ fontSize:'12px', color:'var(--trj-muted)' }, text:'Filtrar:' }),
-      selReg, selPrio,
-      /* Legenda */
-      U.h('div', { style:{ marginLeft:'auto', display:'flex', gap:'14px', alignItems:'center', flexWrap:'wrap' } }, [
-        U.h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', fontSize:'12px' } }, [
-          U.h('span', { style:{ width:'12px', height:'12px', borderRadius:'50%', background:COR_DENTRO, display:'inline-block' } }),
-          U.h('span', { text:'Dentro do SLA' })
-        ]),
-        U.h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', fontSize:'12px' } }, [
-          U.h('span', { style:{ width:'12px', height:'12px', borderRadius:'50%', background:COR_FORA, display:'inline-block' } }),
-          U.h('span', { text:'Fora do SLA' })
-        ])
-      ])
-    ]));
-
-    container.appendChild(conteudo);
-
-    /* ── Construir view com os dados calculados ─────────────────────── */
-    function buildView(d) {
-      var porPrioridade = d.porPrioridade || [];
-      var porRegiao     = d.porRegiao     || [];
-      var geral         = d.geral         || { pct: 0, dentro: 0, fora: 0 };
-
-      /* ════════════════════════════════════════════════════════════════
-       * SEÇÃO 1: Aderência por Prioridade — cards grandes tipo Image 1
-       * ════════════════════════════════════════════════════════════════ */
-      var prioSection = U.h('div', { class:'trj-card p-5 mb-5' });
-      prioSection.appendChild(U.h('div', {
-        style:{ fontWeight:'800', fontSize:'13px', letterSpacing:'.07em', color:'var(--trj-muted)',
-                textTransform:'uppercase', marginBottom:'18px' }
+      /* ══════════════════════════════════════════════════════════
+       * SEÇÃO 1: Aderência por Prioridade — cards grandes em linha
+       * ══════════════════════════════════════════════════════════ */
+      var sec1 = U.h('div', { class:'trj-card p-5 mb-5' });
+      sec1.appendChild(U.h('div', {
+        style:{ fontWeight:'800', fontSize:'12px', letterSpacing:'.08em',
+                color:'var(--trj-muted)', textTransform:'uppercase', marginBottom:'16px' }
       }, 'ADERÊNCIA POR PRIORIDADE'));
 
-      var prioRow = U.h('div', {
-        style:{ display:'grid', gridTemplateColumns:'repeat(' + porPrioridade.length + ',1fr)', gap:'12px' }
+      var grid = U.h('div', {
+        style:{ display:'grid',
+                gridTemplateColumns:'repeat(' + Math.max(por.length, 1) + ', 1fr)',
+                gap:'14px' }
       });
 
-      porPrioridade.forEach(function(p) {
+      por.forEach(function(p) {
         var total  = p.dentro + p.fora;
-        var cor    = pctCor(p.pct);
+        var cor    = corPrioridade(p.prioridade, p.pct);
+        var meta   = META_PRIO[p.prioridade] || 70;
 
         var card = U.h('div', {
-          style:{ background:'var(--trj-card2)', borderRadius:'14px', padding:'18px 14px',
-                  display:'flex', flexDirection:'column', alignItems:'center', gap:'0',
-                  border:'1px solid var(--trj-border)', transition:'all .2s', cursor:'pointer',
-                  position:'relative' }
+          style:{ background:'var(--trj-card2)', borderRadius:'14px',
+                  padding:'20px 16px 16px', display:'flex', flexDirection:'column',
+                  alignItems:'center', border:'1px solid var(--trj-border)',
+                  transition:'all .2s ease', cursor:'pointer', gap:'4px' }
         });
-        card.addEventListener('mouseenter', function(){ card.style.boxShadow='0 6px 24px rgba(0,0,0,.4)'; card.style.borderColor=cor; });
-        card.addEventListener('mouseleave', function(){ card.style.boxShadow=''; card.style.borderColor='var(--trj-border)'; });
+        card.addEventListener('mouseenter', function(){
+          card.style.borderColor = cor;
+          card.style.boxShadow   = '0 6px 28px rgba(0,0,0,.45)';
+          card.style.transform   = 'translateY(-2px)';
+        });
+        card.addEventListener('mouseleave', function(){
+          card.style.borderColor = 'var(--trj-border)';
+          card.style.boxShadow   = '';
+          card.style.transform   = '';
+        });
 
-        /* Título prioridade */
+        /* Label prioridade */
         card.appendChild(U.h('div', {
-          style:{ fontWeight:'800', fontSize:'15px', letterSpacing:'.05em',
-                  color:'var(--trj-muted)', marginBottom:'10px', alignSelf:'flex-start' }
+          style:{ fontWeight:'800', fontSize:'15px', letterSpacing:'.04em',
+                  color:'var(--trj-muted)', alignSelf:'flex-start', marginBottom:'6px' }
         }, p.prioridade));
 
-        /* Wrapper do donut com números sobrepostos */
-        var chartArea = U.h('div', { style:{ position:'relative', width:'100%', paddingBottom:'100%' } });
+        /* Área do donut — quadrada, preenchendo largura */
+        var donutArea = U.h('div', { style:{ position:'relative', width:'100%', aspectRatio:'1/1' } });
         var cnv = U.h('canvas', { style:{ position:'absolute', inset:'0', width:'100%', height:'100%' } });
-        chartArea.appendChild(cnv);
+        donutArea.appendChild(cnv);
 
-        /* Percentual centralizado */
+        /* Percentual centralizado (posicionado via CSS transform) */
         var centro = U.h('div', {
-          style:{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-58%)',
-                  textAlign:'center', pointerEvents:'none' }
+          style:{ position:'absolute', top:'50%', left:'50%',
+                  transform:'translate(-50%,-56%)', textAlign:'center',
+                  pointerEvents:'none' }
         }, [
-          U.h('div', { style:{ fontSize:'clamp(20px,3.5vw,30px)', fontWeight:'800', color:cor, lineHeight:'1.1' },
-            text: p.pct + '%' }),
-          U.h('div', { style:{ fontSize:'10px', color:'var(--trj-muted)', marginTop:'2px' }, text:'aderência' })
+          U.h('div', {
+            style:{ fontSize:'clamp(22px,3.8vw,32px)', fontWeight:'800',
+                    color:cor, lineHeight:'1', letterSpacing:'-.02em' },
+            text: p.pct + '%'
+          }),
+          U.h('div', { style:{ fontSize:'10px', color:'var(--trj-muted)', marginTop:'3px' }, text:'aderência' })
         ]);
-        chartArea.appendChild(centro);
+        donutArea.appendChild(centro);
 
-        /* Números dentro / fora nos cantos inferiores */
-        var numDentro = U.h('div', {
-          style:{ position:'absolute', bottom:'12px', left:'8px', textAlign:'left', pointerEvents:'none' }
-        }, [
-          U.h('div', { style:{ fontSize:'clamp(14px,2.2vw,20px)', fontWeight:'800', color:COR_DENTRO, lineHeight:'1' }, text: String(p.dentro) }),
-          U.h('div', { style:{ fontSize:'9px', color:'var(--trj-muted)', textTransform:'uppercase' }, text:'dentro' })
-        ]);
-        var numFora = U.h('div', {
-          style:{ position:'absolute', bottom:'12px', right:'8px', textAlign:'right', pointerEvents:'none' }
-        }, [
-          U.h('div', { style:{ fontSize:'clamp(14px,2.2vw,20px)', fontWeight:'800', color:COR_FORA, lineHeight:'1' }, text: String(p.fora) }),
-          U.h('div', { style:{ fontSize:'9px', color:'var(--trj-muted)', textTransform:'uppercase' }, text:'fora' })
-        ]);
-        chartArea.appendChild(numDentro);
-        chartArea.appendChild(numFora);
-        card.appendChild(chartArea);
-
-        /* Rodapé: prazo + total */
-        card.appendChild(U.h('div', {
-          style:{ display:'flex', justifyContent:'space-between', width:'100%', marginTop:'12px', fontSize:'11px', color:'var(--trj-muted)' }
-        }, [
-          U.h('span', null, [U.h('span', { text:'Prazo:  ' }),
-            U.h('b', { style:{ color:'var(--trj-fg)', fontSize:'14px' }, text: p.prazoHoras + 'h' })]),
-          U.h('span', null, [U.h('span', { text:'Total:  ' }),
-            U.h('b', { style:{ color:'var(--trj-fg)', fontSize:'14px' }, text: String(total) })])
-        ]));
-
-        prioRow.appendChild(card);
-
-        /* Renderizar donut */
-        mkDonut(cnv, p.dentro, p.fora, {
-          onClick: function(i) {
-            var lado = i === 0 ? 'dentro' : 'fora';
-            app.openDrillTasks({ tipo: 'prioridadeSla', arg: p.prioridade + '|' + lado }, {},
-              (lado === 'fora' ? 'FORA SLA: ' : 'DENTRO SLA: ') + p.prioridade);
-          }
-        });
-      });
-
-      prioSection.appendChild(prioRow);
-      conteudo.appendChild(prioSection);
-
-      /* ════════════════════════════════════════════════════════════════
-       * SEÇÃO 2: Aderência por Região — geral + regiões em linhas
-       *          Cada linha: donut à esquerda, stats à direita
-       * ════════════════════════════════════════════════════════════════ */
-      var regSection = U.h('div', { class:'trj-card p-5' });
-      regSection.appendChild(U.h('div', {
-        style:{ fontWeight:'800', fontSize:'13px', letterSpacing:'.07em', color:'var(--trj-muted)',
-                textTransform:'uppercase', marginBottom:'4px' }
-      }, 'ADERÊNCIA POR REGIÃO'));
-
-      function mkRegRow(label, dentro, fora, regiao, isGeral) {
-        var total = dentro + fora;
-        var pct   = total > 0 ? Math.round((dentro / total) * 100 * 10) / 10 : 0;
-        var cor   = pctCor(pct);
-
-        var row = U.h('div', {
-          style:{ display:'flex', alignItems:'center', gap:'20px', padding:'14px 0',
-                  borderBottom:'1px solid var(--trj-border)',
-                  cursor: isGeral ? 'default' : 'pointer',
-                  transition:'background .15s', borderRadius:'6px' }
-        });
-        if (!isGeral) {
-          row.addEventListener('mouseenter', function(){ row.style.background='rgba(255,255,255,.03)'; });
-          row.addEventListener('mouseleave', function(){ row.style.background=''; });
-          row.addEventListener('click', function() {
-            app.openDrillTasks({ tipo: 'regiaoSla', arg: regiao + '|fora' }, {}, 'FORA SLA: ' + label);
-          });
-        }
-
-        /* Donut pequeno à esquerda */
-        var donutWrap = U.h('div', {
-          style:{ position:'relative', width:'90px', height:'90px', flexShrink:'0' }
-        });
-        var cnv = U.h('canvas', { style:{ width:'90px', height:'90px' } });
-        donutWrap.appendChild(cnv);
-        donutWrap.appendChild(U.h('div', {
-          style:{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
-                  textAlign:'center', pointerEvents:'none' }
-        }, [
-          U.h('div', { style:{ fontSize:'14px', fontWeight:'800', color:cor, lineHeight:'1' }, text: pct + '%' }),
-        ]));
-        row.appendChild(donutWrap);
-
-        /* Nome da região + stats */
-        var info = U.h('div', { style:{ flex:'1', display:'flex', alignItems:'center', flexWrap:'wrap', gap:'8px 24px', minWidth:'0' } });
-        info.appendChild(U.h('div', {
-          style:{ minWidth:'140px', fontWeight:'700', fontSize:'14px',
-                  color: isGeral ? 'var(--trj-primary)' : 'var(--trj-fg)' }
-        }, label));
-
-        function statBox(tit, val, cor2) {
-          return U.h('div', { style:{ textAlign:'center' } }, [
-            U.h('div', { style:{ fontSize:'clamp(16px,2vw,22px)', fontWeight:'800', color:cor2, lineHeight:'1' }, text: String(val) }),
-            U.h('div', { style:{ fontSize:'9px', color:'var(--trj-muted)', textTransform:'uppercase', marginTop:'3px' }, text: tit })
+        /* Números dentro/fora nos cantos inferiores */
+        function numCorner(val, label, cor2, side) {
+          return U.h('div', {
+            style:{ position:'absolute', bottom:'10%', [side]:'6%',
+                    textAlign: side === 'left' ? 'left' : 'right', pointerEvents:'none' }
+          }, [
+            U.h('div', { style:{ fontSize:'clamp(16px,2.6vw,22px)', fontWeight:'800', color:cor2, lineHeight:'1' }, text:String(val) }),
+            U.h('div', { style:{ fontSize:'9px', color:'var(--trj-muted)', textTransform:'uppercase', marginTop:'2px' }, text:label })
           ]);
         }
-        info.appendChild(statBox('TOTAL',  total,  'var(--trj-fg)'));
-        info.appendChild(statBox('DENTRO', dentro, COR_DENTRO));
-        info.appendChild(statBox('FORA',   fora,   COR_FORA));
-        info.appendChild(U.h('div', { style:{ textAlign:'center' } }, [
-          U.h('div', { style:{ fontSize:'clamp(18px,2.2vw,26px)', fontWeight:'800', color:cor, lineHeight:'1' }, text: pct + '%' }),
-          U.h('div', { style:{ fontSize:'9px', color:'var(--trj-muted)', textTransform:'uppercase', marginTop:'3px' }, text:'aderência' })
+        donutArea.appendChild(numCorner(p.dentro, 'dentro', COR_DENTRO, 'left'));
+        donutArea.appendChild(numCorner(p.fora,   'fora',   COR_FORA,   'right'));
+
+        card.appendChild(donutArea);
+
+        /* Linha: prazo / total / meta */
+        card.appendChild(U.h('div', {
+          style:{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', width:'100%',
+                  marginTop:'12px', gap:'4px' }
+        }, [
+          U.h('div', { style:{ fontSize:'11px', color:'var(--trj-muted)' } }, [
+            U.h('div', { text:'Prazo' }), U.h('b', { style:{ fontSize:'13px', color:'var(--trj-fg)' }, text: p.prazoHoras + 'h' })
+          ]),
+          U.h('div', { style:{ fontSize:'11px', color:'var(--trj-muted)', textAlign:'center' } }, [
+            U.h('div', { text:'Total' }), U.h('b', { style:{ fontSize:'13px', color:'var(--trj-fg)' }, text:String(total) })
+          ]),
+          U.h('div', { style:{ fontSize:'11px', color:'var(--trj-muted)', textAlign:'right' } }, [
+            U.h('div', { text:'Meta' }), U.h('b', { style:{ fontSize:'13px', color: p.pct>=meta?COR_DENTRO:COR_FORA }, text: meta + '%' })
+          ])
         ]));
-        row.appendChild(info);
 
-        /* Renderizar donut */
-        mkDonut(cnv, dentro, fora, {
-          onClick: isGeral ? null : function(i) {
-            app.openDrillTasks({ tipo: 'regiaoSla', arg: regiao + '|' + (i===0?'dentro':'fora') }, {}, label);
-          }
+        grid.appendChild(card);
+
+        /* Donut */
+        mkDonut(cnv, p.dentro, p.fora, function(i) {
+          var lado = i===0 ? 'dentro' : 'fora';
+          app.openDrillTasks({ tipo:'prioridadeSla', arg:p.prioridade+'|'+lado }, {},
+            (lado==='fora'?'FORA SLA: ':'DENTRO SLA: ') + p.prioridade);
         });
-
-        return row;
-      }
-
-      /* Linha Geral (primeira, destacada) */
-      regSection.appendChild(mkRegRow('ADERÊNCIA GERAL', geral.dentro, geral.fora, null, true));
-
-      /* Linhas por região */
-      porRegiao.forEach(function(r) {
-        var label = (C.REGIAO_LABELS[r.regiao] || r.label || r.regiao || '').toUpperCase();
-        regSection.appendChild(mkRegRow(label, r.dentro, r.fora, r.regiao, false));
       });
 
-      conteudo.appendChild(regSection);
+      sec1.appendChild(grid);
+      area.appendChild(sec1);
+
+      /* ══════════════════════════════════════════════════════════
+       * SEÇÃO 2: Aderência por Região
+       *   LEFT  → UM donut grande (Aderência Geral)
+       *   RIGHT → linhas de região com TOTAL / DENTRO / FORA / ADERÊNCIA
+       * ══════════════════════════════════════════════════════════ */
+      var sec2 = U.h('div', { class:'trj-card p-5' });
+      sec2.appendChild(U.h('div', {
+        style:{ fontWeight:'800', fontSize:'12px', letterSpacing:'.08em',
+                color:'var(--trj-muted)', textTransform:'uppercase', marginBottom:'16px' }
+      }, 'ADERÊNCIA POR REGIÃO'));
+
+      var regLayout = U.h('div', {
+        style:{ display:'flex', gap:'28px', alignItems:'flex-start', flexWrap:'wrap' }
+      });
+
+      /* ── Donut Geral (esquerda) ── */
+      var gerCor   = corGeral(ger.pct);
+      var gerTotal = ger.dentro + ger.fora;
+      var geralSide = U.h('div', {
+        style:{ display:'flex', flexDirection:'column', alignItems:'center', gap:'10px',
+                minWidth:'160px', flexShrink:'0' }
+      });
+
+      var gerWrap = U.h('div', { style:{ position:'relative', width:'160px', height:'160px' } });
+      var gerCnv  = U.h('canvas', { style:{ width:'160px', height:'160px' } });
+      gerWrap.appendChild(gerCnv);
+      gerWrap.appendChild(U.h('div', {
+        style:{ position:'absolute', top:'50%', left:'50%',
+                transform:'translate(-50%,-50%)', textAlign:'center', pointerEvents:'none' }
+      }, [
+        U.h('div', { style:{ fontSize:'24px', fontWeight:'800', color:gerCor, lineHeight:'1' }, text: ger.pct + '%' }),
+        U.h('div', { style:{ fontSize:'9px', color:'var(--trj-muted)', marginTop:'3px' }, text:'aderência' })
+      ]));
+      geralSide.appendChild(gerWrap);
+      geralSide.appendChild(U.h('div', {
+        style:{ textAlign:'center', fontSize:'11px', color:'var(--trj-muted)', lineHeight:'1.6' }
+      }, [
+        U.h('div', { style:{ fontWeight:'700', color:'var(--trj-fg)', fontSize:'12px' }, text:'ADERÊNCIA GERAL' }),
+        U.h('div', null, [
+          U.h('span', { style:{ color:COR_DENTRO, fontWeight:'700' }, text: String(ger.dentro) }),
+          U.h('span', { text:' dentro / ' }),
+          U.h('span', { style:{ color:COR_FORA, fontWeight:'700' }, text: String(ger.fora) }),
+          U.h('span', { text:' fora' })
+        ]),
+        U.h('div', { text:'Total: ' + gerTotal })
+      ]));
+      regLayout.appendChild(geralSide);
+      mkDonut(gerCnv, ger.dentro, ger.fora, null);
+
+      /* ── Linhas de região (direita) ── */
+      var regTable = U.h('div', { style:{ flex:'1', minWidth:'300px' } });
+
+      /* Cabeçalho */
+      regTable.appendChild(U.h('div', {
+        style:{ display:'grid', gridTemplateColumns:'1fr 70px 70px 70px 80px',
+                padding:'0 8px 8px', gap:'8px', borderBottom:'1px solid var(--trj-border)',
+                fontSize:'10px', fontWeight:'700', color:'var(--trj-muted)', textTransform:'uppercase', letterSpacing:'.05em' }
+      }, [
+        U.h('div', { text:'REGIÃO' }),
+        U.h('div', { style:{ textAlign:'center' }, text:'TOTAL' }),
+        U.h('div', { style:{ textAlign:'center' }, text:'DENTRO' }),
+        U.h('div', { style:{ textAlign:'center' }, text:'FORA' }),
+        U.h('div', { style:{ textAlign:'right'  }, text:'ADERÊNCIA' })
+      ]));
+
+      reg.forEach(function(r) {
+        var rTotal = r.dentro + r.fora;
+        var rCor   = corGeral(r.pct);
+        var label  = (C.REGIAO_LABELS[r.regiao] || r.label || r.regiao || '').toUpperCase();
+
+        var row = U.h('div', {
+          style:{ display:'grid', gridTemplateColumns:'1fr 70px 70px 70px 80px',
+                  padding:'10px 8px', gap:'8px', borderBottom:'1px solid rgba(255,255,255,.05)',
+                  cursor:'pointer', transition:'background .15s', borderRadius:'4px', alignItems:'center' }
+        });
+        row.addEventListener('mouseenter', function(){ row.style.background='rgba(255,255,255,.04)'; });
+        row.addEventListener('mouseleave', function(){ row.style.background=''; });
+        row.addEventListener('click', function() {
+          app.openDrillTasks({ tipo:'regiaoSla', arg:r.regiao+'|fora' }, {}, 'FORA SLA: ' + label);
+        });
+
+        row.appendChild(U.h('div', { style:{ fontWeight:'600', fontSize:'13px' }, text: label }));
+        row.appendChild(U.h('div', { style:{ textAlign:'center', fontSize:'14px', fontWeight:'700' }, text: String(rTotal) }));
+        row.appendChild(U.h('div', { style:{ textAlign:'center', fontSize:'14px', fontWeight:'700', color:COR_DENTRO }, text: String(r.dentro) }));
+        row.appendChild(U.h('div', { style:{ textAlign:'center', fontSize:'14px', fontWeight:'700', color:COR_FORA   }, text: String(r.fora)   }));
+        row.appendChild(U.h('div', { style:{ textAlign:'right',  fontSize:'15px', fontWeight:'800', color:rCor        }, text: r.pct + '%'     }));
+        regTable.appendChild(row);
+      });
+
+      regLayout.appendChild(regTable);
+      sec2.appendChild(regLayout);
+      area.appendChild(sec2);
     }
 
-    renderTudo();
+    selReg.addEventListener('change',  function(){ estado.regiao    = selReg.value;  render(); });
+    selPrio.addEventListener('change', function(){ estado.prioridade = selPrio.value; render(); });
+    render();
   };
 
 })(window.TRJ = window.TRJ || {});
