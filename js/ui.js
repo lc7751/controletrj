@@ -386,13 +386,17 @@
   // donut. data = [{name,value}], onSlice(index) — com hover de cor mais clara + borda branca
   U.donutChart = function (canvas, data, opts) {
     opts = opts || {};
-    var cores = opts.cores || C.CHART_CORES;
-    var bgCores = data.map(function (d, i) { return cores[i % cores.length]; });
-    var hoverCores = bgCores.map(function (c) { return c.startsWith('#') ? clarearCor(c) : c; });
+    // Aceita d.label OU d.name (compatibilidade)
+    // Aceita d.cor individual OU opts.cores array (prioridade: d.cor)
+    var cores = C.CHART_CORES;
+    var bgCores = data.map(function (d, i) {
+      return d.cor || (opts.cores ? opts.cores[i % opts.cores.length] : cores[i % cores.length]);
+    });
+    var hoverCores = bgCores.map(function (c) { return c && c.startsWith('#') ? clarearCor(c) : c; });
     return register(new Chart(canvas, {
       type: 'doughnut',
       data: {
-        labels: data.map(function (d) { return d.name; }),
+        labels: data.map(function (d) { return d.label || d.name || ''; }),
         datasets: [{
           data: data.map(function (d) { return d.value; }),
           backgroundColor: bgCores,
@@ -403,8 +407,14 @@
         }]
       },
       options: {
-        responsive: true, maintainAspectRatio: false, cutout: '60%',
-        plugins: { legend: { position: 'right', labels: { color: tickColor(), font: { size: 11 }, boxWidth: 12 } }, tooltip: tooltipCfg },
+        responsive: true, maintainAspectRatio: false, cutout: '62%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { color: tickColor(), font: { size: 11 }, boxWidth: 12, padding: 12 }
+          },
+          tooltip: tooltipCfg
+        },
         onClick: opts.onSlice ? function (ev, els) { if (els && els.length) opts.onSlice(els[0].index); } : undefined
       }
     }));
