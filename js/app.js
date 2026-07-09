@@ -23,6 +23,7 @@
 
   var ICONS = {
     dashboard: '<path d="M3 13h8V3H3zM13 21h8V3h-8zM3 21h8v-6H3z"/>',
+    pesquisa: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/>',
     mapa: '<path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/><circle cx="6" cy="12" r="1.5" fill="currentColor"/><circle cx="18" cy="9" r="1.5" fill="currentColor"/>',
     priority: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" fill="rgba(255,140,0,.25)" stroke="var(--trj-primary)"/>',
     sla: '<path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/>',
@@ -42,7 +43,8 @@
   var LINKS = [
     { hash: '#/dashboard', label: 'Dashboard', ico: 'dashboard' },
     { hash: '#/prioritarios', label: 'Prioritários', ico: 'priority' },
-    { hash: '#/mapa', label: 'Mapa Operacional', ico: 'mapa' },
+    { hash: '#/pesquisa',    label: 'Pesquisa Operacional', ico: 'pesquisa' },
+    { hash: '#/mapa',        label: 'Mapa Operacional', ico: 'mapa' },
     { hash: '#/sla', label: 'SLA / Aderência', ico: 'sla' },
     { hash: '#/regional', label: 'Visão Regional', ico: 'regional' },
     { hash: '#/sites-fora', label: 'Sites Fora (Incidentes)', ico: 'sites' },
@@ -276,7 +278,8 @@
   var ROUTES = {
     '#/dashboard': 'dashboard',
     '#/prioritarios': 'prioritarios',
-    '#/mapa': 'mapa',
+    '#/pesquisa':     'pesquisa',
+    '#/mapa':         'mapa',
     '#/sla': 'sla',
     '#/regional': 'regional',
     '#/sites-fora': 'sitesFora',
