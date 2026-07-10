@@ -443,6 +443,7 @@
       var payload = {
         tasksEnriched:     (data.tasksEnriched || []).map(slimTaskForPublish),
         incidentsEnriched: data.incidentsEnriched || [],
+        prazoMap:          data.prazoMap || {},        // necessário para SLA/Aderência
         mapaCoordMap: Object.keys(coordMapLS).length > 0 ? coordMapLS : null,
         mapaMwSlim:   mwSlim,
         mapaFoSlim:   foSlim
