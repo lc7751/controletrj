@@ -144,6 +144,7 @@ body { min-height: 100vh; }
   function renderView() {
     if (view === 'welcome') renderWelcome();
     else if (view === 'mapa') renderMapaPublico();
+    else if (view === 'sla')  renderSlaPublico();
     else renderDashboard();
   }
 
@@ -170,6 +171,32 @@ body { min-height: 100vh; }
       mapaContainer.appendChild(U.h('p', { style:{color:'var(--trj-muted)',padding:'20px'}, text:'Módulo de mapa não carregado.' }));
     }
   }
+  // ── SLA / Aderência (versão pública) ──────────────────────────────────────
+  function renderSlaPublico() {
+    root.innerHTML = '';
+    var btnV = U.h('button', {
+      class:'trj-btn trj-btn-ghost clickable', text:'← Dashboard',
+      onclick: function(){ view='dashboard'; renderView(); }
+    });
+    root.appendChild(U.h('div', { class:'pub-topbar' }, [btnV, liveElGlobal()]));
+    var slaContainer = U.h('div');
+    root.appendChild(slaContainer);
+    if (TRJ.pages && TRJ.pages.sla) {
+      TRJ.pages.sla(slaContainer, {
+        data: raw,
+        app: {
+          openDrillTasks: function(spec, filtros, title, opts, onCopy) {
+            var Comp = TRJ.compute;
+            var rows = Comp.drillTasks(raw.tasksEnriched, spec, filtros||{});
+            U.openModal(title||'Detalhamento', U.taskTable(rows, opts||{}), {
+              onCopy: onCopy || function(){ return U.taskTableCopyText(rows, title); }
+            });
+          }
+        }
+      });
+    }
+  }
+
   function liveElGlobal() {
     return U.h('div', { class: 'pub-live' }, [
       U.h('span', { class: 'dot' }),
@@ -252,6 +279,14 @@ body { min-height: 100vh; }
       }, [
         U.h('span', { text: '🗺️' }),
         U.h('span', { text: 'MAPA OPERACIONAL — SITES FORA' })
+      ]),
+      U.h('button', {
+        class: 'visao-geral-btn',
+        style: { marginTop: '8px', background: 'rgba(46,204,113,.08)', borderColor: 'rgba(46,204,113,.3)', color: 'var(--trj-fg)' },
+        onclick: function () { state.regiao = 'TODAS'; view = 'sla'; renderView(); }
+      }, [
+        U.h('span', { text: '📊' }),
+        U.h('span', { text: 'SLA / ADERÊNCIA' })
       ])
     ]);
     root.appendChild(wrap);
@@ -506,6 +541,11 @@ body { min-height: 100vh; }
           style: { fontSize: '12px', padding: '4px 12px', background: 'rgba(52,152,219,.15)', color: '#3498db', border: '1px solid rgba(52,152,219,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '5px' },
           onclick: function () { view = 'mapa'; renderView(); }
         }, [U.h('span', {text:'Mapa'})]),
+        U.h('button', {
+          class: 'trj-btn clickable',
+          style: { fontSize: '12px', padding: '4px 12px', background: 'rgba(46,204,113,.15)', color: '#2ecc71', border: '1px solid rgba(46,204,113,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '5px' },
+          onclick: function () { view = 'sla'; renderView(); }
+        }, [U.h('span', {text:'📊'}), U.h('span', {text:'SLA'})]),
         U.h('button', {
           class: 'trj-btn clickable',
           style: { fontSize: '12px', padding: '4px 12px', background: 'rgba(46,204,113,.15)', color: '#2ecc71', border: '1px solid rgba(46,204,113,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '5px' },
