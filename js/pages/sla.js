@@ -1,106 +1,19 @@
-/* Página: SLA / Aderência — v3 */
+/* Página: SLA / Aderência — usa U.donutChart (mesmo estilo do Dashboard) */
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
   var U = TRJ.ui, C = TRJ.constants, Comp = TRJ.compute;
 
   var META_PRIO = { P1:80, P2:75, P3:70, P4:70, P5:70 };
-  var COR_D  = C.CORES_TRJ.green;   // #2ecc71  dentro
-  var COR_F  = C.CORES_TRJ.red;     // #e74c3c  fora
-  var COR_W  = C.CORES_TRJ.orange;  // #ff8c00  warning
-  var COR_D_LIGHT = '#4dd87e';       // hover dentro — levemente mais clara
-  var COR_F_LIGHT = '#f06960';       // hover fora   — levemente mais clara
-  var COR_LABEL = 'var(--trj-muted)';
+  var COR_D  = C.CORES_TRJ.green;
+  var COR_F  = C.CORES_TRJ.red;
+  var COR_W  = C.CORES_TRJ.orange;
 
   function pctCor(pct, prio) {
     var meta = prio ? (META_PRIO[prio]||70) : 70;
     return pct >= meta ? COR_D : COR_F;
   }
-  function clarear(hex) { return hex === COR_D ? COR_D_LIGHT : COR_F_LIGHT; }
 
-  /* ── Plugin glow: ilumina a fatia ativa ── */
-  var glowPlugin = {
-    id: 'glowOnHover',
-    afterDraw: function(chart) {
-      var active = chart._active;
-      if (!active || !active.length) return;
-      var ctx = chart.ctx;
-      var el  = chart.getDatasetMeta(0).data[active[0].index];
-      if (!el) return;
-      var cor = el.options.backgroundColor;
-      ctx.save();
-      ctx.shadowColor  = cor;
-      ctx.shadowBlur   = 18;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 0;
-      el.draw(ctx);
-      ctx.restore();
-    }
-  };
-
-  /* ── Criar donut ─────────────────────────────────────────────────────
-   *  • hover: clareia (não escurece) + hoverOffset
-   *  • sem tooltip (valores já visíveis no centro)
-   *  • glow na fatia ativa via plugin
-   *  • centro: mostra dentro/fora dinamicamente no hover
-   * ─────────────────────────────────────────────────────────────────── */
-  function mkDonut(canvas, dentro, fora, opts) {
-    opts = opts || {};
-    if (!window.Chart) return;
-    var total = dentro + fora;
-    var border = '#0e0e16';
-
-    // Elemento de centro (atualizado no hover)
-    var centroEl = opts.centroEl || null;
-
-    var ch = new window.Chart(canvas, {
-      type: 'doughnut',
-      plugins: [glowPlugin],
-      data: {
-        labels: ['Dentro do SLA', 'Fora do SLA'],
-        datasets: [{
-          data: [dentro, fora],
-          backgroundColor:      [COR_D, COR_F],
-          hoverBackgroundColor: [COR_D_LIGHT, COR_F_LIGHT],
-          hoverOffset: 10,
-          borderColor:      border,
-          hoverBorderColor: border,
-          borderWidth:  3,
-          borderRadius: 4,
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: '68%',
-        plugins: {
-          legend: { display: false },
-          tooltip: { enabled: false }   // tooltips desativados — valores no centro
-        },
-        hover: { mode: 'nearest' },
-        onHover: function(ev, els) {
-          if (!centroEl) return;
-          if (els && els.length) {
-            var idx = els[0].index;
-            var val = idx === 0 ? dentro : fora;
-            var lab = idx === 0 ? 'DENTRO' : 'FORA';
-            var cor = idx === 0 ? COR_D : COR_F;
-            centroEl.innerHTML = '<div style="font-size:clamp(18px,2.8vw,26px);font-weight:800;color:'+cor+';line-height:1">' + val + '</div>'
-                               + '<div style="font-size:10px;color:var(--trj-muted);margin-top:2px">' + lab + '</div>';
-          } else {
-            // Restaurar percentual
-            if (centroEl._pctHtml) centroEl.innerHTML = centroEl._pctHtml;
-          }
-        },
-        onClick: opts.onClick ? function(ev, els) {
-          if (els && els.length) opts.onClick(els[0].index);
-        } : undefined,
-        animation: { duration: 500, easing: 'easeInOutCubic' }
-      }
-    });
-    return ch;
-  }
-
-  /* ══════════════════════════════════════════════════════════════════ */
+  /* ════════════════════════════════════════════════════════════════ */
   TRJ.pages.sla = function(container, ctx) {
     var data = ctx.data, app = ctx.app;
     if (!data) { container.appendChild(U.h('div', { class:'trj-card p-6 text-center', text:'Sem dados.' })); return; }
@@ -124,7 +37,7 @@
     var selPrio = mkSel([{ v:'TODAS', t:'Todas as prioridades' }]
       .concat(['P1','P2','P3','P4','P5'].map(function(p){ return { v:p, t:p }; })));
 
-    function leg(cor, txt) {
+    function legItem(cor, txt) {
       return U.h('div', { style:{ display:'flex', alignItems:'center', gap:'6px', fontSize:'12px', color:'var(--trj-muted)' } }, [
         U.h('span', { style:{ width:'10px', height:'10px', borderRadius:'50%', background:cor, display:'inline-block' } }),
         U.h('span', { text:txt })
@@ -134,18 +47,25 @@
       style:{ display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap', marginBottom:'18px' }
     }, [ selReg, selPrio,
       U.h('div', { style:{ marginLeft:'auto', display:'flex', gap:'14px' } }, [
-        leg(COR_D,'Dentro do SLA'), leg(COR_F,'Fora do SLA')
+        legItem(COR_D, 'Dentro do SLA'), legItem(COR_F, 'Fora do SLA')
       ])
     ]));
 
     var area = U.h('div');
     container.appendChild(area);
 
-    /* ══════════════════════════════════════════════════════════════════
+    /* ════════════════════════════════════════════════════════════════
      * RENDER PRINCIPAL
-     * ══════════════════════════════════════════════════════════════════ */
+     * ════════════════════════════════════════════════════════════════ */
     function render() {
+      // Destruir gráficos anteriores
+      if (U.destroyCharts) {
+        // Destruir só os desse contexto — marcar instâncias
+        (area._charts || []).forEach(function(c){ try{c.destroy();}catch(e){} });
+        area._charts = [];
+      }
       area.innerHTML = '';
+
       var tf = tasks.filter(function(t) {
         if (estado.regiao!=='TODAS' && (t.regiao||'OTHERS')!==estado.regiao) return false;
         if (estado.prioridade!=='TODAS' && (t.prioridade||'')!==estado.prioridade) return false;
@@ -163,12 +83,13 @@
       sec1.appendChild(U.h('div', {
         style:{ fontWeight:'800', fontSize:'13px', letterSpacing:'.07em',
                 color:'var(--trj-fg)', textTransform:'uppercase',
-                marginBottom:'18px', borderBottom:'1px solid var(--trj-border)', paddingBottom:'10px' }
+                marginBottom:'18px', borderBottom:'1px solid var(--trj-border)',
+                paddingBottom:'10px' }
       }, 'ADERÊNCIA POR PRIORIDADE'));
 
       var grid = U.h('div', {
         style:{ display:'grid',
-                gridTemplateColumns:'repeat('+Math.max(por.length,1)+',1fr)',
+                gridTemplateColumns:'repeat('+Math.max(por.length,1)+', 1fr)',
                 gap:'14px' }
       });
 
@@ -177,66 +98,48 @@
         var cor   = pctCor(p.pct, p.prioridade);
         var meta  = META_PRIO[p.prioridade]||70;
 
-        // Card — hover SOMENTE no gráfico, card sem hover de borda
         var card = U.h('div', {
           style:{ background:'var(--trj-card2)', borderRadius:'14px',
                   padding:'18px 14px 14px', display:'flex', flexDirection:'column',
-                  alignItems:'center', border:'1px solid var(--trj-border)',
-                  position:'relative', overflow:'visible' }
+                  alignItems:'center', border:'1px solid var(--trj-border)', position:'relative' }
         });
 
-        /* Título prioridade — destaque */
+        /* Título prioridade */
         card.appendChild(U.h('div', {
           style:{ fontWeight:'900', fontSize:'16px', letterSpacing:'.06em',
-                  color:'var(--trj-fg)', alignSelf:'flex-start',
-                  marginBottom:'8px', textShadow:'0 0 18px rgba(255,255,255,.08)' }
+                  color:'var(--trj-fg)', alignSelf:'flex-start', marginBottom:'8px' }
         }, p.prioridade));
 
-        /* Canvas wrapper — hover + glow no wrapper do gráfico */
-        var cWrap = U.h('div', {
-          style:{ position:'relative', width:'100%', aspectRatio:'1/1',
-                  borderRadius:'50%',
-                  filter:'drop-shadow(0 4px 14px rgba(0,0,0,.55))',
-                  transition:'filter .25s' }
-        });
-        cWrap.addEventListener('mouseenter', function(){
-          cWrap.style.filter = 'drop-shadow(0 0 14px '+cor+'66)';
-        });
-        cWrap.addEventListener('mouseleave', function(){
-          cWrap.style.filter = 'drop-shadow(0 4px 14px rgba(0,0,0,.55))';
-        });
-
-        var cnv = U.h('canvas', {
-          style:{ position:'absolute', inset:'0', width:'100%', height:'100%' }
-        });
+        /* Wrapper quadrado do donut com percentual centralizado */
+        var cWrap = U.h('div', { style:{ position:'relative', width:'100%', aspectRatio:'1/1' } });
+        var cnv   = U.h('canvas', { style:{ position:'absolute', inset:'0', width:'100%', height:'100%' } });
         cWrap.appendChild(cnv);
 
-        /* Centro: percentual (substituído no hover por dentro/fora) */
+        /* Percentual no centro (HTML sobre o canvas) */
         var centroEl = U.h('div', {
           style:{ position:'absolute', top:'50%', left:'50%',
-                  transform:'translate(-50%,-52%)', textAlign:'center',
-                  pointerEvents:'none', userSelect:'none', minWidth:'70px' }
-        });
-        var pctHtml = '<div style="font-size:clamp(20px,3.2vw,28px);font-weight:800;color:'+cor+';line-height:1;letter-spacing:-.02em">'
-                    + p.pct+'%</div>'
-                    + '<div style="font-size:10px;color:var(--trj-muted);margin-top:3px">aderência</div>';
-        centroEl.innerHTML = pctHtml;
-        centroEl._pctHtml  = pctHtml;
+                  transform:'translate(-50%,-52%)',
+                  textAlign:'center', pointerEvents:'none', userSelect:'none' }
+        }, [
+          U.h('div', { style:{ fontSize:'clamp(20px,3vw,28px)', fontWeight:'800',
+                               color:cor, lineHeight:'1', letterSpacing:'-.02em' },
+            text: p.pct+'%' }),
+          U.h('div', { style:{ fontSize:'10px', color:'var(--trj-muted)', marginTop:'3px' }, text:'aderência' })
+        ]);
         cWrap.appendChild(centroEl);
         card.appendChild(cWrap);
 
-        /* Dentro/Fora inline — abaixo do gráfico */
+        /* Dentro / Fora — na mesma linha, inline */
         card.appendChild(U.h('div', {
-          style:{ display:'flex', justifyContent:'space-between', width:'100%',
-                  marginTop:'12px', alignItems:'center' }
+          style:{ display:'flex', justifyContent:'space-between', width:'100%', marginTop:'12px' }
         }, [
-          U.h('div', { style:{ fontSize:'13px', fontWeight:'700', color:COR_D } }, [
-            U.h('b', { style:{ fontSize:'clamp(14px,2vw,18px)' }, text: String(p.dentro)+' ' }),
-            U.h('span', { style:{ fontSize:'10px', fontWeight:'400', color:COR_LABEL }, text:'dentro' })
+          U.h('span', { style:{ fontSize:'13px' } }, [
+            U.h('b', { style:{ fontSize:'clamp(14px,2vw,19px)', color:COR_D } }, String(p.dentro)+' '),
+            U.h('span', { style:{ fontSize:'10px', color:'var(--trj-muted)' }, text:'dentro' })
           ]),
-          U.h('div', { style:{ fontSize:'13px', fontWeight:'700', color:COR_F } }, [
-            U.h('b', { style:{ fontSize:'clamp(14px,2vw,18px)' }, text: String(p.fora)+' ' }),
-            U.h('span', { style:{ fontSize:'10px', fontWeight:'400', color:COR_LABEL }, text:'fora' })
+          U.h('span', { style:{ fontSize:'13px' } }, [
+            U.h('b', { style:{ fontSize:'clamp(14px,2vw,19px)', color:COR_F } }, String(p.fora)+' '),
+            U.h('span', { style:{ fontSize:'10px', color:'var(--trj-muted)' }, text:'fora' })
           ])
         ]));
 
@@ -244,28 +147,27 @@
         card.appendChild(U.h('div', {
           style:{ display:'flex', justifyContent:'space-between', width:'100%',
                   marginTop:'10px', paddingTop:'8px', borderTop:'1px solid var(--trj-border)',
-                  color:COR_LABEL, fontSize:'11px' }
+                  fontSize:'11px', color:'var(--trj-muted)' }
         }, [
-          U.h('span', null, [
-            U.h('b', { style:{ fontSize:'13px', color:'var(--trj-fg)' }, text: p.prazoHoras+'h ' }),
-            U.h('span', { text:'prazo' })
-          ]),
-          U.h('span', { style:{ textAlign:'center' } }, [
-            U.h('b', { style:{ fontSize:'13px', color:'var(--trj-fg)' }, text: String(total)+' ' }),
-            U.h('span', { text:'total' })
-          ]),
-          U.h('span', { style:{ textAlign:'right' } }, [
-            U.h('b', { style:{ fontSize:'13px', color:'var(--trj-fg)' }, text: meta+'% ' }),
-            U.h('span', { text:'meta' })
-          ])
+          U.h('span', null, [ U.h('b', { style:{ fontSize:'13px', color:'var(--trj-fg)' } }, p.prazoHoras+'h '), U.h('span', { text:'prazo' }) ]),
+          U.h('span', { style:{ textAlign:'center' } }, [ U.h('b', { style:{ fontSize:'13px', color:'var(--trj-fg)' } }, String(total)+' '), U.h('span', { text:'total' }) ]),
+          U.h('span', { style:{ textAlign:'right' } }, [ U.h('b', { style:{ fontSize:'13px', color:'var(--trj-fg)' } }, meta+'% '), U.h('span', { text:'meta' }) ])
         ]));
 
         grid.appendChild(card);
-        mkDonut(cnv, p.dentro, p.fora, { centroEl: centroEl, onClick: function(i) {
-          var lado = i===0 ? 'dentro' : 'fora';
-          app.openDrillTasks({ tipo:'prioridadeSla', arg:p.prioridade+'|'+lado }, {},
-            (lado==='fora'?'FORA SLA: ':'DENTRO SLA: ') + p.prioridade);
-        }});
+
+        /* Donut — U.donutChart IDÊNTICO ao dashboard */
+        var ch = U.donutChart(cnv, [
+          { label:'Dentro do SLA', value: p.dentro, cor: COR_D },
+          { label:'Fora do SLA',   value: p.fora,   cor: COR_F }
+        ], {
+          onSlice: function(i) {
+            var lado = i===0 ? 'dentro' : 'fora';
+            app.openDrillTasks({ tipo:'prioridadeSla', arg:p.prioridade+'|'+lado }, {},
+              (lado==='fora'?'FORA SLA: ':'DENTRO SLA: ') + p.prioridade);
+          }
+        });
+        if (ch) (area._charts = area._charts||[]).push(ch);
       });
 
       sec1.appendChild(grid);
@@ -273,86 +175,70 @@
 
       /* ════════════════════════════════════════════════════════════
        * SEÇÃO 2 — Aderência por Região
-       *   LEFT : donut geral (tamanho = 1 coluna do grid acima)
-       *   RIGHT: tabela de regiões alinhada
+       *   LEFT : U.donutChart geral (mesmo estilo dashboard)
+       *   RIGHT: tabela de regiões, centralizada
        * ════════════════════════════════════════════════════════════ */
       var sec2 = U.h('div', { class:'trj-card p-5' });
       sec2.appendChild(U.h('div', {
         style:{ fontWeight:'800', fontSize:'13px', letterSpacing:'.07em',
                 color:'var(--trj-fg)', textTransform:'uppercase',
-                marginBottom:'16px', borderBottom:'1px solid var(--trj-border)', paddingBottom:'10px' }
+                marginBottom:'16px', borderBottom:'1px solid var(--trj-border)',
+                paddingBottom:'10px' }
       }, 'ADERÊNCIA POR REGIÃO'));
 
       var gerTotal = ger.dentro + ger.fora;
       var gerCor   = pctCor(ger.pct, null);
 
-      var regLayout = U.h('div', {
-        style:{ display:'flex', gap:'28px', alignItems:'flex-start' }
-      });
+      var regLayout = U.h('div', { style:{ display:'flex', gap:'28px', alignItems:'flex-start' } });
 
-      /* ── Donut geral à esquerda ── */
+      /* ── Donut geral (esquerda) — mesmo U.donutChart do dashboard ── */
       var gerSide = U.h('div', {
         style:{ display:'flex', flexDirection:'column', alignItems:'center', gap:'10px',
-                // mesma largura que 1 card de prioridade (aprox)
-                width:'calc(20% - 12px)', minWidth:'140px', flexShrink:'0' }
+                width:'calc(20% - 12px)', minWidth:'150px', flexShrink:'0' }
       });
 
-      var gerCWrap = U.h('div', {
-        style:{ position:'relative', width:'100%', aspectRatio:'1/1',
-                filter:'drop-shadow(0 4px 14px rgba(0,0,0,.55))',
-                transition:'filter .25s' }
-      });
-      gerCWrap.addEventListener('mouseenter', function(){
-        gerCWrap.style.filter = 'drop-shadow(0 0 14px '+gerCor+'66)';
-      });
-      gerCWrap.addEventListener('mouseleave', function(){
-        gerCWrap.style.filter = 'drop-shadow(0 4px 14px rgba(0,0,0,.55))';
-      });
-
-      var gerCnv = U.h('canvas', { style:{ position:'absolute', inset:'0', width:'100%', height:'100%' } });
-      gerCWrap.appendChild(gerCnv);
-
-      var gerCentro = U.h('div', {
+      var gerWrap = U.h('div', { style:{ position:'relative', width:'100%', aspectRatio:'1/1' } });
+      var gerCnv  = U.h('canvas', { style:{ position:'absolute', inset:'0', width:'100%', height:'100%' } });
+      gerWrap.appendChild(gerCnv);
+      gerWrap.appendChild(U.h('div', {
         style:{ position:'absolute', top:'50%', left:'50%',
-                transform:'translate(-50%,-52%)', textAlign:'center',
-                pointerEvents:'none', minWidth:'64px' }
-      });
-      var gerPctHtml = '<div style="font-size:clamp(18px,2.4vw,24px);font-weight:800;color:'+gerCor+';line-height:1">'
-                     + ger.pct+'%</div>'
-                     + '<div style="font-size:10px;color:var(--trj-muted);margin-top:3px">aderência</div>';
-      gerCentro.innerHTML = gerPctHtml;
-      gerCentro._pctHtml  = gerPctHtml;
-      gerCWrap.appendChild(gerCentro);
-      gerSide.appendChild(gerCWrap);
-
-      /* Texto abaixo do donut geral */
-      gerSide.appendChild(U.h('div', {
-        style:{ textAlign:'center', lineHeight:'1.6', fontSize:'11px' }
+                transform:'translate(-50%,-52%)', textAlign:'center', pointerEvents:'none' }
       }, [
+        U.h('div', { style:{ fontSize:'clamp(16px,2.2vw,22px)', fontWeight:'800', color:gerCor, lineHeight:'1' }, text:ger.pct+'%' }),
+        U.h('div', { style:{ fontSize:'9px', color:'var(--trj-muted)', marginTop:'3px' }, text:'aderência' })
+      ]));
+      gerSide.appendChild(gerWrap);
+      gerSide.appendChild(U.h('div', { style:{ textAlign:'center', lineHeight:'1.7', fontSize:'11px' } }, [
         U.h('div', { style:{ fontWeight:'800', fontSize:'12px', color:'var(--trj-fg)', letterSpacing:'.04em' }, text:'ADERÊNCIA GERAL' }),
         U.h('div', null, [
-          U.h('b', { style:{ color:COR_D }, text: String(ger.dentro) }),
-          U.h('span', { style:{ color:COR_LABEL }, text:' dentro / ' }),
-          U.h('b', { style:{ color:COR_F }, text: String(ger.fora) }),
-          U.h('span', { style:{ color:COR_LABEL }, text:' fora' })
+          U.h('b', { style:{ color:COR_D } }, String(ger.dentro)),
+          U.h('span', { style:{ color:'var(--trj-muted)' }, text:' dentro / ' }),
+          U.h('b', { style:{ color:COR_F } }, String(ger.fora)),
+          U.h('span', { style:{ color:'var(--trj-muted)' }, text:' fora' })
         ]),
-        U.h('div', { style:{ color:COR_LABEL }, text:'Total: '+gerTotal })
+        U.h('div', { style:{ color:'var(--trj-muted)' }, text:'Total: '+gerTotal })
       ]));
-
       regLayout.appendChild(gerSide);
-      mkDonut(gerCnv, ger.dentro, ger.fora, { centroEl: gerCentro });
 
-      /* ── Tabela de regiões à direita ── */
-      var tbl = U.h('div', { style:{ flex:'1', display:'flex', flexDirection:'column', justifyContent:'flex-start', padding:'0 32px' } });
+      var gerCh = U.donutChart(gerCnv, [
+        { label:'Dentro do SLA', value: ger.dentro, cor: COR_D },
+        { label:'Fora do SLA',   value: ger.fora,   cor: COR_F }
+      ]);
+      if (gerCh) (area._charts = area._charts||[]).push(gerCh);
 
-      // Cabeçalho alinhado
+      /* ── Tabela de regiões (direita, centralizada) ── */
+      var tbl = U.h('div', {
+        style:{ flex:'1', display:'flex', flexDirection:'column',
+                justifyContent:'flex-start', padding:'0 32px' }
+      });
+
       tbl.appendChild(U.h('div', {
         style:{ display:'grid',
                 gridTemplateColumns:'1fr 60px 70px 60px 80px',
                 padding:'0 8px 8px 8px', gap:'8px',
                 borderBottom:'1px solid var(--trj-border)',
                 fontSize:'10px', fontWeight:'700', letterSpacing:'.06em',
-                color:COR_LABEL, textTransform:'uppercase' }
+                color:'var(--trj-muted)', textTransform:'uppercase' }
       }, ['REGIÃO','TOTAL','DENTRO','FORA','ADERÊNCIA'].map(function(t, i){
         return U.h('div', { style:{ textAlign: i===0?'left':'center' }, text:t });
       })));
@@ -377,7 +263,7 @@
         });
 
         row.appendChild(U.h('div', { style:{ fontWeight:'600', fontSize:'13px', color:'var(--trj-fg)' }, text:label }));
-        row.appendChild(U.h('div', { style:{ textAlign:'center', fontWeight:'700', fontSize:'14px', color:'var(--trj-fg)' }, text:String(rTotal) }));
+        row.appendChild(U.h('div', { style:{ textAlign:'center', fontWeight:'700', fontSize:'14px' }, text:String(rTotal) }));
         row.appendChild(U.h('div', { style:{ textAlign:'center', fontWeight:'700', fontSize:'14px', color:COR_D }, text:String(r.dentro) }));
         row.appendChild(U.h('div', { style:{ textAlign:'center', fontWeight:'700', fontSize:'14px', color:COR_F }, text:String(r.fora) }));
         row.appendChild(U.h('div', { style:{ textAlign:'center', fontWeight:'800', fontSize:'15px', color:rCor }, text:r.pct+'%' }));
@@ -389,8 +275,8 @@
       area.appendChild(sec2);
     }
 
-    selReg.addEventListener('change',  function(){ estado.regiao     = selReg.value;  render(); });
-    selPrio.addEventListener('change', function(){ estado.prioridade  = selPrio.value; render(); });
+    selReg.addEventListener('change',  function(){ estado.regiao    = selReg.value;  render(); });
+    selPrio.addEventListener('change', function(){ estado.prioridade = selPrio.value; render(); });
     render();
   };
 
