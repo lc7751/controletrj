@@ -7,8 +7,8 @@
   var COR_D  = C.CORES_TRJ.green;   // #2ecc71  dentro
   var COR_F  = C.CORES_TRJ.red;     // #e74c3c  fora
   var COR_W  = C.CORES_TRJ.orange;  // #ff8c00  warning
-  var COR_D_LIGHT = '#7ef0a2';       // hover dentro — MAIS CLARA
-  var COR_F_LIGHT = '#ff8d7a';       // hover fora   — MAIS CLARA
+  var COR_D_LIGHT = '#4dd87e';       // hover dentro — levemente mais clara
+  var COR_F_LIGHT = '#f06960';       // hover fora   — levemente mais clara
   var COR_LABEL = 'var(--trj-muted)';
 
   function pctCor(pct, prio) {
@@ -343,7 +343,7 @@
       mkDonut(gerCnv, ger.dentro, ger.fora, { centroEl: gerCentro });
 
       /* ── Tabela de regiões à direita ── */
-      var tbl = U.h('div', { style:{ flex:'1', minWidth:'280px', alignSelf:'stretch', display:'flex', flexDirection:'column', justifyContent:'flex-start' } });
+      var tbl = U.h('div', { style:{ flex:'1', display:'flex', flexDirection:'column', justifyContent:'flex-start', padding:'0 32px' } });
 
       // Cabeçalho alinhado
       tbl.appendChild(U.h('div', {
