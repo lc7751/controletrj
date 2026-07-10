@@ -229,7 +229,7 @@
       /* ── Tabela de regiões (direita, centralizada) ── */
       var tbl = U.h('div', {
         style:{ flex:'1', display:'flex', flexDirection:'column',
-                justifyContent:'flex-start', padding:'0 32px' }
+                justifyContent:'flex-start', padding:'0 40px' }
       });
 
       tbl.appendChild(U.h('div', {

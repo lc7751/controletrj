@@ -1,19 +1,10 @@
 /* ============================================================
  * Página: Pesquisa Operacional
- * ============================================================
- * Baseado no módulo VBA Pesquisa_Operacional.
- *
- * 3 modos:
- *  1. PESQUISA POR PALAVRA — busca no diário BG (col BG = motivoCancelamento)
- *  2. TSKs SEM ATUALIZAÇÃO — TSKs Corretivas abertas sem update recente
- *  3. POSSÍVEIS NORMALIZADOS — TSKs cujo alarme/incidente parece normalizado
- *     (cruza tipoFalha com palavras-chave + verifica se END_ID está fora)
  * ============================================================ */
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
   var U = TRJ.ui, C = TRJ.constants;
 
-  /* ── Normaliza texto para comparação (réplica de NormalizeText do VBA) ── */
   function norm(s) {
     if (!s) return '';
     return s.toString().trim().toUpperCase()
@@ -24,21 +15,18 @@
       .replace(/\s{2,}/g,' ').trim();
   }
 
-  /* ── Palavras-chave de alarme que indicam possível normalização ── */
+  // Palavras-chave exatas para Normalizados (lista do usuário)
   var PALAVRAS_NORM = [
     'EXTERNAL', 'ENERGIA', 'GSM BTS DOWN', 'MASSIVA ACESSO', 'PARTIAL DOWN',
-    'CELL', 'ENODEB DOWN', 'COMMUNICATION FAILURE', 'INACESSIVEL',
-    'EQUIPAMENTO INACESSIVEL', 'SITE FORA', 'NR GNODEB DOWN', 'FALHA DE ENERGIA',
-    'RETIFICADOR', 'ENODB', 'ISOLATED NE', 'S1 APP LINK DOWN', 'BATERIA',
-    'NODEB DOWN', 'DISJUNTOR', 'INDISPONIBILIDADE', 'BREAK SIGNAL', 'PERDA DE SINAL'
+    'CELL', 'ENODEB DOWN', 'ENODEB DOWN-CELL', 'COMMUNICATION FAILURE',
+    'INACESSIVEL', 'EQUIPAMENTO INACESSIVEL', 'SITE FORA', 'NR GNODEB DOWN',
+    'FALHA DE ENERGIA', 'RETIFICADOR', 'ENODB', 'ISOLATED NE',
+    'S1 APP LINK DOWN', 'BATERIA', 'NODEB DOWN', 'DISJUNTOR'
   ];
 
-  function contemPalavras(texto, palavras) {
-    var n = norm(texto);
-    return palavras.some(function (p) { return n.indexOf(norm(p)) >= 0; });
-  }
+  // DJ que EXCLUEM a task dos normalizados
+  var DJ_EXCLUIR = ['PREDITIVA', 'MABE', 'ACESSO FA'];
 
-  /* ── Filtro base: Corretiva + Não Iniciado / Iniciado ─────────────── */
   function ehValidoParaPesquisa(t) {
     if (!t) return false;
     var tipo = (t.tipoAtividade || '').toLowerCase();
@@ -47,26 +35,19 @@
     return s === 'NAO INICIADO' || s === 'INICIADO';
   }
 
-  /* ── Formatar linha de resultado (formato igual ao VBA) ─────────────
-   * resumido:  TSK / SITE (END_ID)
-   * completo:  *PRIORIDADE* - TSK / SITE (END_ID) - FILA -> INFO (nota)  */
   function formatarLinha(t, extra, resumo) {
     var tsk  = t.osNumero || '—';
     var site = t.siteId || t.enderecoId || '—';
     var eid  = t.enderecoId || '';
     var prio = t.prioridade || '';
     var fila = (t.filaAtual || '').replace(/^TLP-T\d+(-\d+)?-?\s*/i,'').slice(0,35);
-
-    if (resumo) {
-      return (prio ? '*'+prio+'* ' : '') + tsk + ' / ' + site + (eid?' ('+eid+')':'');
-    }
+    if (resumo) return (prio ? '*'+prio+'* ' : '') + tsk + ' / ' + site + (eid?' ('+eid+')':'');
     var base = (prio ? '*'+prio+'* ' : '') + tsk + ' / ' + site + (eid?' ('+eid+')':'');
     if (fila) base += ' → ' + fila;
     if (extra) base += ' · ' + extra;
     return base;
   }
 
-  /* ── Agrupar por região e montar texto de cópia ────────────────── */
   function montarTexto(titulo, grupos) {
     if (!Object.keys(grupos).length) return '';
     var linhas = ['*' + titulo.toUpperCase() + '*', ''];
@@ -91,28 +72,30 @@
     return g;
   }
 
-  /* ── Botão de cópia ─────────────────────────────────────────────── */
+  function copyText(txt) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(function(){ U.toast('✓ Copiado!','ok'); });
+    } else {
+      var ta = document.createElement('textarea'); ta.value = txt;
+      ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); U.toast('✓ Copiado!','ok'); } catch(e){}
+      document.body.removeChild(ta);
+    }
+  }
+
   function btnCopiar(getTexto) {
     return U.h('button', {
-      class: 'trj-btn trj-btn-ghost clickable',
-      style: { fontSize:'12px', padding:'4px 12px', display:'inline-flex', alignItems:'center', gap:'5px', border:'1px solid rgba(255,255,255,.15)' },
-      onclick: function () {
+      class:'trj-btn trj-btn-ghost clickable',
+      style:{ fontSize:'12px', padding:'4px 12px', display:'inline-flex', alignItems:'center', gap:'5px', border:'1px solid rgba(255,255,255,.15)' },
+      onclick: function() {
         var txt = getTexto();
-        if (!txt) { U.toast('Nenhum resultado para copiar.', 'err'); return; }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(txt).then(function(){ U.toast('✓ Copiado!','ok'); });
-        } else {
-          var ta = document.createElement('textarea'); ta.value = txt;
-          ta.style.position = 'fixed'; ta.style.opacity = '0';
-          document.body.appendChild(ta); ta.select();
-          try { document.execCommand('copy'); U.toast('✓ Copiado!','ok'); } catch(e){}
-          document.body.removeChild(ta);
-        }
+        if (!txt) { U.toast('Nenhum resultado para copiar.','err'); return; }
+        copyText(txt);
       }
     }, [U.h('span',{text:'📋'}), U.h('span',{text:'Copiar'})]);
   }
 
-  /* ── Badge de status ─────────────────────────────────────────────── */
   function statusBadge(s) {
     var u = norm(s);
     var cor = u==='INICIADO' ? '#2ecc71' : '#f0b429';
@@ -120,12 +103,10 @@
     return U.h('span',{class:'trj-badge',style:{background:bg,color:cor,fontWeight:'700',fontSize:'10px'},text:s||'—'});
   }
 
-  /* ── Resultado vazio ────────────────────────────────────────────── */
   function vazio(msg) {
     return U.h('p',{style:{color:'var(--trj-muted)',fontSize:'13px',fontStyle:'italic',textAlign:'center',padding:'24px 0'},text: msg || 'Nenhum resultado.'});
   }
 
-  /* ── Tabela de resultados genérica ─────────────────────────────── */
   function tabelaResultados(rows, colunas) {
     if (!rows.length) return vazio();
     var thead = U.h('thead', null, U.h('tr', null, colunas.map(function(c){ return U.h('th',{text:c}); })));
@@ -138,15 +119,51 @@
     return U.h('div',{style:{overflowX:'auto'}}, U.h('table',{class:'trj-table'},[thead,tbody]));
   }
 
+  /* ── calcular status do update (usa a mesma lógica do dashboard) ── */
+  function calcUpdateStatus(bg) {
+    if (!bg || !bg.trim()) return 'sem';
+    if (U.classificarUltimoBloco) {
+      var res = U.classificarUltimoBloco(bg);
+      return res.estado; // 'ok', 'antigo', 'acionamento', 'sem'
+    }
+    if (U.isTextoSemAtualizacao && U.isTextoSemAtualizacao(bg)) return 'sem';
+    return 'ok';
+  }
+
+  function updateIconeTexto(estado) {
+    if (estado === 'ok')          return '🟢 Hoje';
+    if (estado === 'antigo')      return '🟡 Anterior';
+    if (estado === 'acionamento') return '🟠 Acionamento';
+    return '🔴 Sem update';
+  }
+
+  /* ── filtros de região e prioridade (helper) ── */
+  function mkFiltroSel(label, options) {
+    var sel = U.h('select', {
+      class:'trj-btn trj-btn-ghost',
+      style:{fontSize:'12px', padding:'3px 10px', minWidth:'130px'}
+    }, options.map(function(o){ return U.h('option',{value:o.v,text:o.t}); }));
+    return sel;
+  }
+
+  function opcoesRegiao() {
+    return [{ v:'TODAS', t:'Todas as regiões' }]
+      .concat(C.REGIOES.filter(function(r){ return r !== 'OTHERS'; })
+              .map(function(r){ return { v:r, t:C.REGIAO_LABELS[r]||r }; }));
+  }
+  function opcoesPrio() {
+    return [{ v:'TODAS', t:'Todas as prioridades' }]
+      .concat(['P1','P2','P3','P4','P5'].map(function(p){ return { v:p, t:p }; }));
+  }
+
   /* ══════════════════════════════════════════════════════════════════
    * PÁGINA PRINCIPAL
    * ══════════════════════════════════════════════════════════════════ */
   TRJ.pages.pesquisa = function(container, ctx) {
     var data  = ctx.data || {};
-    var tasks = (data.tasksEnriched || []);
-    var incs  = (data.incidentsEnriched || []);
+    var tasks = data.tasksEnriched || [];
+    var incs  = data.incidentsEnriched || [];
 
-    // Pré-processar: ENDIDs com incidente ativo (não resolvido)
     var eidsAtivos = {};
     incs.forEach(function(i) {
       if ((i.statusTrat||'ATIVO').toUpperCase() !== 'RESOLVIDO') {
@@ -155,75 +172,86 @@
     });
 
     container.appendChild(U.pageHeader('Pesquisa Operacional',
-      'Pesquisa por palavra no diário · TSKs sem atualização · Possíveis normalizados'));
+      'Pesquisa por campo · TSKs sem atualização · Possíveis normalizados'));
 
-    // Tabs do modo
     var modoAtivo = { v: 'palavra' };
     var tabContent = U.h('div', { style:{ marginTop:'16px' } });
-
     var TABS = [
-      { id:'palavra',  label:'Pesquisa por Palavra',     icon:'🔍' },
-      { id:'pendente', label:'TSKs Sem Atualização',      icon:'⚠️' },
-      { id:'norm',     label:'Possíveis Normalizados',    icon:'✅' },
+      { id:'palavra',  label:'Pesquisa por Campo' },
+      { id:'pendente', label:'TSKs Sem Atualização' },
+      { id:'norm',     label:'Possíveis Normalizados' },
     ];
-
     var tabBtns = {};
     var tabRow = U.h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'0' } });
     TABS.forEach(function(tab) {
       var btn = U.h('button', {
-        class: 'trj-btn clickable',
-        style: { padding:'8px 18px', fontSize:'13px', fontWeight:'600',
-                 borderRadius:'10px 10px 0 0', border:'1px solid var(--trj-border)',
-                 borderBottom:'none', background: tab.id===modoAtivo.v ? 'var(--trj-card)' : 'var(--trj-card2)',
-                 color: tab.id===modoAtivo.v ? 'var(--trj-primary)' : 'var(--trj-muted)',
-                 transition:'all .15s' },
+        class:'trj-btn clickable',
+        style:{ padding:'8px 18px', fontSize:'13px', fontWeight:'600',
+                borderRadius:'10px 10px 0 0', border:'1px solid var(--trj-border)',
+                borderBottom:'none', background: tab.id===modoAtivo.v ? 'var(--trj-card)' : 'var(--trj-card2)',
+                color: tab.id===modoAtivo.v ? 'var(--trj-primary)' : 'var(--trj-muted)',
+                transition:'all .15s' },
         onclick: function() {
           modoAtivo.v = tab.id;
           Object.keys(tabBtns).forEach(function(id){
-            var isAtivo = id === tab.id;
-            tabBtns[id].style.background = isAtivo ? 'var(--trj-card)' : 'var(--trj-card2)';
-            tabBtns[id].style.color      = isAtivo ? 'var(--trj-primary)' : 'var(--trj-muted)';
+            var isA = id === tab.id;
+            tabBtns[id].style.background = isA ? 'var(--trj-card)' : 'var(--trj-card2)';
+            tabBtns[id].style.color      = isA ? 'var(--trj-primary)' : 'var(--trj-muted)';
           });
           renderModo();
         }
-      }, [U.h('span',{text: tab.icon + ' ' + tab.label})]);
+      }, [U.h('span',{text: tab.label})]);
       tabBtns[tab.id] = btn;
       tabRow.appendChild(btn);
     });
-
     container.appendChild(tabRow);
     var card = U.h('div', { class:'trj-card p-5', style:{ borderRadius:'0 10px 10px 10px' } });
     card.appendChild(tabContent);
     container.appendChild(card);
 
     /* ════════════════════════════════════════════════════════════
-     * MODO 1: PESQUISA POR PALAVRA (réplica de PesquisaPorPalavra)
+     * MODO 1 — PESQUISA POR CAMPO
      * ════════════════════════════════════════════════════════════ */
     function renderPalavra() {
       tabContent.innerHTML = '';
+      var campoAtivo = { v: 'bg' };
+      var CAMPOS = [
+        { id:'bg',    label:'Diário (BG)',  fn: function(t,q){ return t.motivoCancelamento && norm(t.motivoCancelamento).indexOf(norm(q)) >= 0; } },
+        { id:'endid', label:'END_ID',       fn: function(t,q){ return norm(t.enderecoId||'').indexOf(norm(q)) >= 0; } },
+        { id:'site',  label:'Site',         fn: function(t,q){ return norm(t.siteId||'').indexOf(norm(q)) >= 0; } },
+        { id:'tsk',   label:'TSK',          fn: function(t,q){ return norm(t.osNumero||'').indexOf(norm(q)) >= 0; } },
+      ];
+      // Botões de opção de campo
+      var campoBtns = {};
+      var campoRow = U.h('div', { style:{ display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'10px' } });
+      CAMPOS.forEach(function(c) {
+        var b = U.h('button', {
+          class:'trj-btn trj-btn-ghost clickable',
+          style:{ fontSize:'11px', padding:'3px 12px',
+                  background: c.id===campoAtivo.v ? 'rgba(255,140,0,.18)' : '',
+                  borderColor: c.id===campoAtivo.v ? 'var(--trj-primary)' : '' },
+          onclick: function() {
+            campoAtivo.v = c.id;
+            Object.keys(campoBtns).forEach(function(id){
+              campoBtns[id].style.background   = id===c.id ? 'rgba(255,140,0,.18)' : '';
+              campoBtns[id].style.borderColor   = id===c.id ? 'var(--trj-primary)' : '';
+            });
+            buscar();
+          }
+        }, c.label);
+        campoBtns[c.id] = b;
+        campoRow.appendChild(b);
+      });
+      tabContent.appendChild(campoRow);
 
       var searchInput = U.h('input', {
         class:'trj-input',
-        placeholder:'Digite a palavra ou frase para buscar no diário de trabalho (BG)...',
-        style:{ fontSize:'13px', width:'100%', marginBottom:'12px' }
+        placeholder:'Digite o valor para buscar...',
+        style:{ fontSize:'13px', width:'100%', marginBottom:'10px' }
       });
-
-      var toggleResumo = { v: true };
-      var btnResumo = U.h('button', {
-        class:'trj-btn trj-btn-ghost clickable',
-        style:{ fontSize:'12px', padding:'3px 10px' },
-        onclick: function() {
-          toggleResumo.v = !toggleResumo.v;
-          btnResumo.textContent = toggleResumo.v ? 'Modo: Resumido' : 'Modo: Completo';
-          buscar();
-        }
-      }, 'Modo: Resumido');
-
       var resultArea = U.h('div');
       var textoAtual = '';
-
-      var ctrlRow = U.h('div', { style:{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'16px', flexWrap:'wrap' } }, [
-        btnResumo,
+      var ctrlRow = U.h('div', { style:{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'14px', flexWrap:'wrap' } }, [
         btnCopiar(function(){ return textoAtual; })
       ]);
       tabContent.appendChild(searchInput);
@@ -232,265 +260,174 @@
       searchInput.focus();
 
       var timer = null;
-      searchInput.addEventListener('input', function() {
-        clearTimeout(timer);
-        timer = setTimeout(buscar, 300);
-      });
-      searchInput.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') buscar();
-      });
+      searchInput.addEventListener('input', function() { clearTimeout(timer); timer = setTimeout(buscar, 300); });
+      searchInput.addEventListener('keydown', function(e){ if(e.key==='Enter') buscar(); });
 
       function buscar() {
-        var termo = searchInput.value.trim();
+        var q = searchInput.value.trim();
         resultArea.innerHTML = '';
-        if (!termo) return;
-
-        var validas = tasks.filter(ehValidoParaPesquisa);
-        var resultados = [];
-
-        validas.forEach(function(t) {
-          var bg = t.motivoCancelamento || '';
-          if (!bg) return;
-          if (norm(bg).indexOf(norm(termo)) < 0) return;
-          resultados.push({ r: t.regiao || 'SEM REGIÃO', t: t });
+        if (!q) return;
+        var campo = CAMPOS.filter(function(c){ return c.id === campoAtivo.v; })[0];
+        if (!campo) return;
+        // Para campos não-BG, busca em TODAS as Corretivas (não só abertas)
+        var pool = campo.id === 'bg' ? tasks.filter(ehValidoParaPesquisa) : tasks.filter(function(t){
+          return (t.tipoAtividade||'').toLowerCase().indexOf('corretiva') >= 0;
         });
-
-        if (!resultados.length) {
-          resultArea.appendChild(vazio('Nenhum resultado para "' + termo + '"'));
-          textoAtual = '';
-          return;
-        }
-
-        // Agrupado por região
+        var resultados = pool.filter(function(t){ return campo.fn(t, q); });
+        if (!resultados.length) { resultArea.appendChild(vazio('Nenhum resultado para "' + q + '"')); textoAtual = ''; return; }
         var grupos = agrupar(resultados.map(function(item) {
-          return { r: item.r, linha: formatarLinha(item.t, null, toggleResumo.v) };
+          return { r: item.regiao || 'SEM REGIÃO', linha: formatarLinha(item, null, true) };
         }));
-
-        textoAtual = montarTexto('PESQUISA: ' + termo, grupos);
-
-        // Tabela de resultado
-        var rows = resultados.map(function(item) {
-          var t = item.t;
-          var r = (C.REGIAO_LABELS[item.r] || item.r || 'SEM REGIÃO').toUpperCase();
-          var updateInfo = '—';
-          if (U.classificarUltimoBloco && t.motivoCancelamento) {
-            var res = U.classificarUltimoBloco(t.motivoCancelamento);
-            updateInfo = res.estado === 'ok' ? '✅ Hoje' : res.estado === 'antigo' ? '🟡 Anterior' : '🔴 Sem update';
-          }
-          return [r, statusBadge(t.status), t.osNumero, t.siteId || '—', t.enderecoId || '—', t.tipoFalha || '—', updateInfo];
+        textoAtual = montarTexto('PESQUISA: ' + q, grupos);
+        var rows = resultados.map(function(t) {
+          var reg = (C.REGIAO_LABELS[t.regiao]||t.regiao||'SEM REGIÃO').toUpperCase();
+          var estado = calcUpdateStatus(t.motivoCancelamento||'');
+          return [reg, statusBadge(t.status), t.osNumero, t.siteId||'—', t.enderecoId||'—', t.tipoFalha||'—', updateIconeTexto(estado)];
         });
-
-        var headerInfo = U.h('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px' }}, [
-          U.h('span', { style:{ fontWeight:'600', fontSize:'13px' }, text: resultados.length + ' resultado(s) para "' + termo + '"' }),
-        ]);
-        resultArea.appendChild(headerInfo);
+        resultArea.appendChild(U.h('div',{style:{fontWeight:'600',fontSize:'13px',marginBottom:'8px'},text:resultados.length+' resultado(s) para "'+q+'"'}));
         resultArea.appendChild(tabelaResultados(rows, ['Região','Status','TSK','Site','END_ID','Falha','Último Update']));
       }
     }
 
     /* ════════════════════════════════════════════════════════════
-     * MODO 2: TSKs SEM ATUALIZAÇÃO (baseado em PesquisaTSKPendentes)
+     * MODO 2 — TSKs SEM ATUALIZAÇÃO (com filtros região + prioridade)
      * ════════════════════════════════════════════════════════════ */
     function renderPendente() {
       tabContent.innerHTML = '';
-
-      var maisRecente = { v: true }; // true = só sem update / false = todas sem update há +24h
-      var filtroSelect = U.h('select', {
-        class:'trj-btn trj-btn-ghost',
-        style:{ fontSize:'12px', padding:'4px 10px' }
-      }, [
-        U.h('option', { value:'sem', text:'Sem qualquer atualização' }),
-        U.h('option', { value:'antigo', text:'Atualização anterior (não hoje)' }),
-        U.h('option', { value:'todos', text:'Todas as abertas' }),
+      var filtroUpd = U.h('select', { class:'trj-btn trj-btn-ghost', style:{ fontSize:'12px', padding:'3px 10px', minWidth:'200px' } }, [
+        U.h('option',{value:'sem', text:'Sem qualquer atualização'}),
+        U.h('option',{value:'antigo', text:'Atualização não de hoje'}),
+        U.h('option',{value:'todos', text:'Todas as abertas'}),
       ]);
-
-      var resultArea = U.h('div', { style:{ marginTop:'16px' } });
+      var selReg  = mkFiltroSel('Região',     opcoesRegiao());
+      var selPrio = mkFiltroSel('Prioridade', opcoesPrio());
+      var resultArea = U.h('div', { style:{ marginTop:'14px' } });
       var textoAtual = '';
-
       var ctrlRow = U.h('div', { style:{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'12px', flexWrap:'wrap' } }, [
-        U.h('span', { style:{ fontSize:'13px', color:'var(--trj-muted)' }, text:'Filtro:' }),
-        filtroSelect,
-        btnCopiar(function(){ return textoAtual; })
+        filtroUpd, selReg, selPrio, btnCopiar(function(){ return textoAtual; })
       ]);
-
       tabContent.appendChild(ctrlRow);
       tabContent.appendChild(resultArea);
-
-      filtroSelect.addEventListener('change', renderLista);
-      renderLista();
-
       function renderLista() {
         resultArea.innerHTML = '';
-        var filtro = filtroSelect.value;
-        var validas = tasks.filter(ehValidoParaPesquisa);
-        var resultados = [];
-
-        validas.forEach(function(t) {
-          var bg = t.motivoCancelamento || '';
-          var updateEstado = 'sem';
-          if (U.classificarUltimoBloco && bg) {
-            updateEstado = U.classificarUltimoBloco(bg).estado;
-          }
-          var incluir = (filtro === 'todos') ||
-                        (filtro === 'sem' && (updateEstado === 'sem')) ||
-                        (filtro === 'antigo' && (updateEstado === 'sem' || updateEstado === 'antigo'));
-          if (!incluir) return;
-          resultados.push({ r: t.regiao || 'SEM REGIÃO', t: t, estado: updateEstado });
+        var filtro = filtroUpd.value;
+        var regFiltro  = selReg.value;
+        var prioFiltro = selPrio.value;
+        var validas = tasks.filter(ehValidoParaPesquisa).filter(function(t){
+          if (regFiltro  !== 'TODAS' && (t.regiao    ||'OTHERS') !== regFiltro)  return false;
+          if (prioFiltro !== 'TODAS' && (t.prioridade||'')       !== prioFiltro) return false;
+          return true;
         });
-
-        if (!resultados.length) {
-          resultArea.appendChild(vazio('Nenhuma TSK encontrada para este filtro.'));
-          textoAtual = '';
-          return;
-        }
-
-        // Ordenar por região e prioridade
-        resultados.sort(function(a, b) {
-          var ri = C.REGIOES || [];
-          var ar = ri.indexOf(a.r), br2 = ri.indexOf(b.r);
-          if (ar!==br2) return ar-br2;
-          var pa = parseInt((a.t.prioridade||'P9').replace(/\D/g,''),10)||9;
-          var pb = parseInt((b.t.prioridade||'P9').replace(/\D/g,''),10)||9;
+        var resultados = [];
+        validas.forEach(function(t) {
+          var estado = calcUpdateStatus(t.motivoCancelamento || '');
+          var incluir = (filtro==='todos') ||
+                        (filtro==='sem'    && estado==='sem') ||
+                        (filtro==='antigo' && (estado==='sem' || estado==='antigo'));
+          if (!incluir) return;
+          resultados.push({ r: t.regiao||'SEM REGIÃO', t: t, estado: estado });
+        });
+        resultados.sort(function(a,b){
+          var ri=C.REGIOES||[];
+          var ar=ri.indexOf(a.r), br2=ri.indexOf(b.r); if(ar!==br2) return ar-br2;
+          var pa=parseInt((a.t.prioridade||'P9').replace(/\D/g,''),10)||9;
+          var pb=parseInt((b.t.prioridade||'P9').replace(/\D/g,''),10)||9;
           return pa-pb;
         });
-
-        var grupos = agrupar(resultados.map(function(item) {
-          return { r: item.r, linha: formatarLinha(item.t, null, true) };
-        }));
-        textoAtual = montarTexto('TSKs ' + (filtro==='sem'?'SEM ATUALIZAÇÃO':filtro==='antigo'?'SEM UPDATE HOJE':'ABERTAS'), grupos);
-
-        var rows = resultados.map(function(item) {
-          var t   = item.t;
-          var reg = (C.REGIAO_LABELS[item.r]||item.r||'SEM REGIÃO').toUpperCase();
-          var ic  = item.estado==='sem' ? '🔴 Sem update' : item.estado==='antigo' ? '🟡 Anterior' : '🟢 Hoje';
-          var updateCell = U.ultimoUpdateCell ? U.ultimoUpdateCell(
-            { enderecoId: t.enderecoId }, [t], null
-          ) : U.h('span',{text:ic});
-          return [reg, statusBadge(t.status), t.osNumero, t.prioridade||'—',
-                  t.siteId||'—', t.enderecoId||'—', t.tipoFalha||'—',
-                  ic];
+        if (!resultados.length) { resultArea.appendChild(vazio('Nenhuma TSK encontrada.')); textoAtual=''; return; }
+        var grupos = agrupar(resultados.map(function(item){ return { r:item.r, linha:formatarLinha(item.t,null,true) }; }));
+        textoAtual = montarTexto('TSKs '+(filtro==='sem'?'SEM ATUALIZAÇÃO':filtro==='antigo'?'SEM UPDATE HOJE':'ABERTAS'), grupos);
+        var rows = resultados.map(function(item){
+          var t=item.t, reg=(C.REGIAO_LABELS[item.r]||item.r||'SEM REGIÃO').toUpperCase();
+          return [reg, statusBadge(t.status), t.osNumero, t.prioridade||'—', t.siteId||'—', t.enderecoId||'—', t.tipoFalha||'—', updateIconeTexto(item.estado)];
         });
-
-        var count = U.h('div',{style:{fontWeight:'600',fontSize:'13px',marginBottom:'10px'},text: resultados.length+' TSK(s) encontrada(s)'});
-        resultArea.appendChild(count);
+        resultArea.appendChild(U.h('div',{style:{fontWeight:'600',fontSize:'13px',marginBottom:'10px'},text:resultados.length+' TSK(s)'}));
         resultArea.appendChild(tabelaResultados(rows, ['Região','Status','TSK','P','Site','END_ID','Falha','Update']));
       }
+      filtroUpd.addEventListener('change', renderLista);
+      selReg.addEventListener('change', renderLista);
+      selPrio.addEventListener('change', renderLista);
+      renderLista();
     }
 
     /* ════════════════════════════════════════════════════════════
-     * MODO 3: POSSÍVEIS NORMALIZADOS (réplica de PesquisaNormalizados)
-     *
-     * Lógica:
-     *  • TSK Corretiva + Não Iniciado / Iniciado
-     *  • tipoFalha contém palavras-chave de alarme (array PALAVRAS_NORM)
-     *  • O END_ID NÃO aparece nos incidentes ativos (statusTrat ≠ RESOLVIDO)
-     *  → Significa que o alarme/incidente foi normalizado mas a TSK ainda está aberta
+     * MODO 3 — POSSÍVEIS NORMALIZADOS (com exclusão DJ + filtros)
      * ════════════════════════════════════════════════════════════ */
     function renderNormalizados() {
       tabContent.innerHTML = '';
-
-      var toggleResumo = { v: true };
-      var btnResumo2 = U.h('button', {
-        class:'trj-btn trj-btn-ghost clickable',
-        style:{ fontSize:'12px', padding:'3px 10px' },
-        onclick: function() {
-          toggleResumo.v = !toggleResumo.v;
-          btnResumo2.textContent = toggleResumo.v ? 'Modo: Resumido' : 'Modo: Completo';
-          renderNorm();
-        }
-      }, 'Modo: Resumido');
-
-      var resultArea = U.h('div', { style:{ marginTop:'16px' } });
+      var selReg  = mkFiltroSel('Região',     opcoesRegiao());
+      var selPrio = mkFiltroSel('Prioridade', opcoesPrio());
+      var resultArea = U.h('div', { style:{ marginTop:'14px' } });
       var textoAtual = '';
-
       var ctrlRow = U.h('div', { style:{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'12px', flexWrap:'wrap' } }, [
-        btnResumo2,
-        btnCopiar(function(){ return textoAtual; }),
-        U.h('span', { style:{ fontSize:'11px', color:'var(--trj-muted)', marginLeft:'8px' },
-          text:'TSKs abertas cujo END_ID não está mais em sites fora ativos' })
+        selReg, selPrio, btnCopiar(function(){ return textoAtual; }),
+        U.h('span',{style:{fontSize:'11px',color:'var(--trj-muted)',marginLeft:'6px'},text:'TSKs abertas cujo END_ID não está mais em sites fora ativos'})
       ]);
-
       tabContent.appendChild(ctrlRow);
       tabContent.appendChild(resultArea);
-      renderNorm();
 
       function renderNorm() {
         resultArea.innerHTML = '';
-        var validas = tasks.filter(ehValidoParaPesquisa);
-        var normalizados = [];
-
-        validas.forEach(function(t) {
-          var eid = (t.enderecoId || '').trim();
-          // Critério 1: END_ID não está nos incidentes ativos (normalizado)
-          var estaFora = !!eidsAtivos[eid];
-          if (estaFora) return; // ainda em site fora → não é normalizado
-
-          // Critério 2: tipoFalha ou motivoCancelamento contém palavra-chave de alarme
-          var falha = t.tipoFalha || '';
-          var bg    = t.motivoCancelamento || '';
-          if (!contemPalavras(falha, PALAVRAS_NORM) && !contemPalavras(bg, PALAVRAS_NORM)) return;
-
-          normalizados.push({ r: t.regiao || 'SEM REGIÃO', t: t });
+        var regFiltro  = selReg.value;
+        var prioFiltro = selPrio.value;
+        var validas = tasks.filter(ehValidoParaPesquisa).filter(function(t){
+          if (regFiltro  !== 'TODAS' && (t.regiao    ||'OTHERS') !== regFiltro)  return false;
+          if (prioFiltro !== 'TODAS' && (t.prioridade||'')       !== prioFiltro) return false;
+          return true;
         });
-
-        if (!normalizados.length) {
-          resultArea.appendChild(vazio('Nenhuma TSK identificada como possível normalizado.'));
-          textoAtual = '';
-          return;
-        }
-
-        // Ordenar por região e prioridade
-        normalizados.sort(function(a, b) {
-          var ri = C.REGIOES || [];
-          var ar = ri.indexOf(a.r), br2 = ri.indexOf(b.r);
-          if (ar!==br2) return ar-br2;
-          var pa = parseInt((a.t.prioridade||'P9').replace(/\D/g,''),10)||9;
-          var pb = parseInt((b.t.prioridade||'P9').replace(/\D/g,''),10)||9;
+        var normalizados = [];
+        validas.forEach(function(t) {
+          var eid = (t.enderecoId||'').trim();
+          // 1. END_ID não está nos incidentes ativos (site voltou)
+          if (eidsAtivos[eid]) return;
+          // 2. Excluir se DJ contém PREDITIVA, MABE ou ACESSO FA
+          var dj = norm(t.isocDJ||'');
+          for (var i=0; i<DJ_EXCLUIR.length; i++) {
+            if (dj.indexOf(norm(DJ_EXCLUIR[i])) >= 0) return;
+          }
+          // 3. Tipo de falha deve conter pelo menos uma palavra-chave da lista
+          var falha = t.tipoFalha || '';
+          var falhaNorm = norm(falha);
+          var temPalavra = PALAVRAS_NORM.some(function(p){ return falhaNorm.indexOf(norm(p)) >= 0; });
+          if (!temPalavra) return;
+          normalizados.push({ r: t.regiao||'SEM REGIÃO', t: t });
+        });
+        normalizados.sort(function(a,b){
+          var ri=C.REGIOES||[];
+          var ar=ri.indexOf(a.r), br2=ri.indexOf(b.r); if(ar!==br2) return ar-br2;
+          var pa=parseInt((a.t.prioridade||'P9').replace(/\D/g,''),10)||9;
+          var pb=parseInt((b.t.prioridade||'P9').replace(/\D/g,''),10)||9;
           return pa-pb;
         });
-
-        var grupos = agrupar(normalizados.map(function(item) {
-          return {
-            r: item.r,
-            linha: formatarLinha(item.t, item.t.tipoFalha, toggleResumo.v)
-          };
-        }));
+        if (!normalizados.length) { resultArea.appendChild(vazio('Nenhuma TSK identificada como possível normalizado.')); textoAtual=''; return; }
+        var grupos = agrupar(normalizados.map(function(item){ return { r:item.r, linha:formatarLinha(item.t, item.t.tipoFalha, true) }; }));
         textoAtual = montarTexto('POSSÍVEIS NORMALIZADOS', grupos);
-
-        var rows = normalizados.map(function(item) {
-          var t   = item.t;
-          var reg = (C.REGIAO_LABELS[item.r]||item.r||'SEM REGIÃO').toUpperCase();
-          var updateInfo = '—';
-          if (U.classificarUltimoBloco && t.motivoCancelamento) {
-            var res = U.classificarUltimoBloco(t.motivoCancelamento);
-            updateInfo = res.estado==='ok'?'🟢 Hoje':res.estado==='antigo'?'🟡 Anterior':'🔴 Sem update';
-          }
-          return [reg, statusBadge(t.status), t.osNumero, t.prioridade||'—',
-                  t.siteId||'—', t.enderecoId||'—', t.tipoFalha||'—', updateInfo];
+        var rows = normalizados.map(function(item){
+          var t=item.t, reg=(C.REGIAO_LABELS[item.r]||item.r||'SEM REGIÃO').toUpperCase();
+          var estado = calcUpdateStatus(t.motivoCancelamento||'');
+          return [reg, statusBadge(t.status), t.osNumero, t.prioridade||'—', t.siteId||'—', t.enderecoId||'—', t.tipoFalha||'—', updateIconeTexto(estado)];
         });
-
-        var aviso = U.h('div', { style:{ display:'flex', gap:'10px', alignItems:'flex-start', padding:'10px 14px',
-          background:'rgba(46,204,113,.08)', border:'1px solid rgba(46,204,113,.25)', borderRadius:'8px', marginBottom:'12px' }}, [
+        var aviso = U.h('div',{style:{display:'flex',gap:'10px',alignItems:'flex-start',padding:'10px 14px',background:'rgba(46,204,113,.08)',border:'1px solid rgba(46,204,113,.25)',borderRadius:'8px',marginBottom:'12px'}},[
           U.h('span',{style:{fontSize:'18px'},text:'✅'}),
           U.h('div',null,[
-            U.h('b',{text: normalizados.length + ' TSK(s) possivelmente normalizada(s)'}),
-            U.h('p',{style:{fontSize:'12px',color:'var(--trj-muted)',margin:'3px 0 0'},
-              text:'Critério: TSK Corretiva aberta com alarme de falha de energia/equipamento, sem incidente ativo no END_ID.'})
+            U.h('b',{text:normalizados.length+' TSK(s) possivelmente normalizada(s)'}),
+            U.h('p',{style:{fontSize:'12px',color:'var(--trj-muted)',margin:'3px 0 0'},text:'Site voltou (sem incidente ativo). Falha com keyword de alarme. DJ sem PREDITIVA/MABE/ACESSO FA.'})
           ])
         ]);
         resultArea.appendChild(aviso);
         resultArea.appendChild(tabelaResultados(rows, ['Região','Status','TSK','P','Site','END_ID','Tipo Falha','Último Update']));
       }
+      selReg.addEventListener('change', renderNorm);
+      selPrio.addEventListener('change', renderNorm);
+      renderNorm();
     }
 
-    /* ── Renderizar o modo ativo ─────────────────────────────────── */
     function renderModo() {
       tabContent.innerHTML = '';
-      if (modoAtivo.v === 'palavra')  renderPalavra();
-      else if (modoAtivo.v === 'pendente') renderPendente();
+      if (modoAtivo.v==='palavra') renderPalavra();
+      else if (modoAtivo.v==='pendente') renderPendente();
       else renderNormalizados();
     }
-
     renderModo();
   };
 
