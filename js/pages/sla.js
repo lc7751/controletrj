@@ -89,7 +89,7 @@
 
       var grid = U.h('div', {
         style:{ display:'grid',
-                gridTemplateColumns:'repeat('+Math.max(por.length,1)+', 1fr)',
+                gridTemplateColumns:'repeat(auto-fill, minmax(min(170px, 44vw), 1fr))',
                 gap:'14px' }
       });
 
@@ -189,12 +189,12 @@
       var gerTotal = ger.dentro + ger.fora;
       var gerCor   = pctCor(ger.pct, null);
 
-      var regLayout = U.h('div', { style:{ display:'flex', gap:'28px', alignItems:'flex-start' } });
+      var regLayout = U.h('div', { style:{ display:'flex', gap:'20px', alignItems:'flex-start', flexWrap:'wrap' } });
 
       /* ── Donut geral (esquerda) — mesmo U.donutChart do dashboard ── */
       var gerSide = U.h('div', {
         style:{ display:'flex', flexDirection:'column', alignItems:'center', gap:'10px',
-                width:'calc(20% - 12px)', minWidth:'150px', flexShrink:'0' }
+                width:'calc(20% - 12px)', minWidth:'min(150px, 100%)', flexShrink:'0' }
       });
 
       var gerWrap = U.h('div', { style:{ position:'relative', width:'100%', aspectRatio:'1/1' } });
@@ -229,12 +229,12 @@
       /* ── Tabela de regiões (direita, centralizada) ── */
       var tbl = U.h('div', {
         style:{ flex:'1', display:'flex', flexDirection:'column',
-                justifyContent:'flex-start', padding:'0 40px' }
+                justifyContent:'flex-start', padding:'0 clamp(8px, 3vw, 40px)' }
       });
 
       tbl.appendChild(U.h('div', {
         style:{ display:'grid',
-                gridTemplateColumns:'1fr 60px 70px 60px 80px',
+                gridTemplateColumns:'1fr auto auto auto auto',
                 padding:'0 8px 8px 8px', gap:'8px',
                 borderBottom:'1px solid var(--trj-border)',
                 fontSize:'10px', fontWeight:'700', letterSpacing:'.06em',
@@ -250,7 +250,7 @@
 
         var row = U.h('div', {
           style:{ display:'grid',
-                  gridTemplateColumns:'1fr 60px 70px 60px 80px',
+                  gridTemplateColumns:'1fr auto auto auto auto',
                   padding:'11px 8px', gap:'8px',
                   borderBottom:'1px solid rgba(255,255,255,.05)',
                   cursor:'pointer', transition:'background .15s', borderRadius:'6px',
