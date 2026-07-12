@@ -261,7 +261,7 @@ body { min-height: 100vh; }
         var comTSK = contagemComTSK[r] || 0;
         return U.h('button', {
           class: 'regiao-btn',
-          style: { minWidth: '160px', flex: '0 1 auto' },
+          style: { minWidth: 'min(130px, calc(50% - 8px))', flex: '0 1 auto' },
           onclick: function () { escolherRegiao(r); }
         }, [
           U.h('div', { class: 'ic', html: REGIAO_ICONS_SVG[r] || REGIAO_ICONS_SVG['OTHERS'] }),
@@ -540,7 +540,7 @@ body { min-height: 100vh; }
         prioSelect,
         U.h('button', {
           class: 'trj-btn clickable',
-          style: { fontSize: '12px', padding: '4px 12px', background: 'rgba(52,152,219,.15)', color: '#3498db', border: '1px solid rgba(52,152,219,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '5px' },
+          style: { fontSize: '11px', padding: '3px 8px', background: 'rgba(52,152,219,.15)', color: '#3498db', border: '1px solid rgba(52,152,219,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace:'nowrap' },
           onclick: function () { view = 'mapa'; renderView(); }
         }, [U.h('span', {text:'Mapa'})]),
         U.h('button', {
@@ -550,7 +550,7 @@ body { min-height: 100vh; }
         }, [U.h('span', {text:'📊'}), U.h('span', {text:'SLA'})]),
         U.h('button', {
           class: 'trj-btn clickable',
-          style: { fontSize: '12px', padding: '4px 12px', background: 'rgba(46,204,113,.15)', color: '#2ecc71', border: '1px solid rgba(46,204,113,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '5px' },
+          style: { fontSize: '11px', padding: '3px 8px', background: 'rgba(46,204,113,.15)', color: '#2ecc71', border: '1px solid rgba(46,204,113,.3)', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace:'nowrap' },
           onclick: function () { exportarExcelPublico(d, raw.tasksEnriched, raw.incidentsEnriched); }
         }, [U.h('span', {text:'📊'}), U.h('span', {text:'Excel'})])
       ])
@@ -702,7 +702,7 @@ body { min-height: 100vh; }
         U.h('h3', { class: 'text-sm font-bold', text: 'TOP CIDADES — SITES FORA' }),
         U.h('span', { class: 'text-xs font-normal', style: { color: 'var(--trj-muted)' }, text: '(clique em qualquer cidade ou ANF para detalhar)' })
       ]),
-      U.h('div', { class: 'grid grid-cols-1 lg:grid-cols-3 gap-4' }, [total, U.h('div', { class: 'lg:col-span-2' }, [anfList, bars])])
+      U.h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(min(260px,100%), 1fr))', gap:'14px' } }, [total, U.h('div', null, [anfList, bars])])
     ]);
   }
 
