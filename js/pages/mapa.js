@@ -284,6 +284,7 @@
     function filtrarMarcadores(q) {
       if (!layers.flag1) return;
       var matched = [];
+      // Filtrar marcadores de incidentes (FLAG 1)
       Object.values(layers.flag1._layers || {}).forEach(function(m) {
         var d = m._d || {};
         var ok = !q || (d.eid||'').toLowerCase().indexOf(q)>=0
@@ -292,13 +293,25 @@
         m.setOpacity(ok ? 1 : 0.07);
         if (ok) matched.push(m);
       });
-      // Zoom nos resultados encontrados
+      // Filtrar Hub FO na busca
+      Object.values(layers.fo && layers.fo._layers ? layers.fo._layers : {}).forEach(function(m) {
+        var d = m._d || {};
+        var ok = !q || (d.eid||'').toLowerCase().indexOf(q) >= 0
+               || (d.nome||'').toLowerCase().indexOf(q) >= 0;
+        if (m.setOpacity) { m.setOpacity(ok ? 1 : 0.07); }
+        else if (m.setStyle) { m.setStyle({ fillOpacity: ok ? 0.85 : 0.05, opacity: ok ? 1 : 0.05 }); }
+        if (ok && mapInstance && mapInstance.hasLayer(layers.fo)) { matched.push(m); }
+      });
+      // Zoom nos resultados
       if (q && matched.length > 0 && matched.length <= 30 && mapInstance) {
         var bounds = window.L.latLngBounds(matched.map(function(m){ return m.getLatLng(); }));
         mapInstance.fitBounds(bounds.pad(0.3), { maxZoom: 14 });
-      } else if (!q && mapInstance) {
-        // Restaurar opacidade e zoom padrão
+      } else if (!q) {
         Object.values(layers.flag1._layers || {}).forEach(function(m){ m.setOpacity(1); });
+        Object.values((layers.fo && layers.fo._layers) || {}).forEach(function(m){
+          if (m.setOpacity) m.setOpacity(1);
+          else if (m.setStyle) m.setStyle({ fillOpacity: 0.85, opacity: 1 });
+        });
       }
     }
 
@@ -435,13 +448,30 @@
         else line.addTo(layers.mwFlag0);
       });
 
+      // Hub FO: vermelho se tem TSK aberta para o END_ID do hub
       foData.forEach(function(hub) {
         function pc(s){ try { return parseFloat(String(s).replace(/\u00a0/g,'').replace(',','.')); } catch(e){ return null; } }
         var lat=pc(hub.LAT_A), lon=pc(hub.LONG_A);
         if (!lat||!lon) return;
-        var m = window.L.marker([lat,lon], { icon: divIcon('#2ecc71', 10, 'square') });
-        m.bindPopup('<b>' + (hub.HUB||hub.NEName||'—') + '</b><br>' + (hub.FORNECEDOR||'') + (hub.PROJETO?' | '+hub.PROJETO:''));
-        m.bindTooltip(hub.NEName||hub.HUB||'', { direction:'top' });
+        // Extrair ENDID do campo HUB — formato: "NEName (ENDID)"
+        var hubStr = hub.HUB || hub.NEName || '';
+        var mEid = hubStr.match(/\((\w+)\)/);
+        var eid  = mEid ? mEid[1] : (hub.NEName||'').trim();
+        // Verificar se há TSK aberta para este END_ID
+        var temTSK = eid && tasks.filter(function(t){
+          var s=(t.status||'').toUpperCase().trim();
+          return (s==='NÃO INICIADO'||s==='NAO INICIADO'||s==='INICIADO') &&
+                 (t.enderecoId||'').trim() === eid;
+        }).length > 0;
+        var corFO  = temTSK ? '#e74c3c' : '#2ecc71'; // vermelho se tem TSK, verde se não
+        var nomeFO = hub.NEName || hubStr;
+        var m = window.L.marker([lat,lon], { icon: divIcon(corFO, 10, 'square') });
+        m._d = { eid: eid, nome: nomeFO, cidade: '' };
+        var popupContent = '<b>' + hubStr + '</b><br>'
+          + (hub.FORNECEDOR||'') + (hub.PROJETO?' | '+hub.PROJETO:'')
+          + (temTSK ? '<br><span style="color:#e74c3c;font-weight:700">⚠ TSK aberta para END_ID: '+eid+'</span>' : '');
+        m.bindPopup(popupContent);
+        m.bindTooltip((temTSK ? '⚠ ' : '') + nomeFO + (eid?' ('+eid+')':''), { direction:'top' });
         m.addTo(layers.fo);
       });
 

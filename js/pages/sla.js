@@ -87,9 +87,16 @@
                 paddingBottom:'10px' }
       }, 'ADERÊNCIA POR PRIORIDADE'));
 
+      // Grid de prioridades: N colunas fixas no desktop, responsivo via minmax
+      // repeat(auto-fill, minmax(min(IDEAL, 44vw), 1fr)) garante:
+      //   • Desktop largo → IDEAL px por coluna → N colunas (sem colunas extras em branco)
+      //   • Tablet → empacota em 2-3 colunas conforme espaço
+      //   • Mobile → 2 colunas
+      var numCols = Math.max(por.length, 1);
+      var idealPx = Math.floor(100 / numCols) + 'vw';
       var grid = U.h('div', {
         style:{ display:'grid',
-                gridTemplateColumns:'repeat(auto-fill, minmax(min(170px, 44vw), 1fr))',
+                gridTemplateColumns:'repeat(auto-fill, minmax(min(clamp(140px, '+idealPx+', 360px), 44vw), 1fr))',
                 gap:'14px' }
       });
 

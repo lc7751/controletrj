@@ -140,7 +140,7 @@
   /* ── filtros de região e prioridade (helper) ── */
   function mkFiltroSel(label, options) {
     var sel = U.h('select', {
-      class:'trj-btn trj-btn-ghost',
+      class:'trj-select',
       style:{fontSize:'12px', padding:'3px 10px', minWidth:'130px'}
     }, options.map(function(o){ return U.h('option',{value:o.v,text:o.t}); }));
     return sel;
@@ -294,7 +294,7 @@
      * ════════════════════════════════════════════════════════════ */
     function renderPendente() {
       tabContent.innerHTML = '';
-      var filtroUpd = U.h('select', { class:'trj-btn trj-btn-ghost', style:{ fontSize:'12px', padding:'3px 10px', minWidth:'200px' } }, [
+      var filtroUpd = U.h('select', { class:'trj-select', style:{ fontSize:'12px', padding:'3px 10px', minWidth:'200px' } }, [
         U.h('option',{value:'sem', text:'Sem qualquer atualização'}),
         U.h('option',{value:'antigo', text:'Atualização não de hoje'}),
         U.h('option',{value:'todos', text:'Todas as abertas'}),
@@ -385,10 +385,12 @@
           for (var i=0; i<DJ_EXCLUIR.length; i++) {
             if (dj.indexOf(norm(DJ_EXCLUIR[i])) >= 0) return;
           }
-          // 3. Tipo de falha deve conter pelo menos uma palavra-chave da lista
-          var falha = t.tipoFalha || '';
-          var falhaNorm = norm(falha);
-          var temPalavra = PALAVRAS_NORM.some(function(p){ return falhaNorm.indexOf(norm(p)) >= 0; });
+          // 3. Verificar palavras-chave em tipoFalha, BG (motivoCancelamento) e filaAtual
+          // (O VBA buscava na coluna EB; no nosso modelo o BG e fila também carregam info de alarme)
+          var camposVerif = [t.tipoFalha || '', t.filaAtual || '', (t.motivoCancelamento || '').slice(0, 500)];
+          var textoTotal  = camposVerif.join(' ');
+          var textoNorm   = norm(textoTotal);
+          var temPalavra  = PALAVRAS_NORM.some(function(p) { return textoNorm.indexOf(norm(p)) >= 0; });
           if (!temPalavra) return;
           normalizados.push({ r: t.regiao||'SEM REGIÃO', t: t });
         });
