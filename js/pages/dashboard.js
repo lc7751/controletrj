@@ -213,14 +213,14 @@
           linhas.push(prio + tskNum + ' / ' + site + ' · ' + upd);
         });
 
-        // --- Sem TSK: somente os que tiverem CAUSA exatamente "/" ---
-        // (Causa "/" indica que ainda não houve diagnóstico registrado — é o que interessa alertar)
+        // --- Sem TSK: somente os que não tiverem diagnóstico (causa vazia/"/" no Genesis) ---
+        // O parser Genesis converte "/" para null via nn(), então verificamos null/vazio OU "/" literal.
         semTSK.forEach(function(grupo){
-          // Verificar se ALGUM dos incidentes do grupo tem causa exatamente "/"
           var causaBarra = grupo.incs.some(function(i){
-            return (i.causa || '').trim() === '/';
+            var c = (i.causa == null ? '' : String(i.causa)).trim();
+            return !c || c === '/';
           });
-          if (!causaBarra) return; // ignorar grupos onde causa não é "/"
+          if (!causaBarra) return;
           var hor  = grupo.mainInc.horario || '—';
           var endId = grupo.eid.startsWith('_sem_endid_') ? '' : (' / ' + grupo.eid);
           // Sites únicos do grupo (não repete)
