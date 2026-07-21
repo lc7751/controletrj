@@ -191,8 +191,13 @@
     // Regra de negócio: Backlog Geral e Aging consideram somente "Não Iniciado" e "Iniciado".
     // PENDENTE fica fora da contabilização principal (continua visível em SLA por Região,
     // drills detalhados e outras visualizações via isBacklogStatus / isBacklogSimples).
+    //
+    // IMPORTANTE: Deduplicar por TSK (maior sequenciaId = row mais recente) ANTES de filtrar.
+    // Sem isso, um chamado com rows antigos "Iniciado" e row novo "Concluída" apareceria
+    // no Prazos a Vencer pois o row antigo passaria pelo filtro de status.
     var _s = function (t) { var s = (t.status || '').toString().trim().toUpperCase(); return s; };
-    var backlog = tickets.filter(function (t) {
+    var ticketsDedup = D.dedupPorTsk(tickets); // um row por TSK (o de maior sequenciaId)
+    var backlog = ticketsDedup.filter(function (t) {
       var s = _s(t);
       return (s === 'NÃO INICIADO' || s === 'NAO INICIADO' || s === 'INICIADO') && !!t.dataCriacaoAS;
     });
