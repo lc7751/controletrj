@@ -242,7 +242,8 @@
       var regiaoEfetiva = regiaoFiltro || (state.regiao !== 'TODAS' ? state.regiao : null);
       var prioFiltro    = state.prioridade !== 'TODAS' ? state.prioridade : null;
       // Dedup: um row por TSK (o mais recente), igual ao critério do gráfico
-      var dedup = D.dedupPorTsk ? D.dedupPorTsk(data.tasksEnriched || []) : (data.tasksEnriched || []);
+      var _dedup = TRJ.domain && TRJ.domain.dedupPorTsk;
+      var dedup = _dedup ? _dedup(data.tasksEnriched || []) : (data.tasksEnriched || []);
       var tasksVenc = dedup.filter(function(t){
         var s = (t.status||'').toString().trim().toUpperCase();
         if (s !== 'NÃO INICIADO' && s !== 'NAO INICIADO' && s !== 'INICIADO') return false;
