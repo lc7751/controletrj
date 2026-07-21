@@ -213,8 +213,14 @@
           linhas.push(prio + tskNum + ' / ' + site + ' · ' + upd);
         });
 
-        // --- Sem TSK: formato "HOR · SEM TSK · SITE1, SITE2 / END_ID" ---
+        // --- Sem TSK: somente os que tiverem CAUSA exatamente "/" ---
+        // (Causa "/" indica que ainda não houve diagnóstico registrado — é o que interessa alertar)
         semTSK.forEach(function(grupo){
+          // Verificar se ALGUM dos incidentes do grupo tem causa exatamente "/"
+          var causaBarra = grupo.incs.some(function(i){
+            return (i.causa || '').trim() === '/';
+          });
+          if (!causaBarra) return; // ignorar grupos onde causa não é "/"
           var hor  = grupo.mainInc.horario || '—';
           var endId = grupo.eid.startsWith('_sem_endid_') ? '' : (' / ' + grupo.eid);
           // Sites únicos do grupo (não repete)
