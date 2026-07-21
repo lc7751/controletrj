@@ -233,46 +233,63 @@
     // PRAZOS A VENCER — geração de texto
     // (definidas ANTES dos botões que as chamam)
     // ============================================================
-    function gerarTextoPrazosRegiao(regiaoFiltro) {
+    // gerarTextoPrazosRegiao: texto copiável do gráfico Prazos a Vencer.
+    // bucketIdx = null → todas as faixas; número → só aquela faixa de tempo.
+    // Aplica dedupPorTsk para garantir que cada chamado apareça uma única vez
+    // (usando somente o row mais recente — mesmo critério do gráfico).
+    function gerarTextoPrazosRegiao(regiaoFiltro, bucketIdx) {
       var now = Date.now();
-      // Filtro efetivo
       var regiaoEfetiva = regiaoFiltro || (state.regiao !== 'TODAS' ? state.regiao : null);
       var prioFiltro    = state.prioridade !== 'TODAS' ? state.prioridade : null;
-      var tasksVenc = (data.tasksEnriched || []).filter(function(t){
-        return t.statusSla === 'DENTRO DO SLA' && t.vencimentoCalc &&
-               (!regiaoEfetiva || (t.regiao||'OTHERS') === regiaoEfetiva) &&
-               (!prioFiltro || t.prioridade === prioFiltro);
+      // Dedup: um row por TSK (o mais recente), igual ao critério do gráfico
+      var dedup = D.dedupPorTsk ? D.dedupPorTsk(data.tasksEnriched || []) : (data.tasksEnriched || []);
+      var tasksVenc = dedup.filter(function(t){
+        var s = (t.status||'').toString().trim().toUpperCase();
+        if (s !== 'NÃO INICIADO' && s !== 'NAO INICIADO' && s !== 'INICIADO') return false;
+        if (t.statusSla !== 'DENTRO DO SLA' || !t.vencimentoCalc) return false;
+        if (regiaoEfetiva && (t.regiao||'OTHERS') !== regiaoEfetiva) return false;
+        if (prioFiltro && t.prioridade !== prioFiltro) return false;
+        var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
+        if (rest < 0 || rest > 390) return false; // mesmo limite do gráfico (390min)
+        if (bucketIdx != null) {
+          var b = C.VENCIMENTO_BUCKETS[bucketIdx];
+          if (!b || rest < b.min || rest >= b.max) return false;
+        }
+        return true;
       });
+      var titulo = bucketIdx != null
+        ? '*' + ('A VENCER: ' + (C.VENCIMENTO_BUCKETS[bucketIdx] ? C.VENCIMENTO_BUCKETS[bucketIdx].label : '')).toUpperCase() + '*'
+        : '*PRAZOS A VENCER*';
       var regioesMapa = {};
       tasksVenc.forEach(function(t){
         var r = t.regiao||'OTHERS';
-        if(!regioesMapa[r]) regioesMapa[r]=[];
+        if (!regioesMapa[r]) regioesMapa[r] = [];
         regioesMapa[r].push(t);
       });
-      var linhas = [];
-      Object.keys(regioesMapa).sort().forEach(function(r){
-        var regLabel = (C.REGIAO_LABELS[r]||r).toUpperCase();
-        linhas.push('*' + regLabel + '*');
+      var linhas = [titulo, ''];
+      C.REGIOES.concat(['OTHERS']).forEach(function(r){
+        if (!regioesMapa[r]) return;
+        linhas.push('*' + (C.REGIAO_LABELS[r]||r).toUpperCase() + '*');
         var arr = regioesMapa[r].slice().sort(function(a,b){
           var pa = parseInt((a.prioridade||'P9').replace(/\D/g,''),10)||9;
           var pb = parseInt((b.prioridade||'P9').replace(/\D/g,''),10)||9;
-          if(pa!==pb) return pa-pb;
-          return new Date(a.vencimentoCalc).getTime()-new Date(b.vencimentoCalc).getTime();
+          if (pa !== pb) return pa - pb;
+          return new Date(a.vencimentoCalc).getTime() - new Date(b.vencimentoCalc).getTime();
         });
         arr.forEach(function(t){
-          var prio = t.prioridade ? '*' + t.prioridade + '* ' : '';
-          var tsk  = t.osNumero || '—';
-          var site = t.siteId || t.enderecoId || '—';
-          var falha = (t.tipoFalha||'—').toUpperCase();
-          var rest = Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
-          var tempoStr = rest<=0 ? 'VENCIDO' : 'VENCE EM '+fmtMinutos(rest);
-          linhas.push(prio + [tsk, site, falha, tempoStr].filter(Boolean).join(' · '));
+          var prio   = t.prioridade ? '*' + t.prioridade + '* ' : '';
+          var tsk    = t.osNumero || '—';
+          var site   = t.siteId || t.enderecoId || '—';
+          var falha  = (t.tipoFalha || '—').toUpperCase();
+          var rest   = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
+          var tempo  = rest <= 0 ? 'VENCIDO' : 'VENCE EM ' + fmtMinutos(rest);
+          linhas.push(prio + [tsk, site, falha, tempo].filter(Boolean).join(' · '));
         });
         linhas.push('');
       });
       return linhas.join('\n').trim();
     }
-    function gerarTextoPrazosTodasRegioes() { return gerarTextoPrazosRegiao(null); }
+    function gerarTextoPrazosTodasRegioes() { return gerarTextoPrazosRegiao(null, null); }
 
     // Prazos a Vencer — botão copiar (ao lado do título)
     var vencBtnCopiar = U.h('button', {
@@ -312,35 +329,9 @@
     U.hbarChart(venc.canvas, vData, { onBar: function (i) {
       var bucket = vData[i];
       var regiaoFiltro = null;
-      // Cópia só do período do drill
-      var onCopyDrill = function () {
-        var now = Date.now();
-        var b = C.VENCIMENTO_BUCKETS[i];
-        var tasks = (data.tasksEnriched || []).filter(function(t){
-          if(t.statusSla!=='DENTRO DO SLA'||!t.vencimentoCalc) return false;
-          var rest=Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
-          return rest>=0 && rest>=b.min && rest<b.max;
-        });
-        var linhas = ['*' + ('A VENCER: ' + (bucket.label||'')).toUpperCase() + '*', ''];
-        var regioesMapa = {};
-        tasks.forEach(function(t){ var r=t.regiao||'OTHERS'; if(!regioesMapa[r]) regioesMapa[r]=[]; regioesMapa[r].push(t); });
-        Object.keys(regioesMapa).sort().forEach(function(r){
-          linhas.push('*' + (C.REGIAO_LABELS[r]||r).toUpperCase() + '*');
-          var arr = regioesMapa[r].slice().sort(function(a,b2){
-            var pa=parseInt((a.prioridade||'P9').replace(/\D/g,''),10)||9;
-            var pb=parseInt((b2.prioridade||'P9').replace(/\D/g,''),10)||9;
-            return pa!==pb?pa-pb:new Date(a.vencimentoCalc).getTime()-new Date(b2.vencimentoCalc).getTime();
-          });
-          arr.forEach(function(t){
-            var prio=t.prioridade?'*'+t.prioridade+'* ':'';
-            var rest2=Math.round((new Date(t.vencimentoCalc).getTime()-now)/60000);
-            var cid=(t.cidade||t.cidadeUf||'').replace(/\s*\/.*$/,'').trim().toUpperCase();
-            linhas.push(prio+(t.osNumero||'—')+' · '+(t.siteId||t.enderecoId||'—')+' · '+(t.tipoFalha||'—').toUpperCase()+' · VENCE EM '+fmtMinutos(rest2));
-          });
-          linhas.push('');
-        });
-        return linhas.join('\n').trim();
-      };
+      // Botão copiar do drill usa a mesma função do botão externo, filtrado ao bucket selecionado.
+      // Isso garante formato e dedup idênticos nos dois botões de copiar.
+      var onCopyDrill = function () { return gerarTextoPrazosRegiao(null, i); };
       app.openDrillTasks({ tipo: 'vencimento', arg: i }, f, 'A VENCER: ' + (bucket.label||''), {}, onCopyDrill);
     }});
     U.barChart(sites.canvas, sfData.map(function (x) { return { label: x.label.toUpperCase(), total: x.total, cor: C.CORES_TRJ.red }; }), {
