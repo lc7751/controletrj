@@ -196,7 +196,10 @@
           if (prioFiltro && tf && tf.prioridade !== prioFiltro) return;
           if (prioFiltro && !tf) return; // sem TSK e filtro de prio ativo: ignorar
 
-          if (tsk) {
+          // Só conta como "com TSK" se o tipo for Manutenção Corretiva.
+          // TSK manual (outro tipo) é tratada como SEM TSK para fins de cópia.
+          var isCorretiva = tf && (tf.tipoAtividade || '').indexOf('Corretiva') >= 0;
+          if (tsk && isCorretiva) {
             comTSK.push({ grupo: grupo, tsk: tsk, tf: tf });
           } else {
             semTSK.push(grupo);
