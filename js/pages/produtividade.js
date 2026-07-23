@@ -208,32 +208,113 @@
     return dias.sort(function (a, b) { return a.dia < b.dia ? -1 : 1; });
   }
 
+  // ── Regressão linear simples para linha de tendência ─────────────
+  function trendLine(values) {
+    var pts = [];
+    values.forEach(function (v, i) { if (v !== null) pts.push({ x: i, y: v }); });
+    if (pts.length < 2) return values.map(function () { return null; });
+    var n = pts.length;
+    var sx = 0, sy = 0, sxy = 0, sx2 = 0;
+    pts.forEach(function (p) { sx += p.x; sy += p.y; sxy += p.x * p.y; sx2 += p.x * p.x; });
+    var m = (n * sxy - sx * sy) / (n * sx2 - sx * sx);
+    var b = (sy - m * sx) / n;
+    return values.map(function (v, i) {
+      return v !== null ? parseFloat((m * i + b).toFixed(1)) : null;
+    });
+  }
+
   // ── Gráfico stacked: encerramentos por dia ─────────────────────────
   function chartEnc(canvas, diasData, onClickDia) {
+    // % dentro SLA por dia (linha pontilhada)
+    var pctsDia = diasData.map(function (d) {
+      return d.total > 0 ? parseFloat((d.dentro / d.total * 100).toFixed(1)) : null;
+    });
+    // cor do ponto por nível de performance
+    var ptCores = pctsDia.map(function (v) {
+      if (v === null) return 'transparent';
+      return v >= 80 ? '#2ecc71' : v >= 60 ? '#f39c12' : '#e74c3c';
+    });
+    var tendencia = trendLine(pctsDia);
+    // cor da linha de tendência (baseada na direção: primeiro vs último ponto válido)
+    var primPct = pctsDia.find(function (v) { return v !== null; });
+    var ultPct  = null;
+    for (var i = pctsDia.length - 1; i >= 0; i--) { if (pctsDia[i] !== null) { ultPct = pctsDia[i]; break; } }
+    var tendCor = (ultPct !== null && primPct !== null && ultPct >= primPct) ? '#2ecc71' : '#e74c3c';
+
     var c = new Chart(canvas, {
       type: 'bar',
       data: {
         labels: diasData.map(function (d) { return d.label + (d.tipo === 'HOJE' ? ' ★' : ''); }),
         datasets: [
           { label: 'Dentro SLA', data: diasData.map(function (d) { return d.dentro; }),
-            backgroundColor: '#2ecc71', borderRadius: 4, maxBarThickness: 46 },
+            backgroundColor: '#2ecc71', borderRadius: 4, maxBarThickness: 46,
+            yAxisID: 'y', order: 2 },
           { label: 'Fora SLA',   data: diasData.map(function (d) { return d.fora; }),
-            backgroundColor: '#e74c3c', borderRadius: 4, maxBarThickness: 46 }
+            backgroundColor: '#e74c3c', borderRadius: 4, maxBarThickness: 46,
+            yAxisID: 'y', order: 2 },
+          // Linha pontilhada: % dentro SLA diário
+          { label: '% Dentro SLA',
+            data: pctsDia,
+            type: 'line',
+            yAxisID: 'yPct',
+            borderColor: 'rgba(241,196,15,0.75)',
+            backgroundColor: 'transparent',
+            borderWidth: 1.5,
+            borderDash: [4, 4],
+            pointBackgroundColor: ptCores,
+            pointBorderColor: ptCores,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            tension: 0.35,
+            fill: false,
+            spanGaps: true,
+            order: 0 },
+          // Linha de tendência (regressão linear)
+          { label: 'Tendência',
+            data: tendencia,
+            type: 'line',
+            yAxisID: 'yPct',
+            borderColor: tendCor,
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [10, 5],
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            tension: 0,
+            fill: false,
+            spanGaps: true,
+            order: 1 }
         ]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
         scales: {
           x: { stacked: true, ticks: { color: tickClr(), font: { size: 10 } }, grid: { color: gridClr() } },
-          y: { stacked: true, ticks: { color: tickClr(), font: { size: 11 } }, grid: { color: gridClr() }, beginAtZero: true }
+          y: { stacked: true, position: 'left',
+               ticks: { color: tickClr(), font: { size: 11 } }, grid: { color: gridClr() }, beginAtZero: true },
+          yPct: { position: 'right',
+                  min: 0, max: 100,
+                  ticks: { color: '#f1c40f', font: { size: 10 }, stepSize: 25,
+                           callback: function (v) { return v + '%'; } },
+                  grid: { drawOnChartArea: false } }
         },
         plugins: {
-          legend: { display: true, labels: { color: tickClr(), font: { size: 11 }, boxWidth: 12, padding: 10 } },
+          legend: { display: true, labels: { color: tickClr(), font: { size: 11 }, boxWidth: 12, padding: 10,
+            filter: function (item) { return item.text !== 'Tendência'; } // ocultar da legenda, mantém no chart
+          } },
           tooltip: Object.assign({}, TOOLTIP_STYLE, {
             callbacks: {
+              label: function (ctx) {
+                if (ctx.dataset.label === '% Dentro SLA') return ' % Dentro SLA: ' + ctx.parsed.y + '%';
+                if (ctx.dataset.label === 'Tendência') return null;
+                return ' ' + ctx.dataset.label + ': ' + ctx.parsed.y;
+              },
               afterBody: function (ctx) {
                 var d = diasData[ctx[0].dataIndex];
-                var lines = ['───────────────', '🏢 CCI: ' + d.cci + '    🔧 Campo: ' + d.campo];
+                var pct = pctsDia[ctx[0].dataIndex];
+                var lines = ['───────────────',
+                  '🏢 CCI: ' + d.cci + '    🔧 Campo: ' + d.campo];
+                if (pct !== null) lines.push('SLA do dia: ' + pct + '%');
                 if (d.tipo === 'HOJE') lines.push('📋 Backlog: ' + (d.backlog || 0));
                 return lines;
               }
