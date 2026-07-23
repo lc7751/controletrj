@@ -125,6 +125,9 @@
   }
 
   // ── Processar tasksEnriched → objeto de hist por dia ──────────────
+  // IMPORTANTE: não armazenar arrays de tasks/reinciItems no localStorage —
+  // com muitos arquivos isso ultrapassa a cota (~5MB) e o save falha silenciosamente.
+  // Somente métricas numéricas são persistidas; drilldown histórico fica indisponível.
   function metricsToHistRows(byDay, reinciByDay) {
     var rows = {};
     Object.keys(byDay).forEach(function (d) {
@@ -134,8 +137,6 @@
         dentro: b.dentro, fora: b.fora,
         cci: b.cci, campo: b.campo,
         reinci: (reinciByDay[d] || []).length,
-        tasks: b.tasks,
-        reinciItems: reinciByDay[d] || [],
         tipo: 'HISTORICO',
         em: new Date().toISOString()
       };
@@ -148,6 +149,7 @@
     var hoje = toIsoDay(new Date());
     var backlogTotal = 0, backlogVencendo = 0;
     var encHoje = 0, dentroHoje = 0, foraHoje = 0, cciHoje = 0, campoHoje = 0;
+    var tasksHoje = [];
     var now = Date.now();
 
     (tasks || []).forEach(function (t) {
@@ -160,6 +162,7 @@
       }
       if (isConcluida(t) && toIsoDay(t.fimCalc) === hoje) {
         encHoje++;
+        tasksHoje.push(t);
         if (dentroSla(t)) dentroHoje++; else foraHoje++;
         if (D.classificarCciCampo(t.filaAtual) === 'CCI') cciHoje++; else campoHoje++;
       }
@@ -170,6 +173,7 @@
       total: encHoje, dentro: dentroHoje, fora: foraHoje,
       cci: cciHoje, campo: campoHoje, reinci: 0,
       backlog: backlogTotal, backlogVencendo: backlogVencendo,
+      tasks: tasksHoje, reinciItems: [],
       tipo: 'HOJE'
     };
   }
@@ -558,16 +562,17 @@
         onclick: function () { clearHist(); render(); }
       }) : null;
 
-      areaEl.appendChild(h('div', {
-        class: 'trj-card p-3 mb-5 flex items-center gap-3 flex-wrap',
-        style: { borderColor: 'rgba(255,140,0,0.2)' }
-      }, [
+      var filterBarItems = [
         h('span', { style: { color: 'var(--trj-muted)', fontSize: '12px', fontWeight: '600' }, text: 'PERÍODO:' }),
         h('div', { class: 'flex gap-2' }, btnsPeriodo),
         h('span', { style: { color: 'rgba(255,255,255,.12)', margin: '0 4px' }, text: '|' }),
         btnProcessar,
         btnLimpar
-      ]));
+      ].filter(Boolean);
+      areaEl.appendChild(h('div', {
+        class: 'trj-card p-3 mb-5 flex items-center gap-3 flex-wrap',
+        style: { borderColor: 'rgba(255,140,0,0.2)' }
+      }, filterBarItems));
 
       var diasData = montarDiasData(hist, hoje, _state.periodo, _state.regiao);
 
@@ -776,13 +781,16 @@
       try {
         var n = await processarHistoricoFolder(ctx, progressEl);
         progressEl.textContent = '';
-        okEl.textContent = '✅ ' + n + ' dia(s) processado(s) e salvos com sucesso!';
-        btnStart.textContent = '✅ Concluído';
-        setTimeout(function () {
-          // Fechar modal e re-renderizar
-          document.querySelector('.trj-modal-overlay') && document.querySelector('.trj-modal-overlay').click();
-          if (onDone) onDone();
-        }, 1200);
+        okEl.textContent = '✅ ' + n + ' dia(s) processado(s) e salvos! Gráficos carregados.';
+        // Renderizar gráficos imediatamente (por trás do modal)
+        if (onDone) onDone();
+        // Trocar botão para fechar modal
+        btnStart.disabled = false;
+        btnStart.textContent = 'Fechar e ver gráficos';
+        btnStart.onclick = function () {
+          var ov = document.querySelector('.trj-modal-overlay');
+          if (ov) ov.click();
+        };
       } catch (e) {
         progressEl.textContent = '';
         errEl.textContent = '❌ ' + (e.message || 'Erro desconhecido.');
