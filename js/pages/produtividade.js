@@ -360,6 +360,20 @@
     });
   }
 
+  // Filtra apenas entradas válidas do time: TLP-Txxxxxxx-NOME - YYYY-MM-DD HH:mm
+  var RE_TLP = /TLP-T\d+-([^-\r\n]{3,60}?)\s*-\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
+
+  function parseTlpEntries(texto) {
+    if (!texto) return [];
+    RE_TLP.lastIndex = 0;
+    var entries = [], m;
+    while ((m = RE_TLP.exec(texto)) !== null) {
+      var dt = parseTimestampP(m[2].trim());
+      if (!isNaN(dt.getTime())) entries.push({ dt: dt, author: m[1].trim() });
+    }
+    return entries.sort(function (a, b) { return a.dt - b.dt; });
+  }
+
   function fmtGapP(hours) {
     if (hours < 1)  return Math.round(hours * 60) + 'min';
     if (hours < 24) return hours.toFixed(1) + 'h';
@@ -367,12 +381,14 @@
   }
 
   function computarDiarioP(tasks) {
-    var stats = [], semDiario = 0, allGaps = [], totalEntradas = 0;
+    var stats = [], semDiario = 0, allGaps = [], totalEntradas = 0, authorCount = {};
     (tasks || []).forEach(function (t) {
-      var entries = parseDiarioP(t.motivoCancelamento || '');
+      var entries = parseTlpEntries(t.motivoCancelamento || '');
       if (!entries.length) { semDiario++; return; }
-      entries.sort(function (a, b) { return a.dt - b.dt; });
       totalEntradas += entries.length;
+      entries.forEach(function (e) {
+        authorCount[e.author] = (authorCount[e.author] || 0) + 1;
+      });
       var gaps = [];
       for (var i = 1; i < entries.length; i++) {
         var gapH = (entries[i].dt - entries[i - 1].dt) / 3600000;
@@ -384,7 +400,10 @@
       stats.push({ task: t, nEntries: entries.length, avgGapH: avgGapH, lastDt: lastDt, horasSemUpd: horasSemUpd });
     });
     var avgGapGlobal = allGaps.length ? allGaps.reduce(function (a, b) { return a + b; }, 0) / allGaps.length : 0;
-    return { stats: stats, semDiario: semDiario, totalEntradas: totalEntradas, allGaps: allGaps, avgGapH: avgGapGlobal };
+    var topAuthors = Object.keys(authorCount)
+      .map(function (a) { return { author: a, count: authorCount[a] }; })
+      .sort(function (a, b) { return b.count - a.count; });
+    return { stats: stats, semDiario: semDiario, totalEntradas: totalEntradas, allGaps: allGaps, avgGapH: avgGapGlobal, topAuthors: topAuthors };
   }
 
   function chartHistoDiario(canvas, allGaps) {
