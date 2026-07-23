@@ -327,35 +327,132 @@
     _charts.push(c); return c;
   }
 
-  // ── Gráfico stacked: CCI vs Campo ─────────────────────────────────
-  function chartCciCampo(canvas, diasData) {
+  // ── Parser do Diário de Trabalho (coluna BG — motivoCancelamento) ──
+  var RE_TS_P = /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?|\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
+
+  function parseTimestampP(ts) {
+    ts = (ts || '').trim();
+    var m1 = ts.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (m1) return new Date(+m1[3], +m1[2] - 1, +m1[1], +m1[4], +m1[5], +(m1[6] || 0));
+    var m2 = ts.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (m2) return new Date(+m2[1], +m2[2] - 1, +m2[3], +m2[4], +m2[5], +(m2[6] || 0));
+    return new Date(NaN);
+  }
+
+  function parseDiarioP(texto) {
+    if (!texto) return [];
+    RE_TS_P.lastIndex = 0;
+    var positions = [], m;
+    while ((m = RE_TS_P.exec(texto)) !== null) {
+      var dt = parseTimestampP(m[1]);
+      if (!isNaN(dt.getTime())) positions.push({ dt: dt, pos: m.index, len: m[1].length });
+    }
+    if (!positions.length) return [];
+    return positions.map(function (entry, i) {
+      var bodyStart = entry.pos + entry.len;
+      var bodyEnd = i + 1 < positions.length ? positions[i + 1].pos : texto.length;
+      var body = texto.slice(bodyStart, bodyEnd).replace(/^\s*-\s*/, '').trim();
+      var authorRaw = body.match(/^([^(\n\r]{1,70}?)(?:\s*[\(\n\r]|$)/);
+      var author = authorRaw ? authorRaw[1].replace(/\s*-\s*Tel\.?:.*$/, '').trim() : '';
+      author = author.replace(/\s*\(.*$/, '').trim();
+      if (author.length > 50) author = author.substring(0, 50);
+      return { dt: entry.dt, author: author || 'Sistema', content: body };
+    });
+  }
+
+  function fmtGapP(hours) {
+    if (hours < 1)  return Math.round(hours * 60) + 'min';
+    if (hours < 24) return hours.toFixed(1) + 'h';
+    return (hours / 24).toFixed(1) + 'd';
+  }
+
+  function computarDiarioP(tasks) {
+    var stats = [], semDiario = 0, allGaps = [], totalEntradas = 0;
+    (tasks || []).forEach(function (t) {
+      var entries = parseDiarioP(t.motivoCancelamento || '');
+      if (!entries.length) { semDiario++; return; }
+      entries.sort(function (a, b) { return a.dt - b.dt; });
+      totalEntradas += entries.length;
+      var gaps = [];
+      for (var i = 1; i < entries.length; i++) {
+        var gapH = (entries[i].dt - entries[i - 1].dt) / 3600000;
+        if (gapH >= 0 && gapH < 720) { gaps.push(gapH); allGaps.push(gapH); }
+      }
+      var avgGapH = gaps.length ? gaps.reduce(function (a, b) { return a + b; }, 0) / gaps.length : null;
+      var lastDt = entries[entries.length - 1].dt;
+      var horasSemUpd = Math.max(0, (Date.now() - lastDt.getTime()) / 3600000);
+      stats.push({ task: t, nEntries: entries.length, avgGapH: avgGapH, lastDt: lastDt, horasSemUpd: horasSemUpd });
+    });
+    var avgGapGlobal = allGaps.length ? allGaps.reduce(function (a, b) { return a + b; }, 0) / allGaps.length : 0;
+    return { stats: stats, semDiario: semDiario, totalEntradas: totalEntradas, allGaps: allGaps, avgGapH: avgGapGlobal };
+  }
+
+  function chartHistoDiario(canvas, allGaps) {
+    var buckets = [
+      { label: '< 30min',  min: 0,   max: 0.5,      cor: '#2ecc71' },
+      { label: '30min–1h', min: 0.5, max: 1,         cor: '#27ae60' },
+      { label: '1–2h',     min: 1,   max: 2,         cor: '#3498db' },
+      { label: '2–4h',     min: 2,   max: 4,         cor: '#f39c12' },
+      { label: '4–8h',     min: 4,   max: 8,         cor: '#e67e22' },
+      { label: '8–24h',    min: 8,   max: 24,        cor: '#e74c3c' },
+      { label: '> 24h',    min: 24,  max: Infinity,  cor: '#c0392b' }
+    ];
+    buckets.forEach(function (b) { b.count = 0; });
+    allGaps.forEach(function (g) {
+      for (var i = 0; i < buckets.length; i++) {
+        if (g >= buckets[i].min && g < buckets[i].max) { buckets[i].count++; break; }
+      }
+    });
     var c = new Chart(canvas, {
       type: 'bar',
       data: {
-        labels: diasData.map(function (d) { return d.label; }),
-        datasets: [
-          { label: 'CCI',   data: diasData.map(function (d) { return d.cci; }),
-            backgroundColor: '#3498db', borderRadius: 4, maxBarThickness: 46 },
-          { label: 'Campo', data: diasData.map(function (d) { return d.campo; }),
-            backgroundColor: '#ff8c00', borderRadius: 4, maxBarThickness: 46 }
-        ]
+        labels: buckets.map(function (b) { return b.label; }),
+        datasets: [{ label: 'Intervalos', data: buckets.map(function (b) { return b.count; }),
+          backgroundColor: buckets.map(function (b) { return b.cor; }), borderRadius: 4, maxBarThickness: 54 }]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
         scales: {
-          x: { stacked: true, ticks: { color: tickClr(), font: { size: 10 } }, grid: { color: gridClr() } },
-          y: { stacked: true, ticks: { color: tickClr(), font: { size: 11 } }, grid: { color: gridClr() }, beginAtZero: true }
+          x: { ticks: { color: tickClr(), font: { size: 10 } }, grid: { color: gridClr() } },
+          y: { ticks: { color: tickClr(), font: { size: 11 } }, grid: { color: gridClr() }, beginAtZero: true }
         },
+        plugins: { legend: { display: false }, tooltip: TOOLTIP_STYLE }
+      }
+    });
+    _charts.push(c); return c;
+  }
+
+  function chartMediaOsDiario(canvas, stats) {
+    var b = [
+      { label: '< 1h',      count: 0, cor: '#2ecc71' },
+      { label: '1–2h',      count: 0, cor: '#3498db' },
+      { label: '2–4h',      count: 0, cor: '#f39c12' },
+      { label: '4–8h',      count: 0, cor: '#e67e22' },
+      { label: '8–24h',     count: 0, cor: '#e74c3c' },
+      { label: '> 24h',     count: 0, cor: '#c0392b' },
+      { label: '1 entrada', count: 0, cor: '#7f8c8d' }
+    ];
+    stats.forEach(function (s) {
+      if (s.avgGapH === null) { b[6].count++; return; }
+      if (s.avgGapH < 1)       b[0].count++;
+      else if (s.avgGapH < 2)  b[1].count++;
+      else if (s.avgGapH < 4)  b[2].count++;
+      else if (s.avgGapH < 8)  b[3].count++;
+      else if (s.avgGapH < 24) b[4].count++;
+      else                      b[5].count++;
+    });
+    var c = new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels: b.map(function (x) { return x.label; }),
+        datasets: [{ data: b.map(function (x) { return x.count; }), backgroundColor: b.map(function (x) { return x.cor; }),
+          borderColor: 'transparent', borderWidth: 0, hoverOffset: 6 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '62%',
         plugins: {
-          legend: { display: true, labels: { color: tickClr(), font: { size: 11 }, boxWidth: 12, padding: 10 } },
-          tooltip: Object.assign({}, TOOLTIP_STYLE, {
-            callbacks: {
-              afterBody: function (ctx) {
-                var d = diasData[ctx[0].dataIndex];
-                return ['───────────────', 'Dentro: ' + d.dentro + '   Fora: ' + d.fora, 'Total: ' + d.total];
-              }
-            }
-          })
+          legend: { position: 'bottom', labels: { color: tickClr(), font: { size: 10 }, boxWidth: 10, padding: 8 } },
+          tooltip: TOOLTIP_STYLE
         }
       }
     });
@@ -691,13 +788,25 @@
       rowEnc.appendChild(ccDon.card);
       areaEl.appendChild(rowEnc);
 
-      var rowCci = h('div', { class: 'grid gap-4 mb-5', style: { gridTemplateColumns: '1fr 260px' } });
-      var ccCci  = U.chartCard('ENCERRAMENTOS POR DIA — CCI × Campo', { hint: 'canal de execução' });
-      ccCci.card.style.minHeight = '260px';
-      var ccDonCci = U.chartCard('CANAL', { small: true });
-      rowCci.appendChild(ccCci.card);
-      rowCci.appendChild(ccDonCci.card);
-      areaEl.appendChild(rowCci);
+      // Seção diário de trabalho (substitui CCI × Campo)
+      var diarioData = computarDiarioP(tasks);
+      areaEl.appendChild(secTitle('DIÁRIO DE TRABALHO', '#9b59b6'));
+      var semUpdRisco = diarioData.stats.filter(function (s) { return s.horasSemUpd > 24; }).length;
+      areaEl.appendChild(h('div', { class: 'grid gap-3 mb-4', style: { gridTemplateColumns: 'repeat(4,1fr)' } }, [
+        U.kpiCard({ label: 'OS com Diário', value: diarioData.stats.length, cor: '#9b59b6', sub: diarioData.semDiario + ' sem registros' }),
+        U.kpiCard({ label: 'Total de Entradas', value: diarioData.totalEntradas, cor: '#3498db', sub: 'atualizações registradas' }),
+        U.kpiCard({ label: 'Intervalo Médio', value: diarioData.avgGapH > 0 ? fmtGapP(diarioData.avgGapH) : '—',
+          cor: diarioData.avgGapH > 8 ? '#e74c3c' : diarioData.avgGapH > 4 ? '#ff8c00' : '#2ecc71',
+          sub: 'entre atualizações' }),
+        U.kpiCard({ label: 'Sem Upd. > 24h', value: semUpdRisco, cor: semUpdRisco > 0 ? '#e74c3c' : '#2ecc71', sub: 'OS em risco' })
+      ]));
+      var rowDiario = h('div', { class: 'grid gap-4 mb-5', style: { gridTemplateColumns: '1fr 260px' } });
+      var ccHistoDiario = U.chartCard('INTERVALOS DE ATUALIZAÇÃO — Diário de Trabalho', { hint: diarioData.allGaps.length + ' intervalos registrados' });
+      ccHistoDiario.card.style.minHeight = '260px';
+      var ccDonDiario = U.chartCard('INTERVALO MÉDIO POR OS', { small: true });
+      rowDiario.appendChild(ccHistoDiario.card);
+      rowDiario.appendChild(ccDonDiario.card);
+      areaEl.appendChild(rowDiario);
 
       // Seção hoje (destaque)
       areaEl.appendChild(secTitle('HOJE (PARCIAL — ' + hoje.label + ')', '#3498db'));
@@ -782,11 +891,8 @@
           { label: 'Dentro SLA', value: totDentro, cor: '#2ecc71' },
           { label: 'Fora SLA',   value: totFora,   cor: '#e74c3c' }
         ]);
-        chartCciCampo(ccCci.canvas, diasData);
-        U.donutChart(ccDonCci.canvas, [
-          { label: 'CCI',   value: totCci,   cor: '#3498db' },
-          { label: 'Campo', value: totCampo, cor: '#ff8c00' }
-        ]);
+        if (diarioData.allGaps.length) chartHistoDiario(ccHistoDiario.canvas, diarioData.allGaps);
+        if (diarioData.stats.length) chartMediaOsDiario(ccDonDiario.canvas, diarioData.stats);
         chartReinci(ccRei.canvas, diasData, drillReinci);
         if (prioDonutData.length) U.donutChart(ccPrio.canvas, prioDonutData);
       }, 0);
