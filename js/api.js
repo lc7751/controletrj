@@ -119,6 +119,28 @@
     return call('saveDashboardSnapshot', { snapshot: snapshot || {} });
   };
 
+  // Histórico de produtividade (dias já processados).
+  // Offline: usa localStorage como fallback. Online: sincroniza com GAS.
+  var LS_PROD = 'trj_prod_hist_v1';
+  A.getProdutividadeHist = function () {
+    if (offline()) {
+      try { return Promise.resolve({ ok: true, rows: JSON.parse(localStorage.getItem(LS_PROD) || '{}') }); }
+      catch (e) { return Promise.resolve({ ok: true, rows: {} }); }
+    }
+    return call('getProdutividadeHist');
+  };
+  A.saveProdutividadeHist = function (rows) {
+    if (offline()) {
+      try {
+        var existing = JSON.parse(localStorage.getItem(LS_PROD) || '{}') || {};
+        (rows || []).forEach(function (r) { if (r.data) existing[r.data] = r; });
+        localStorage.setItem(LS_PROD, JSON.stringify(existing));
+      } catch (e) {}
+      return Promise.resolve({ ok: true, offline: true });
+    }
+    return call('saveProdutividadeHist', { rows: rows || [] });
+  };
+
   A.call = call;
   A.getUrl = getUrl;
   A.isOffline = offline;

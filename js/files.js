@@ -425,7 +425,39 @@
   };
 
   // ------------------------------------------------------------------
-  // 7) Upload manual (qualquer navegador)
+  // 7) Varredura da subpasta "Produtividade" (para histórico de produtividade)
+  //    Retorna array de { name, file } para todos os .xlsx dentro dela.
+  // ------------------------------------------------------------------
+  var SUBPASTA_PRODUTIVIDADE = 'Produtividade';
+
+  F.scanProdutividadeFolder = async function () {
+    var handle = await idbGet(IDB_KEY);
+    if (!handle) throw new Error('Nenhuma pasta conectada. Conecte uma pasta na aba "Importar dados" primeiro.');
+    if (!(await ensurePermission(handle))) throw new Error('Permissão de leitura da pasta foi negada.');
+
+    var prodHandle;
+    try {
+      prodHandle = await handle.getDirectoryHandle(SUBPASTA_PRODUTIVIDADE);
+    } catch (e) {
+      throw new Error('Subpasta "' + SUBPASTA_PRODUTIVIDADE + '" não encontrada dentro da pasta conectada. ' +
+        'Crie-a e coloque os arquivos .xlsx históricos lá.');
+    }
+
+    var entries = [];
+    for await (var entry of prodHandle.values()) {
+      if (entry.kind === 'file' && isExcelName(entry.name)) entries.push(entry);
+    }
+    if (!entries.length) {
+      throw new Error('Nenhum arquivo .xlsx encontrado na subpasta "' + SUBPASTA_PRODUTIVIDADE + '".');
+    }
+
+    var files = await Promise.all(entries.map(function (e) { return e.getFile(); }));
+    return entries.map(function (e, i) { return { name: e.name, file: files[i] }; })
+      .sort(function (a, b) { return dateKey(a.name, a.file.lastModified) - dateKey(b.name, b.file.lastModified); });
+  };
+
+  // ------------------------------------------------------------------
+  // 8) Upload manual (qualquer navegador)
   // ------------------------------------------------------------------
   F.readManualFiles = async function (fileList, onProgress) {
     var files = Array.prototype.slice.call(fileList || []);
