@@ -8,6 +8,7 @@
   var U = TRJ.ui;
   var h = U.h;
   var _charts = [];
+  var _stateAtu = { periodo: 0, prioridade: 'TODAS' }; // 0 = todos os períodos
 
   // ── Tema ──────────────────────────────────────────────────────────
   var TOOLTIP_STYLE = {
@@ -153,8 +154,7 @@
 
     var topAuthors = Object.keys(authorCount)
       .map(function (a) { return { author: a, count: authorCount[a] }; })
-      .sort(function (a, b) { return b.count - a.count; })
-      .slice(0, 12);
+      .sort(function (a, b) { return b.count - a.count; }); // lista completa, sem slice
 
     // Ordenar por horasSemUpd desc (mais em risco primeiro)
     stats.sort(function (a, b) { return b.horasSemUpd - a.horasSemUpd; });
@@ -211,17 +211,43 @@
     _charts.push(c); return c;
   }
 
+  // ── Modal: ranking completo de autores ───────────────────────────
+  function abrirRankingAutores(allAuthors, highlightAuthor) {
+    var total = allAuthors.reduce(function (s, a) { return s + a.count; }, 0);
+    var wrap = h('div', { style: { maxHeight: '65vh', overflowY: 'auto' } });
+    allAuthors.forEach(function (a, i) {
+      var isHl = a.author === highlightAuthor;
+      var pctVal = total > 0 ? Math.round(a.count / total * 100) : 0;
+      var item = h('div', {
+        style: { display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 12px',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+          background: isHl ? 'rgba(255,140,0,0.08)' : 'transparent' }
+      }, [
+        h('span', { style: { color: 'var(--trj-muted)', fontSize: '11px', width: '24px', textAlign: 'right' }, text: String(i + 1) }),
+        h('span', { style: { flex: 1, fontSize: '12px', fontWeight: isHl ? '700' : '400', color: isHl ? '#ff8c00' : 'var(--trj-fg)' }, text: a.author }),
+        h('div', { style: { width: '120px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' } }, [
+          h('div', { style: { width: pctVal + '%', minWidth: '2px', height: '6px', background: isHl ? '#ff8c00' : '#3498db', borderRadius: '3px' } })
+        ]),
+        h('span', { style: { fontSize: '12px', color: '#ff8c00', fontWeight: '600', width: '32px', textAlign: 'right' }, text: String(a.count) }),
+        h('span', { style: { fontSize: '11px', color: 'var(--trj-muted)', width: '36px', textAlign: 'right' }, text: pctVal + '%' })
+      ]);
+      wrap.appendChild(item);
+    });
+    U.openModal('Ranking Completo de Autores (' + allAuthors.length + ')', wrap);
+  }
+
   // ── Gráfico: top autores ──────────────────────────────────────────
-  function chartAutores(canvas, topAuthors) {
+  function chartAutores(canvas, allAuthors) {
+    var top12 = allAuthors.slice(0, 12);
     var c = new Chart(canvas, {
       type: 'bar',
       data: {
-        labels: topAuthors.map(function (a) {
+        labels: top12.map(function (a) {
           return a.author.length > 28 ? a.author.substring(0, 28) + '…' : a.author;
         }),
         datasets: [{
           label: 'Atualizações',
-          data: topAuthors.map(function (a) { return a.count; }),
+          data: top12.map(function (a) { return a.count; }),
           backgroundColor: '#ff8c00', borderRadius: 4, maxBarThickness: 28
         }]
       },
@@ -232,7 +258,12 @@
           x: { ticks: { color: tickClr(), font: { size: 11 } }, grid: { color: gridClr() }, beginAtZero: true },
           y: { ticks: { color: tickClr(), font: { size: 10 } }, grid: { color: gridClr() } }
         },
-        plugins: { legend: { display: false }, tooltip: TOOLTIP_STYLE }
+        plugins: { legend: { display: false }, tooltip: TOOLTIP_STYLE },
+        onClick: function (ev, els) {
+          if (!els || !els.length) { abrirRankingAutores(allAuthors, null); return; }
+          var clicked = top12[els[0].index];
+          abrirRankingAutores(allAuthors, clicked ? clicked.author : null);
+        }
       }
     });
     _charts.push(c); return c;
@@ -386,156 +417,227 @@
     }
 
     if (U.pageHeader) {
-      container.appendChild(U.pageHeader('Diário de Trabalho', 'Análise de atualizações e linha do tempo por OS (col. BG)'));
+      container.appendChild(U.pageHeader('Média de atualizações CSM', 'Análise de atualizações e linha do tempo por OS (col. BG)'));
     }
 
-    var tasks = data.tasksEnriched;
-    var result = computarDiario(tasks);
-    var s = result.stats;
-    var comDiario = s.length;
-    var totalOSs  = comDiario + result.semDiario;
-    var pctCom    = pct(comDiario, totalOSs);
-    var avgFmt    = result.avgGapH > 0 ? fmtGap(result.avgGapH) : '—';
-    var medFmt    = result.mediana  > 0 ? fmtGap(result.mediana)  : '—';
-    var avgEntradas = comDiario > 0 ? (result.totalEntradas / comDiario).toFixed(1) : '0';
+    var allTasks = data.tasksEnriched;
+    var areaEl = h('div', {});
+    container.appendChild(areaEl);
 
-    // OSs abertas sem atualização há mais de 4h
-    var abertas4h = s.filter(function (st) {
-      var status = (st.task.status || '').toUpperCase();
-      var aberta = status.indexOf('CONCLU') < 0 && status.indexOf('CANCEL') < 0;
-      return aberta && st.horasSemUpd > 4;
-    }).length;
+    function render() {
+      destroyLocalCharts();
+      areaEl.innerHTML = '';
 
-    // ── KPIs ────────────────────────────────────────────────────────
-    container.appendChild(h('div', { class: 'grid gap-3 mb-5', style: { gridTemplateColumns: 'repeat(4,1fr)' } }, [
-      U.kpiCard({ label: 'OSs com Diário', value: pctCom + '%',
-        cor: pctCom >= 80 ? '#2ecc71' : pctCom >= 50 ? '#f39c12' : '#e74c3c',
-        sub: comDiario + ' de ' + totalOSs + ' OSs' }),
-      U.kpiCard({ label: 'Intervalo Médio', value: avgFmt,
-        cor: '#ff8c00', sub: 'mediana: ' + medFmt }),
-      U.kpiCard({ label: 'Entradas/OS', value: avgEntradas,
-        cor: '#3498db', sub: result.totalEntradas + ' entradas no total' }),
-      U.kpiCard({ label: 'Abertas s/ Atualiz. +4h', value: abertas4h,
-        cor: abertas4h > 0 ? '#e74c3c' : '#2ecc71', sub: 'requerem atenção agora' })
-    ]));
-
-    // ── Gráficos ────────────────────────────────────────────────────
-    container.appendChild(secTitle('ANÁLISE DE INTERVALOS', '#ff8c00'));
-
-    var row1 = h('div', { class: 'grid gap-4 mb-4', style: { gridTemplateColumns: '1fr 1fr' } });
-    var ccHist = U.chartCard('DISTRIBUIÇÃO DOS INTERVALOS ENTRE ATUALIZAÇÕES', { hint: 'verde = rápido · vermelho = lento' });
-    ccHist.card.style.minHeight = '240px';
-    var ccDist = U.chartCard('INTERVALO MÉDIO POR OS', {});
-    ccDist.card.style.minHeight = '240px';
-    row1.appendChild(ccHist.card);
-    row1.appendChild(ccDist.card);
-    container.appendChild(row1);
-
-    container.appendChild(secTitle('ATIVIDADE POR AUTOR E HORÁRIO', '#3498db'));
-
-    var row2 = h('div', { class: 'grid gap-4 mb-5', style: { gridTemplateColumns: '1fr 1fr' } });
-    var ccAuth = U.chartCard('TOP AUTORES DE ATUALIZAÇÃO', { hint: 'quem mais alimenta o diário' });
-    ccAuth.card.style.minHeight = '280px';
-    var ccHora = U.chartCard('ATUALIZAÇÕES POR HORA DO DIA', { hint: 'laranja = horário comercial · vermelho = fora do horário' });
-    ccHora.card.style.minHeight = '280px';
-    row2.appendChild(ccAuth.card);
-    row2.appendChild(ccHora.card);
-    container.appendChild(row2);
-
-    setTimeout(function () {
-      if (result.allGaps.length) chartHistograma(ccHist.canvas, result.allGaps);
-      chartMediaPorOS(ccDist.canvas, s);
-      if (result.topAuthors.length) chartAutores(ccAuth.canvas, result.topAuthors);
-      chartHoras(ccHora.canvas, result.hourCount);
-    }, 0);
-
-    // ── Tabela: OSs por tempo sem atualização ────────────────────────
-    container.appendChild(secTitle('OSs ABERTAS — TEMPO SEM ATUALIZAÇÃO', '#e74c3c'));
-    container.appendChild(h('div', { style: { color: 'var(--trj-muted)', fontSize: '12px', marginBottom: '10px' },
-      text: 'Clique em qualquer linha ou "Ver timeline" para abrir a linha do tempo completa da OS.' }));
-
-    var riskRows = s.filter(function (st) {
-      var status = (st.task.status || '').toUpperCase();
-      return status.indexOf('CONCLU') < 0 && status.indexOf('CANCEL') < 0;
-    }).slice(0, 50);
-
-    if (!riskRows.length) {
-      container.appendChild(h('div', { class: 'trj-card p-5 text-center', style: { color: 'var(--trj-muted)', fontSize: '13px' },
-        text: 'Nenhuma OS aberta com diário preenchido encontrada.' }));
-    } else {
-      var tbl = h('div', { class: 'trj-card', style: { overflowX: 'auto' } });
-      var table = h('table', { style: { width: '100%', fontSize: '12px', borderCollapse: 'collapse' } });
-      var thead = h('thead', {});
-      thead.appendChild(h('tr', { style: { borderBottom: '1px solid rgba(255,140,0,0.2)', color: 'var(--trj-muted)', textAlign: 'left', fontSize: '11px' } }, [
-        h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'OS' }),
-        h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Site' }),
-        h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Status' }),
-        h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Prioridade' }),
-        h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Última atualiz.' }),
-        h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Sem atualiz. há' }),
-        h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Entradas' }),
-        h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Gap médio' }),
-        h('th', { style: { padding: '8px 12px' } })
-      ]));
-      table.appendChild(thead);
-
-      var tbody = h('tbody', {});
-      riskRows.forEach(function (st) {
-        var urgente  = st.horasSemUpd > 8;
-        var atenção  = st.horasSemUpd > 4;
-        var cor = urgente ? '#e74c3c' : atenção ? '#f39c12' : 'var(--trj-muted)';
-        var rowBg = urgente
-          ? 'rgba(231,76,60,0.05)'
-          : atenção ? 'rgba(243,156,18,0.04)' : 'transparent';
-
-        var tr = h('tr', {
-          style: { borderBottom: '1px solid rgba(255,255,255,0.04)', cursor: 'pointer', background: rowBg },
-          onclick: function () { abrirTimeline(st); }
-        }, [
-          h('td', { style: { padding: '8px 12px', color: '#ff8c00', fontWeight: '600' },
-            text: st.task.osNumero || '—' }),
-          h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)', fontSize: '11px' },
-            text: st.task.cidade || '—' }),
-          h('td', { style: { padding: '8px 12px' }, text: st.task.status || '—' }),
-          h('td', { style: { padding: '8px 12px' },
-            text: (st.task.statusSla === 'PREDITIVA' || st.task.fonteSla === 'PREDITIVA')
-              ? 'PREDITIVA' : (st.task.prioridade || '—') }),
-          h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)' },
-            text: fmtDDMM(st.lastDt) + ' às ' + fmtHM(st.lastDt) }),
-          h('td', { style: { padding: '8px 12px', color: cor, fontWeight: urgente ? '700' : '400' },
-            text: fmtGap(st.horasSemUpd) }),
-          h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)', textAlign: 'center' },
-            text: String(st.nEntries) }),
-          h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)' },
-            text: st.avgGapH != null ? fmtGap(st.avgGapH) : '—' }),
-          h('td', { style: { padding: '8px 12px' } }, [
-            h('button', {
-              class: 'trj-btn trj-btn-ghost',
-              style: { fontSize: '11px', padding: '2px 10px' },
-              text: 'Ver timeline',
-              onclick: function (e) { e.stopPropagation(); abrirTimeline(st); }
-            })
-          ])
-        ]);
-        tbody.appendChild(tr);
+      // ── Filtros ──────────────────────────────────────────────────
+      var periodos = [{ l: 'Todos', v: 0 }, { l: '7d', v: 7 }, { l: '15d', v: 15 }, { l: '30d', v: 30 }];
+      var btnsPeriodo = periodos.map(function (p) {
+        return h('button', {
+          class: 'trj-btn ' + (_stateAtu.periodo === p.v ? 'trj-btn-primary' : 'trj-btn-ghost'),
+          style: { fontSize: '11px', padding: '3px 10px' },
+          text: p.l,
+          onclick: function () { _stateAtu.periodo = p.v; render(); }
+        });
       });
-      table.appendChild(tbody);
-      tbl.appendChild(table);
-      container.appendChild(tbl);
+
+      var C2 = (window.TRJ && TRJ.constants) || {};
+      var prios = ['TODAS', 'P1', 'P2', 'P3', 'P4', 'P5', 'PREDITIVA'];
+      var btnsPrio = prios.map(function (p) {
+        return h('button', {
+          class: 'trj-btn ' + (_stateAtu.prioridade === p ? 'trj-btn-primary' : 'trj-btn-ghost'),
+          style: { fontSize: '11px', padding: '3px 10px' },
+          text: p === 'TODAS' ? 'Todas' : p,
+          onclick: function () { _stateAtu.prioridade = p; render(); }
+        });
+      });
+
+      areaEl.appendChild(h('div', {
+        class: 'trj-card p-3 mb-5',
+        style: { borderColor: 'rgba(255,140,0,0.2)' }
+      }, [
+        h('div', { class: 'flex items-center gap-3 flex-wrap mb-2' }, [
+          h('span', { style: { color: 'var(--trj-muted)', fontSize: '12px', fontWeight: '600' }, text: 'PERÍODO:' }),
+          h('div', { class: 'flex gap-2' }, btnsPeriodo)
+        ]),
+        h('div', { class: 'flex items-center gap-3 flex-wrap' }, [
+          h('span', { style: { color: 'var(--trj-muted)', fontSize: '12px', fontWeight: '600' }, text: 'PRIORIDADE:' }),
+          h('div', { class: 'flex gap-2 flex-wrap' }, btnsPrio)
+        ])
+      ]));
+
+      // Filtrar tasks por período e prioridade
+      var now = Date.now();
+      var limite = _stateAtu.periodo ? now - _stateAtu.periodo * 864e5 : 0;
+      var tasks = allTasks.filter(function (t) {
+        if (_stateAtu.prioridade !== 'TODAS') {
+          var isPred = t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA';
+          if (_stateAtu.prioridade === 'PREDITIVA' && !isPred) return false;
+          if (_stateAtu.prioridade !== 'PREDITIVA' && isPred) return false;
+          if (_stateAtu.prioridade !== 'PREDITIVA' && (t.prioridade || '').toUpperCase() !== _stateAtu.prioridade) return false;
+        }
+        if (limite) {
+          var ref = t.fimCalc ? new Date(t.fimCalc).getTime() : (t.dataCriacao ? new Date(t.dataCriacao).getTime() : 0);
+          if (ref && ref < limite) {
+            var st2 = (t.status || '').toUpperCase();
+            if (st2.indexOf('CONCLU') >= 0 || st2.indexOf('CANCEL') >= 0) return false;
+          }
+        }
+        return true;
+      });
+
+      var result = computarDiario(tasks);
+      var s = result.stats;
+      var comDiario = s.length;
+      var totalOSs  = comDiario + result.semDiario;
+      var pctCom    = pct(comDiario, totalOSs);
+      var avgFmt    = result.avgGapH > 0 ? fmtGap(result.avgGapH) : '—';
+      var medFmt    = result.mediana  > 0 ? fmtGap(result.mediana)  : '—';
+      var avgEntradas = comDiario > 0 ? (result.totalEntradas / comDiario).toFixed(1) : '0';
+      var abertas4h = s.filter(function (st) {
+        var status = (st.task.status || '').toUpperCase();
+        var aberta = status.indexOf('CONCLU') < 0 && status.indexOf('CANCEL') < 0;
+        return aberta && st.horasSemUpd > 4;
+      }).length;
+
+      // ── KPIs ──────────────────────────────────────────────────────
+      areaEl.appendChild(h('div', { class: 'grid gap-3 mb-5', style: { gridTemplateColumns: 'repeat(4,1fr)' } }, [
+        U.kpiCard({ label: 'OSs com Diário', value: pctCom + '%',
+          cor: pctCom >= 80 ? '#2ecc71' : pctCom >= 50 ? '#f39c12' : '#e74c3c',
+          sub: comDiario + ' de ' + totalOSs + ' OSs' }),
+        U.kpiCard({ label: 'Intervalo Médio', value: avgFmt,
+          cor: '#ff8c00', sub: 'mediana: ' + medFmt }),
+        U.kpiCard({ label: 'Entradas/OS', value: avgEntradas,
+          cor: '#3498db', sub: result.totalEntradas + ' entradas no total' }),
+        U.kpiCard({ label: 'Abertas s/ Atualiz. +4h', value: abertas4h,
+          cor: abertas4h > 0 ? '#e74c3c' : '#2ecc71', sub: 'requerem atenção agora' })
+      ]));
+
+      // ── Gráficos ──────────────────────────────────────────────────
+      areaEl.appendChild(secTitle('ANÁLISE DE INTERVALOS', '#ff8c00'));
+      var row1 = h('div', { class: 'grid gap-4 mb-4', style: { gridTemplateColumns: '1fr 1fr' } });
+      var ccHist = U.chartCard('DISTRIBUIÇÃO DOS INTERVALOS ENTRE ATUALIZAÇÕES', { hint: 'verde = rápido · vermelho = lento' });
+      ccHist.card.style.minHeight = '240px';
+      var ccDist = U.chartCard('INTERVALO MÉDIO POR OS', {});
+      ccDist.card.style.minHeight = '240px';
+      row1.appendChild(ccHist.card);
+      row1.appendChild(ccDist.card);
+      areaEl.appendChild(row1);
+
+      areaEl.appendChild(secTitle('ATIVIDADE POR AUTOR E HORÁRIO', '#3498db'));
+      var row2 = h('div', { class: 'grid gap-4 mb-5', style: { gridTemplateColumns: '1fr 1fr' } });
+      var ccAuth = U.chartCard('TOP AUTORES DE ATUALIZAÇÃO', { hint: 'clique num autor para ver o ranking completo' });
+      ccAuth.card.style.minHeight = '280px';
+      var ccHora = U.chartCard('ATUALIZAÇÕES POR HORA DO DIA', { hint: 'laranja = horário comercial · vermelho = fora do horário' });
+      ccHora.card.style.minHeight = '280px';
+      row2.appendChild(ccAuth.card);
+      row2.appendChild(ccHora.card);
+      areaEl.appendChild(row2);
+
+      // Botão ranking completo abaixo do gráfico de autores
+      if (result.topAuthors.length > 12) {
+        areaEl.appendChild(h('div', { class: 'flex justify-end mb-4', style: { marginTop: '-12px' } }, [
+          h('button', {
+            class: 'trj-btn trj-btn-ghost',
+            style: { fontSize: '11px', padding: '3px 12px' },
+            text: 'Ver ranking completo (' + result.topAuthors.length + ' autores)',
+            onclick: function () { abrirRankingAutores(result.topAuthors, null); }
+          })
+        ]));
+      }
+
+      setTimeout(function () {
+        if (result.allGaps.length) chartHistograma(ccHist.canvas, result.allGaps);
+        chartMediaPorOS(ccDist.canvas, s);
+        if (result.topAuthors.length) chartAutores(ccAuth.canvas, result.topAuthors);
+        chartHoras(ccHora.canvas, result.hourCount);
+      }, 0);
+
+      // ── Tabela: OSs por tempo sem atualização ─────────────────────
+      areaEl.appendChild(secTitle('OSs ABERTAS — TEMPO SEM ATUALIZAÇÃO', '#e74c3c'));
+      areaEl.appendChild(h('div', { style: { color: 'var(--trj-muted)', fontSize: '12px', marginBottom: '10px' },
+        text: 'Clique em qualquer linha ou "Ver timeline" para abrir a linha do tempo completa da OS.' }));
+
+      var riskRows = s.filter(function (st) {
+        var status = (st.task.status || '').toUpperCase();
+        return status.indexOf('CONCLU') < 0 && status.indexOf('CANCEL') < 0;
+      }).slice(0, 50);
+
+      if (!riskRows.length) {
+        areaEl.appendChild(h('div', { class: 'trj-card p-5 text-center', style: { color: 'var(--trj-muted)', fontSize: '13px' },
+          text: 'Nenhuma OS aberta com diário preenchido encontrada.' }));
+      } else {
+        var tbl = h('div', { class: 'trj-card', style: { overflowX: 'auto' } });
+        var table = h('table', { style: { width: '100%', fontSize: '12px', borderCollapse: 'collapse' } });
+        var thead = h('thead', {});
+        thead.appendChild(h('tr', { style: { borderBottom: '1px solid rgba(255,140,0,0.2)', color: 'var(--trj-muted)', textAlign: 'left', fontSize: '11px' } }, [
+          h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'OS' }),
+          h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'NE ID' }),
+          h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Status' }),
+          h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Prioridade' }),
+          h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Última atualiz.' }),
+          h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Sem atualiz. há' }),
+          h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Entradas' }),
+          h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Gap médio' }),
+          h('th', { style: { padding: '8px 12px' } })
+        ]));
+        table.appendChild(thead);
+
+        var tbody = h('tbody', {});
+        riskRows.forEach(function (st) {
+          var urgente = st.horasSemUpd > 8;
+          var atencao = st.horasSemUpd > 4;
+          var cor = urgente ? '#e74c3c' : atencao ? '#f39c12' : 'var(--trj-muted)';
+          var rowBg = urgente ? 'rgba(231,76,60,0.05)' : atencao ? 'rgba(243,156,18,0.04)' : 'transparent';
+          var isPredRow = st.task.statusSla === 'PREDITIVA' || st.task.fonteSla === 'PREDITIVA';
+
+          var tr = h('tr', {
+            style: { borderBottom: '1px solid rgba(255,255,255,0.04)', cursor: 'pointer', background: rowBg },
+            onclick: function () { abrirTimeline(st); }
+          }, [
+            h('td', { style: { padding: '8px 12px', color: '#ff8c00', fontWeight: '600' },
+              text: st.task.osNumero || '—' }),
+            h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)', fontSize: '11px' },
+              text: String(st.task.enderecoId || '—') }),
+            h('td', { style: { padding: '8px 12px' }, text: st.task.status || '—' }),
+            h('td', { style: { padding: '8px 12px' },
+              text: isPredRow ? 'PREDITIVA' : (st.task.prioridade || '—') }),
+            h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)' },
+              text: fmtDDMM(st.lastDt) + ' às ' + fmtHM(st.lastDt) }),
+            h('td', { style: { padding: '8px 12px', color: cor, fontWeight: urgente ? '700' : '400' },
+              text: fmtGap(st.horasSemUpd) }),
+            h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)', textAlign: 'center' },
+              text: String(st.nEntries) }),
+            h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)' },
+              text: st.avgGapH != null ? fmtGap(st.avgGapH) : '—' }),
+            h('td', { style: { padding: '8px 12px' } }, [
+              h('button', {
+                class: 'trj-btn trj-btn-ghost',
+                style: { fontSize: '11px', padding: '2px 10px' },
+                text: 'Ver timeline',
+                onclick: function (e) { e.stopPropagation(); abrirTimeline(st); }
+              })
+            ])
+          ]);
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        tbl.appendChild(table);
+        areaEl.appendChild(tbl);
+      }
+
+      if (s.length > riskRows.length) {
+        areaEl.appendChild(h('div', { class: 'trj-card p-4 mt-4', style: { fontSize: '12px', color: 'var(--trj-muted)', textAlign: 'center' } }, [
+          h('span', { text: 'Exibindo OSs abertas. ' }),
+          h('button', {
+            class: 'trj-btn trj-btn-ghost',
+            style: { fontSize: '11px', padding: '2px 10px', display: 'inline-flex' },
+            text: 'Ver todas (' + s.length + ') incluindo concluídas',
+            onclick: function () { mostrarTodasModal(s); }
+          })
+        ]));
+      }
     }
 
-    // ── Todas com diário (busca) ─────────────────────────────────────
-    if (s.length > riskRows.length) {
-      container.appendChild(h('div', { class: 'trj-card p-4 mt-4', style: { fontSize: '12px', color: 'var(--trj-muted)', textAlign: 'center' } }, [
-        h('span', { text: 'Exibindo OSs abertas. ' }),
-        h('button', {
-          class: 'trj-btn trj-btn-ghost',
-          style: { fontSize: '11px', padding: '2px 10px', display: 'inline-flex' },
-          text: 'Ver todas (' + s.length + ') incluindo concluídas',
-          onclick: function () { mostrarTodasModal(s); }
-        })
-      ]));
-    }
+    render();
   };
 
   // ── Modal: lista completa de OSs com diário ───────────────────────

@@ -87,12 +87,32 @@
     });
 
     var byDay = {};
+    var byDayFiltro = {}; // { 'YYYY-MM-DD': { 'REGIAO|PRIO': { total, dentro, fora, cci, campo } } }
+
     concluidas.forEach(function (t) {
       var d = toIsoDay(t.fimCalc);
       if (!byDay[d]) byDay[d] = { tasks: [], dentro: 0, fora: 0, cci: 0, campo: 0 };
       byDay[d].tasks.push(t);
-      if (dentroSla(t)) byDay[d].dentro++; else byDay[d].fora++;
-      if (D.classificarCciCampo(t.filaAtual) === 'CCI') byDay[d].cci++; else byDay[d].campo++;
+
+      var cat = D.classificarCciCampo(t.filaAtual) === 'CCI' ? 'CCI' : 'Campo';
+      var sl = dentroSla(t);
+      if (sl) byDay[d].dentro++; else byDay[d].fora++;
+      if (cat === 'CCI') byDay[d].cci++; else byDay[d].campo++;
+
+      // Breakdown por região + prioridade para filtros históricos
+      var reg  = t.regiao || 'OTHERS';
+      var isPred = t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA';
+      var prio = isPred ? 'PREDITIVA' : ((t.prioridade || '').toUpperCase() || 'S/PRIO');
+
+      if (!byDayFiltro[d]) byDayFiltro[d] = {};
+      var combos = [reg + '|' + prio, reg + '|TODAS', 'TODAS|' + prio];
+      combos.forEach(function (key) {
+        if (!byDayFiltro[d][key]) byDayFiltro[d][key] = { total: 0, dentro: 0, fora: 0, cci: 0, campo: 0 };
+        var o = byDayFiltro[d][key];
+        o.total++;
+        if (sl) o.dentro++; else o.fora++;
+        if (cat === 'CCI') o.cci++; else o.campo++;
+      });
     });
 
     // Reincidentes: mesmo END_ID encerrado em dois dias com gap ≤7 dias
@@ -121,14 +141,14 @@
       }
     });
 
-    return { byDay: byDay, reinciByDay: reinciByDay };
+    return { byDay: byDay, byDayFiltro: byDayFiltro, reinciByDay: reinciByDay };
   }
 
   // ── Processar tasksEnriched → objeto de hist por dia ──────────────
   // IMPORTANTE: não armazenar arrays de tasks/reinciItems no localStorage —
   // com muitos arquivos isso ultrapassa a cota (~5MB) e o save falha silenciosamente.
   // Somente métricas numéricas são persistidas; drilldown histórico fica indisponível.
-  function metricsToHistRows(byDay, reinciByDay) {
+  function metricsToHistRows(byDay, reinciByDay, byDayFiltro) {
     var rows = {};
     Object.keys(byDay).forEach(function (d) {
       var b = byDay[d];
@@ -138,7 +158,8 @@
         cci: b.cci, campo: b.campo,
         reinci: (reinciByDay[d] || []).length,
         tipo: 'HISTORICO',
-        em: new Date().toISOString()
+        em: new Date().toISOString(),
+        f: (byDayFiltro && byDayFiltro[d]) || {}
       };
     });
     return rows;
@@ -179,20 +200,32 @@
   }
 
   // ── Montar diasData para gráficos (hist + hoje) ────────────────────
-  function montarDiasData(hist, hoje, periodo, regiao) {
+  function montarDiasData(hist, hoje, periodo, regiao, prioridade) {
     var limite = periodo ? Date.now() - periodo * 864e5 : 0;
+    var useReg  = regiao     && regiao     !== 'TODAS';
+    var usePrio = prioridade && prioridade !== 'TODAS';
 
     var dias = [];
-    // Dias históricos
     Object.keys(hist).sort().forEach(function (d) {
       if (periodo && new Date(d).getTime() < limite) return;
       var row = hist[d];
-      if (regiao && regiao !== 'TODAS' && row.regiao && row.regiao !== regiao) return; // filtro região se disponível
+
+      var dayData;
+      if (useReg || usePrio) {
+        var r   = useReg  ? regiao     : 'TODAS';
+        var p   = usePrio ? prioridade : 'TODAS';
+        var key = r + '|' + p;
+        dayData = (row.f && row.f[key]) || null;
+        if (!dayData) return; // sem dados para esse filtro nesse dia
+      } else {
+        dayData = row;
+      }
+
       dias.push({
         dia: d, label: fmtDia(d),
-        total: row.total || 0, dentro: row.dentro || 0, fora: row.fora || 0,
-        cci: row.cci || 0, campo: row.campo || 0, reinci: row.reinci || 0,
-        tasks: row.tasks || [], reinciItems: row.reinciItems || [],
+        total: dayData.total || 0, dentro: dayData.dentro || 0, fora: dayData.fora || 0,
+        cci: dayData.cci || 0, campo: dayData.campo || 0, reinci: row.reinci || 0,
+        tasks: [], reinciItems: [],
         tipo: row.tipo || 'HISTORICO'
       });
     });
@@ -676,7 +709,7 @@
     log('Calculando métricas por dia...');
 
     var result = computarMetricas(enriched);
-    var hist = metricsToHistRows(result.byDay, result.reinciByDay);
+    var hist = metricsToHistRows(result.byDay, result.reinciByDay, result.byDayFiltro);
 
     // Guardar no localStorage, mesclando com o que já existe
     var existing = loadHist();
@@ -810,7 +843,7 @@
         h('div', { class: 'flex items-center gap-3 flex-wrap' }, row2Items)
       ]));
 
-      var diasData = montarDiasData(hist, hoje, _state.periodo, _state.regiao);
+      var diasData = montarDiasData(hist, hoje, _state.periodo, _state.regiao, _state.prioridade);
 
       // ── Se não há histórico: painel de boas-vindas ────────────────
       if (!hasHist) {
