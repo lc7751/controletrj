@@ -68,6 +68,20 @@
     });
   }
 
+  // Filtra apenas entradas válidas do time: TLP-Txxxxxxx-NOME - YYYY-MM-DD HH:mm
+  var RE_TLP_A = /TLP-T\d+-([^-\r\n]{3,60}?)\s*-\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
+
+  function parseTlpEntriesA(texto) {
+    if (!texto) return [];
+    RE_TLP_A.lastIndex = 0;
+    var entries = [], m;
+    while ((m = RE_TLP_A.exec(texto)) !== null) {
+      var dt = parseTimestamp(m[2].trim());
+      if (!isNaN(dt.getTime())) entries.push({ dt: dt, author: m[1].trim(), content: '' });
+    }
+    return entries.sort(function (a, b) { return a.dt - b.dt; });
+  }
+
   // ── Formatação ────────────────────────────────────────────────────
   function fmtHM(dt) {
     return ('0' + dt.getHours()).slice(-2) + ':' + ('0' + dt.getMinutes()).slice(-2);
@@ -92,10 +106,9 @@
     var hourCount    = new Array(24).fill(0);
 
     (tasks || []).forEach(function (t) {
-      var entries = parseDiario(t.motivoCancelamento || '');
+      var entries = parseTlpEntriesA(t.motivoCancelamento || '');
       if (!entries.length) { semDiario++; return; }
 
-      entries.sort(function (a, b) { return a.dt - b.dt; });
       totalEntradas += entries.length;
 
       entries.forEach(function (e) {
@@ -455,6 +468,7 @@
       var thead = h('thead', {});
       thead.appendChild(h('tr', { style: { borderBottom: '1px solid rgba(255,140,0,0.2)', color: 'var(--trj-muted)', textAlign: 'left', fontSize: '11px' } }, [
         h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'OS' }),
+        h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Site' }),
         h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Status' }),
         h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Prioridade' }),
         h('th', { style: { padding: '8px 12px', fontWeight: '600' }, text: 'Última atualiz.' }),
@@ -480,8 +494,12 @@
         }, [
           h('td', { style: { padding: '8px 12px', color: '#ff8c00', fontWeight: '600' },
             text: st.task.osNumero || '—' }),
+          h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)', fontSize: '11px' },
+            text: st.task.cidade || '—' }),
           h('td', { style: { padding: '8px 12px' }, text: st.task.status || '—' }),
-          h('td', { style: { padding: '8px 12px' }, text: st.task.prioridade || '—' }),
+          h('td', { style: { padding: '8px 12px' },
+            text: (st.task.statusSla === 'PREDITIVA' || st.task.fonteSla === 'PREDITIVA')
+              ? 'PREDITIVA' : (st.task.prioridade || '—') }),
           h('td', { style: { padding: '8px 12px', color: 'var(--trj-muted)' },
             text: fmtDDMM(st.lastDt) + ' às ' + fmtHM(st.lastDt) }),
           h('td', { style: { padding: '8px 12px', color: cor, fontWeight: urgente ? '700' : '400' },

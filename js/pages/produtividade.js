@@ -14,7 +14,7 @@
 
   var LS_KEY = 'trj_prod_hist_v1'; // localStorage key para histórico diário
   var _charts = [];
-  var _state  = { periodo: 30, regiao: 'TODAS' };
+  var _state  = { periodo: 30, regiao: 'TODAS', prioridade: 'TODAS' };
 
   function destroyLocalCharts() {
     _charts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
@@ -723,12 +723,19 @@
     var areaEl = h('div', {});
     container.appendChild(areaEl);
 
-    // Hoje ao vivo (sempre)
-    var hoje = computarHoje(tasks);
-
     function render() {
       destroyLocalCharts();
       areaEl.innerHTML = '';
+
+      // Filtrar tasks por região e prioridade antes de qualquer cálculo
+      var filteredTasks = tasks.filter(function (t) {
+        if (_state.regiao !== 'TODAS' && (t.regiao || 'OTHERS') !== _state.regiao) return false;
+        var isPred = t.statusSla === 'PREDITIVA' || t.fonteSla === 'PREDITIVA';
+        if (_state.prioridade === 'PREDITIVA') return isPred;
+        if (_state.prioridade !== 'TODAS' && (t.prioridade || '').toUpperCase() !== _state.prioridade) return false;
+        return true;
+      });
+      var hoje = computarHoje(filteredTasks);
 
       var hist = loadHist();
       var hasHist = Object.keys(hist).length > 0;
@@ -759,17 +766,49 @@
         onclick: function () { clearHist(); render(); }
       }) : null;
 
-      var filterBarItems = [
+      var sep = function () { return h('span', { style: { color: 'rgba(255,255,255,.12)', margin: '0 4px' }, text: '|' }); };
+
+      var regioes = ['TODAS'].concat(C.REGIOES || []);
+      var btnsRegiao = regioes.map(function (r) {
+        return h('button', {
+          class: 'trj-btn ' + (_state.regiao === r ? 'trj-btn-primary' : 'trj-btn-ghost'),
+          style: { fontSize: '11px', padding: '3px 10px' },
+          text: r === 'TODAS' ? 'Todas' : r,
+          onclick: function () { _state.regiao = r; render(); }
+        });
+      });
+
+      var prios = ['TODAS', 'P1', 'P2', 'P3', 'P4', 'P5', 'PREDITIVA'];
+      var btnsPrio = prios.map(function (p) {
+        return h('button', {
+          class: 'trj-btn ' + (_state.prioridade === p ? 'trj-btn-primary' : 'trj-btn-ghost'),
+          style: { fontSize: '11px', padding: '3px 10px' },
+          text: p === 'TODAS' ? 'Todas' : p,
+          onclick: function () { _state.prioridade = p; render(); }
+        });
+      });
+
+      var row1Items = [
         h('span', { style: { color: 'var(--trj-muted)', fontSize: '12px', fontWeight: '600' }, text: 'PERÍODO:' }),
         h('div', { class: 'flex gap-2' }, btnsPeriodo),
-        h('span', { style: { color: 'rgba(255,255,255,.12)', margin: '0 4px' }, text: '|' }),
+        sep(),
         btnProcessar,
         btnLimpar
       ].filter(Boolean);
+      var row2Items = [
+        h('span', { style: { color: 'var(--trj-muted)', fontSize: '12px', fontWeight: '600' }, text: 'REGIÃO:' }),
+        h('div', { class: 'flex gap-2 flex-wrap' }, btnsRegiao),
+        sep(),
+        h('span', { style: { color: 'var(--trj-muted)', fontSize: '12px', fontWeight: '600' }, text: 'PRIORIDADE:' }),
+        h('div', { class: 'flex gap-2 flex-wrap' }, btnsPrio)
+      ];
       areaEl.appendChild(h('div', {
-        class: 'trj-card p-3 mb-5 flex items-center gap-3 flex-wrap',
+        class: 'trj-card p-3 mb-5',
         style: { borderColor: 'rgba(255,140,0,0.2)' }
-      }, filterBarItems));
+      }, [
+        h('div', { class: 'flex items-center gap-3 flex-wrap mb-2' }, row1Items),
+        h('div', { class: 'flex items-center gap-3 flex-wrap' }, row2Items)
+      ]));
 
       var diasData = montarDiasData(hist, hoje, _state.periodo, _state.regiao);
 
@@ -808,7 +847,7 @@
       areaEl.appendChild(rowEnc);
 
       // Seção diário de trabalho (substitui CCI × Campo)
-      var diarioData = computarDiarioP(tasks);
+      var diarioData = computarDiarioP(filteredTasks);
       areaEl.appendChild(secTitle('DIÁRIO DE TRABALHO', '#9b59b6'));
       var semUpdRisco = diarioData.stats.filter(function (s) { return s.horasSemUpd > 24; }).length;
       areaEl.appendChild(h('div', { class: 'grid gap-3 mb-4', style: { gridTemplateColumns: 'repeat(4,1fr)' } }, [
