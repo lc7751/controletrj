@@ -18,7 +18,7 @@
   function setAgrupado(v) { try { localStorage.setItem(LS_AGRUPADO, v ? '1' : '0'); } catch (e) {} }
 
   // estado persiste entre re-renders (closure do módulo)
-  var state = { busca: '', agrupado: getAgrupado(), causaFiltro: '', filtroSemAtualizacao: false };
+  var state = { busca: '', agrupado: getAgrupado(), causaFiltro: '', filtroSemAtualizacao: false, filtroAcionamento: false };
 
   TRJ.pages.sitesFora = function (container, ctx) {
     var incidents = (ctx.data && ctx.data.incidentsEnriched) || [];
@@ -113,6 +113,11 @@
       var semAtBtn = U.h('button', { class: 'trj-btn trj-btn-ghost', style: chipStyle(semAt, true), text: '⚠️ > 1h sem atualização' });
       semAtBtn.addEventListener('click', function() { state.filtroSemAtualizacao = !semAt; renderFiltros(); renderLista(); });
       filtrosEl.appendChild(semAtBtn);
+
+      var acion = state.filtroAcionamento;
+      var acionBtn = U.h('button', { class: 'trj-btn trj-btn-ghost', style: chipStyle(acion, true), text: '📡 SITES FORA ACIONAMENTO' });
+      acionBtn.addEventListener('click', function() { state.filtroAcionamento = !acion; renderFiltros(); renderLista(); });
+      filtrosEl.appendChild(acionBtn);
     }
     renderFiltros();
     wrap.appendChild(filtrosEl);
@@ -139,6 +144,24 @@
           if ((r.statusTrat || '').toUpperCase() === 'RESOLVIDO') return false;
           if (!r.ultimaAtGenesis) return true;
           return (agora - new Date(r.ultimaAtGenesis).getTime()) > 3600000;
+        });
+      }
+
+      if (state.filtroAcionamento) {
+        var agoraAcion = Date.now();
+        base = base.filter(function(r) {
+          // Deve estar sem causa
+          if ((r.causa || '').trim()) return false;
+          // Deve estar sem detalhe
+          var det = (r.detalhe || '').trim();
+          if (det && det !== '#') return false;
+          // Horário de queda deve ser > 30 min
+          var mHor = String(r.horario || '').match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+          if (!mHor) return true; // sem horário parseável: inclui
+          var now = new Date();
+          var dtHor = new Date(now.getFullYear(), +mHor[2]-1, +mHor[1], +mHor[3], +mHor[4], 0, 0);
+          if (dtHor.getTime() > agoraAcion + 3600000) dtHor.setFullYear(dtHor.getFullYear() - 1);
+          return (agoraAcion - dtHor.getTime()) > 30 * 60000;
         });
       }
 
