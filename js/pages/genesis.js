@@ -68,8 +68,7 @@
       var statusM = eveTitle.match(/Status:\s*([^\n\r]+)/i);
       var statusEvento = statusM ? decodeEntities(statusM[1]).trim() : null;
       var eve = nn(get(12));
-      var detalheText = nn(get(15));
-      var detalhe = detalheText ? (nn(getAttr(15, 'title')) || detalheText) : null;
+      var detalhe = nn(get(15));
 
       rows.push({
         site: site,
