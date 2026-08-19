@@ -1004,20 +1004,33 @@
     return blocos[0];
   }
 
-  // Parser de entradas TLP-T do diário — mesmo critério da aba Atualizações.
-  // Captura SOMENTE entradas de operadores humanos (formato TLP-Txxxxxx-NOME - YYYY-MM-DD HH:MM).
-  // Mensagens de bots/sistemas automatizados nunca seguem esse formato, então não precisam
-  // de filtragem adicional por lista de frases.
-  var RE_TLP_UI = /TLP-T\d+-([^-\r\n]{3,60}?)\s*-\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
+  // Parser de entradas genuínas de operadores no diário — dois formatos suportados:
+  // Formato 1 (TLP-T): TLP-Txxxxxx-NOME - YYYY-MM-DD HH:MM
+  // Formato 2 (Data-Nome): DD/MM/YYYY HH:MM:SS - NOME COMPLETO
+  // Bots/sistemas nunca geram o formato TLP-T; no Formato 2 são filtrados pelo nome.
+  var RE_TLP_UI    = /TLP-T\d+-([^-\r\n]{3,60}?)\s*-\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
+  var RE_DTNAME_UI = /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?)\s*-\s*([^\r\n]{5,80})/g;
+  var RE_BOT_UI    = /^(MONITOR\s*CCI|WFM\s*Agent|isoc_fixa|[Aa]utoma[çc][aã]o|Sistema\s*autom)/i;
   function parseTlpEntries(texto) {
     if (!texto) return [];
-    RE_TLP_UI.lastIndex = 0;
     var entries = [], m;
+    // Formato 1: TLP-T
+    RE_TLP_UI.lastIndex = 0;
     while ((m = RE_TLP_UI.exec(texto)) !== null) {
       var p = m[2].trim().match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
       if (!p) continue;
       var dt = new Date(+p[1], +p[2]-1, +p[3], +p[4], +p[5], p[6]?+p[6]:0);
       if (!isNaN(dt.getTime())) entries.push({ dt: dt, author: m[1].trim() });
+    }
+    // Formato 2: DD/MM/YYYY HH:MM:SS - NOME
+    RE_DTNAME_UI.lastIndex = 0;
+    while ((m = RE_DTNAME_UI.exec(texto)) !== null) {
+      var nome = m[2].trim();
+      if (RE_BOT_UI.test(nome)) continue;
+      var p2 = m[1].trim().match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+      if (!p2) continue;
+      var dt2 = new Date(+p2[3], +p2[2]-1, +p2[1], +p2[4], +p2[5], p2[6]?+p2[6]:0);
+      if (!isNaN(dt2.getTime())) entries.push({ dt: dt2, author: nome });
     }
     entries.sort(function(a, b) { return a.dt - b.dt; });
     return entries;

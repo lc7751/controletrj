@@ -171,12 +171,14 @@
         var end   = t.enderecoId || '';
         var fila  = (t.filaAtual || '').replace(/^TLP-T\d+(-\d+)?-?\s*/i, '').slice(0, 30);
         var bgUpd = '';
-        if (U.extrairDoisBlocosBG && t.motivoCancelamento) {
-          var dois = U.extrairDoisBlocosBG(t.motivoCancelamento);
-          if (dois.length && !(U.isTextoSemAtualizacao && U.isTextoSemAtualizacao(t.motivoCancelamento))) {
-            bgUpd = ' · ' + dois[0].replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s*-?\s*/, '').trim().slice(0, 50);
-          } else {
+        if (U.classificarUltimoBloco && t.motivoCancelamento) {
+          var resUpd = U.classificarUltimoBloco(t.motivoCancelamento);
+          if (resUpd.estado === 'sem') {
             bgUpd = ' · SEM UPDATE';
+          } else if (resUpd.estado === 'acionamento') {
+            bgUpd = ' · VERIFICANDO ACIONAMENTO';
+          } else if (resUpd.texto) {
+            bgUpd = ' · ' + resUpd.texto.replace(/^\d[\d\/\-:\s]{5,20}-?\s*/, '').trim().slice(0, 50);
           }
         }
         linhas.push(prio + tsk + ' / ' + site + (end && end !== site ? ' / ' + end : '') + (fila ? ' · ' + fila : '') + bgUpd);

@@ -77,44 +77,13 @@
     }
 
     function calcUpdateStr(bg) {
-      // Analisa o BLOCO mais recente do BG (BR DD/MM/YYYY HH:MM:SS, YYYY-MM-DD HH:MM,
-      // DD/MM HH:MM sem ano, e HH:MM sozinho — réplica fiel do VBA ExtrairUltimaDataHora).
-      // Só classifica como "SEM ATUALIZAÇÃO" se o bloco mais recente for claramente um bot.
       if (!bg) return 'SEM ATUALIZAÇÃO';
-      var texto = bg.toString();
-      var DT_RE = U.BG_TIMESTAMP_RE ? new RegExp(U.BG_TIMESTAMP_RE.source, 'g')
-        : /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}:\d{2}(?::\d{2})?)/g;
-      var matches = [], m;
-      while ((m = DT_RE.exec(texto)) !== null) {
-        var dt = U.parseDataHoraBG ? U.parseDataHoraBG(m[1]) : null;
-        if (dt && !isNaN(dt.getTime())) matches.push({ dt: dt, idx: m.index });
-      }
-      if (!matches.length) return 'SEM ATUALIZAÇÃO';
-      // Ordenar por data DESC → bloco mais recente primeiro
-      matches.sort(function(a, b) { return b.dt - a.dt; });
-      var maisRec = matches[0];
-      // Extrair bloco do timestamp mais recente
-      var allByIdx = matches.slice().sort(function(a, b){ return a.idx - b.idx; });
-      var posInIdx = allByIdx.findIndex(function(x){ return x.idx === maisRec.idx; });
-      var endIdx   = (posInIdx + 1 < allByIdx.length) ? allByIdx[posInIdx + 1].idx : texto.length;
-      var bloco    = texto.slice(maisRec.idx, endIdx);
-      var blocoUp  = bloco.toUpperCase();
-      // Só é "sem update" se o bloco mais recente for um BOT conhecido:
-      // 1. MONITOR CCI com frase padrão
-      var MONITOR_FRASES = ['IDENTIFICAMOS SEU REPARO NA FILA DA TLP', 'IDENTIFICAMOS ALARMES RELACIONADOS AO SEU REPARO'];
-      var ehMonitor = /MONITOR\s*CCI/i.test(bloco) && MONITOR_FRASES.some(function(f){ return blocoUp.indexOf(f) >= 0; });
-      // 2. WFM Agent com formulário puro (sem texto livre de técnico)
-      var ehWFMForm = /WFM\s*Agent/i.test(bloco) && blocoUp.indexOf('ANOTAÇÕES DE TRABALHO') >= 0 &&
-                     (['NOME DA OPERADORA', 'A ATIVIDADE VAI OCASIONAR', 'MOTIVO DA VISITA TÉCNICA']
-                       .filter(function(f){ return blocoUp.indexOf(f) >= 0; }).length >= 2);
-      // 3. WFM Agent com GMG form (apenas quando WFM Agent — humano preenchendo GMG = update válido)
-      var ehGMGBot  = /WFM\s*Agent/i.test(bloco) &&
-                     blocoUp.indexOf('ALTERAÇÃO NO ENVIO') >= 0 &&
-                     blocoUp.indexOf('JUSTIFICATIVA DA SELEÇÃO') >= 0 &&
-                     blocoUp.indexOf('DATA DE ATIVAÇÃO DO GERADOR') >= 0;
-      if (ehMonitor || ehWFMForm || ehGMGBot) return 'SEM ATUALIZAÇÃO';
-      // Calcular tempo desde o timestamp mais recente
-      var diffMin = Math.round((Date.now() - maisRec.dt.getTime()) / 60000);
+      if (!U.classificarUltimoBloco) return 'SEM ATUALIZAÇÃO';
+      var res = U.classificarUltimoBloco(bg.toString());
+      if (res.estado === 'sem') return 'SEM ATUALIZAÇÃO';
+      if (res.estado === 'acionamento') return 'VERIFICANDO ACIONAMENTO';
+      if (!res.dt) return 'SEM ATUALIZAÇÃO';
+      var diffMin = Math.round((Date.now() - res.dt.getTime()) / 60000);
       if (diffMin < 0) return 'ATUALIZADO AGORA';
       if (diffMin < 60) return 'ATUALIZADO A ' + diffMin + 'min';
       var h = Math.floor(diffMin / 60), mn = diffMin % 60;

@@ -69,16 +69,31 @@
     });
   }
 
-  // Filtra apenas entradas válidas do time: TLP-Txxxxxxx-NOME - YYYY-MM-DD HH:mm
-  var RE_TLP_A = /TLP-T\d+-([^-\r\n]{3,60}?)\s*-\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
+  // Filtra entradas genuínas do time — dois formatos suportados:
+  // Formato 1 (TLP-T): TLP-Txxxxxxx-NOME - YYYY-MM-DD HH:MM
+  // Formato 2 (Data-Nome): DD/MM/YYYY HH:MM:SS - NOME COMPLETO
+  var RE_TLP_A    = /TLP-T\d+-([^-\r\n]{3,60}?)\s*-\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
+  var RE_DTNAME_A = /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?)\s*-\s*([^\r\n]{5,80})/g;
+  var RE_BOT_A    = /^(MONITOR\s*CCI|WFM\s*Agent|isoc_fixa|[Aa]utoma[çc][aã]o|Sistema\s*autom)/i;
 
   function parseTlpEntriesA(texto) {
     if (!texto) return [];
-    RE_TLP_A.lastIndex = 0;
     var entries = [], m;
+    // Formato 1: TLP-T
+    RE_TLP_A.lastIndex = 0;
     while ((m = RE_TLP_A.exec(texto)) !== null) {
       var dt = parseTimestamp(m[2].trim());
       if (!isNaN(dt.getTime())) entries.push({ dt: dt, author: m[1].trim(), content: '' });
+    }
+    // Formato 2: DD/MM/YYYY HH:MM:SS - NOME
+    RE_DTNAME_A.lastIndex = 0;
+    while ((m = RE_DTNAME_A.exec(texto)) !== null) {
+      var nome = m[2].trim();
+      if (RE_BOT_A.test(nome)) continue;
+      var p2 = m[1].trim().match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+      if (!p2) continue;
+      var dt2 = new Date(+p2[3], +p2[2]-1, +p2[1], +p2[4], +p2[5], p2[6]?+p2[6]:0);
+      if (!isNaN(dt2.getTime())) entries.push({ dt: dt2, author: nome, content: '' });
     }
     return entries.sort(function (a, b) { return a.dt - b.dt; });
   }
