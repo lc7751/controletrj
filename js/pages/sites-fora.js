@@ -51,7 +51,7 @@
     var btnCopy = U.h('button', {
       class: 'trj-btn trj-btn-ghost', title: 'Copiar lista filtrada em texto (formato WhatsApp)',
       style: { padding: '3px 9px', fontSize: '12px' }, text: '📋',
-      onclick: function() { U.copyText(U.incidentTableCopyText(currentRows, 'Sites Fora'), 'Lista copiada!'); }
+      onclick: function() { U.copyText(U.incidentTableCopyText(currentRows, 'Sites Fora', tasksEnriched), 'Lista copiada!'); }
     });
     var headRow = U.h('div', { class: 'flex items-center justify-between flex-wrap gap-3 mb-1' }, [
       U.h('h3', { class: 'text-base font-bold', text: '📋 Lista de Incidentes' }),

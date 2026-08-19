@@ -789,8 +789,49 @@
     return wrapTable(tbl, rows.length);
   };
 
+  // Seleciona o melhor nome de site de uma lista separada por vírgula (agrupamento).
+  // Ordem de prioridade: SR- > 5G- > 4G- > primeiro da lista.
+  function priorizarSite(siteStr) {
+    if (!siteStr) return '—';
+    var sites = siteStr.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    if (sites.length <= 1) return sites[0] || '—';
+    function pfx(p) { return sites.find(function(s) { return s.toUpperCase().indexOf(p) === 0; }) || null; }
+    return pfx('SR-') || pfx('5G-') || pfx('4G-') || sites[0];
+  }
+
+  // Retorna o status de atualização de um incidente para o texto de cópia.
+  //   'ATUALIZAR GENESIS' → TSK (INICIADO/NÃO INICIADO) tem update mais recente que o GENESIS
+  //   'SEM ATUALIZAÇÃO'   → nenhum timestamp registrado no detalhe do GENESIS
+  //   'ATUALIZAR'         → timestamp do GENESIS existe mas é mais antigo que 1h
+  //   null                → atualizado há menos de 1h, nada a sinalizar
+  function statusCopiaGenesis(r, tsks) {
+    var genesisAtMs = r.ultimaAtGenesis ? new Date(r.ultimaAtGenesis).getTime() : 0;
+    var tskInfo = tskAberta(r, tsks);
+    var stTsk = (tskInfo && tskInfo.status || '').toString().trim().toUpperCase();
+    if (tskInfo && (stTsk === 'INICIADO' || stTsk === 'NÃO INICIADO' || stTsk === 'NAO INICIADO')) {
+      var bloco = classificarUltimoBloco(tskInfo.motivoCancelamento);
+      if (bloco && bloco.estado !== 'sem' && bloco.dt && bloco.dt.getTime() > genesisAtMs) return 'ATUALIZAR GENESIS';
+    }
+    if (!r.ultimaAtGenesis) return 'SEM ATUALIZAÇÃO';
+    if ((Date.now() - genesisAtMs) > 3600000) return 'ATUALIZAR';
+    return null;
+  }
+
   // ---------- Texto pra copiar (WhatsApp) — drill de incidentes ----------
-  U.incidentTableCopyText = function (rows, titulo) {
+  // Quando tasksEnriched é passado, usa o formato sites-fora:
+  //   • Site / END_ID - STATUS
+  // Caso contrário, usa o formato original agrupado por região.
+  U.incidentTableCopyText = function (rows, titulo, tasksEnriched) {
+    if (tasksEnriched) {
+      var linhasN = ['*' + (titulo || 'Sites Fora') + '*', 'Total: ' + (rows || []).length, ''];
+      (rows || []).forEach(function (r) {
+        var site = priorizarSite(r.site || '');
+        var endId = r.enderecoId || '—';
+        var st = statusCopiaGenesis(r, tasksEnriched);
+        linhasN.push('• ' + site + ' / ' + endId + (st ? ' - ' + st : ''));
+      });
+      return linhasN.join('\n').trim();
+    }
     var porRegiao = {};
     (rows || []).forEach(function (r) {
       var reg = C.REGIAO_LABELS[r.regiao] || r.regiao || 'OTHERS';
@@ -938,33 +979,61 @@
     return blocos[0];
   }
 
-  // Classifica o estado do Último Update baseado na lógica do VBA:
-  //   'sem'         → BG vazio, frase padrão bot/MONITOR CCI, ou formulário WFM puro
-  //   'acionamento' → bloco mais recente contém "VERIFICANDO ACIONAMENTO"
-  //   'ok'          → tem texto real de técnico NO DIA ATUAL
-  //   'antigo'      → tem texto real de técnico, mas de ontem ou anterior
+  // Parser de entradas TLP-T do diário — mesmo critério da aba Atualizações.
+  // Captura SOMENTE entradas de operadores humanos (formato TLP-Txxxxxx-NOME - YYYY-MM-DD HH:MM).
+  // Mensagens de bots/sistemas automatizados nunca seguem esse formato, então não precisam
+  // de filtragem adicional por lista de frases.
+  var RE_TLP_UI = /TLP-T\d+-([^-\r\n]{3,60}?)\s*-\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
+  function parseTlpEntries(texto) {
+    if (!texto) return [];
+    RE_TLP_UI.lastIndex = 0;
+    var entries = [], m;
+    while ((m = RE_TLP_UI.exec(texto)) !== null) {
+      var p = m[2].trim().match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/);
+      if (!p) continue;
+      var dt = new Date(+p[1], +p[2]-1, +p[3], +p[4], +p[5], p[6]?+p[6]:0);
+      if (!isNaN(dt.getTime())) entries.push({ dt: dt, author: m[1].trim() });
+    }
+    entries.sort(function(a, b) { return a.dt - b.dt; });
+    return entries;
+  }
+
+  // Classifica o estado do Último Update.
+  // Prioriza entradas TLP-T (genuínas de operadores, mesmo critério da aba Atualizações).
+  // Cai de volta à detecção genérica de timestamp + filtro de bot apenas quando não há TLP-T.
+  //   'sem'         → nenhuma entrada real encontrada
+  //   'acionamento' → última entrada real contém "VERIFICANDO ACIONAMENTO"
+  //   'ok'          → última entrada real é de hoje
+  //   'antigo'      → última entrada real é de ontem ou anterior
   function classificarUltimoBloco(bgTexto) {
     if (isTextoSemAtualizacao(bgTexto)) return { estado: 'sem', texto: null, dt: null };
     var bloco = extrairBlocoMaisRecente(bgTexto);
-    if (!bloco) return { estado: 'sem', texto: bgTexto ? bgTexto.toString().trim() : null, dt: null };
-    var txtUpper = bloco.texto.toUpperCase();
-    if (txtUpper.indexOf('VERIFICANDO ACIONAMENTO') >= 0) return { estado: 'acionamento', texto: bloco.texto, dt: bloco.dt };
-    // MONITOR CCI com frase padrão → sem atualização
-    if (txtUpper.indexOf('MONITOR CCI') >= 0) {
+    var textoDisplay = bloco ? bloco.texto : (bgTexto ? bgTexto.toString().trim() : null);
+
+    // Fonte primária: entradas TLP-T (operadores humanos, filtragem por design)
+    var tlpEntries = parseTlpEntries(bgTexto || '');
+    var dtRef = tlpEntries.length ? tlpEntries[tlpEntries.length - 1].dt : (bloco ? bloco.dt : null);
+
+    if (!dtRef) return { estado: 'sem', texto: textoDisplay, dt: null };
+
+    var txtUpper = (textoDisplay || '').toUpperCase();
+    if (txtUpper.indexOf('VERIFICANDO ACIONAMENTO') >= 0) return { estado: 'acionamento', texto: textoDisplay, dt: dtRef };
+
+    // Filtro de MONITOR CCI só é necessário no fallback (sem TLP-T), pois TLP-T já exclui bots
+    if (!tlpEntries.length && txtUpper.indexOf('MONITOR CCI') >= 0) {
       for (var fi = 0; fi < FRASES_PADRAO_BOT.length; fi++) {
         if (txtUpper.indexOf(FRASES_PADRAO_BOT[fi].toUpperCase()) >= 0) {
           return { estado: 'sem', texto: null, dt: null };
         }
       }
-      return { estado: 'acionamento', texto: bloco.texto, dt: bloco.dt };
+      return { estado: 'acionamento', texto: textoDisplay, dt: dtRef };
     }
-    // Verificar se a atualização é de hoje ou de outro dia
+
     var agora = new Date();
-    var ehHoje = bloco.dt &&
-      bloco.dt.getDate() === agora.getDate() &&
-      bloco.dt.getMonth() === agora.getMonth() &&
-      bloco.dt.getFullYear() === agora.getFullYear();
-    return { estado: ehHoje ? 'ok' : 'antigo', texto: bloco.texto, dt: bloco.dt };
+    var ehHoje = dtRef.getDate() === agora.getDate() &&
+                 dtRef.getMonth() === agora.getMonth() &&
+                 dtRef.getFullYear() === agora.getFullYear();
+    return { estado: ehHoje ? 'ok' : 'antigo', texto: textoDisplay, dt: dtRef };
   }
 
   // Extrai os 2 blocos mais recentes (penúltimo + último) para o modal.
