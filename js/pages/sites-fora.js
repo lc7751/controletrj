@@ -150,18 +150,23 @@
       if (state.filtroAcionamento) {
         var agoraAcion = Date.now();
         base = base.filter(function(r) {
-          // Deve estar sem causa
-          if ((r.causa || '').trim()) return false;
-          // Deve estar sem detalhe
-          var det = (r.detalhe || '').trim();
-          if (det && det !== '#') return false;
-          // Horário de queda deve ser > 30 min
+          // Horário de queda deve ser > 30 min (condição comum)
           var mHor = String(r.horario || '').match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
-          if (!mHor) return true; // sem horário parseável: inclui
-          var now = new Date();
-          var dtHor = new Date(now.getFullYear(), +mHor[2]-1, +mHor[1], +mHor[3], +mHor[4], 0, 0);
-          if (dtHor.getTime() > agoraAcion + 3600000) dtHor.setFullYear(dtHor.getFullYear() - 1);
-          return (agoraAcion - dtHor.getTime()) > 30 * 60000;
+          if (mHor) {
+            var now = new Date();
+            var dtHor = new Date(now.getFullYear(), +mHor[2]-1, +mHor[1], +mHor[3], +mHor[4], 0, 0);
+            if (dtHor.getTime() > agoraAcion + 3600000) dtHor.setFullYear(dtHor.getFullYear() - 1);
+            if ((agoraAcion - dtHor.getTime()) <= 30 * 60000) return false;
+          }
+          var det = (r.detalhe || '').trim();
+          var detUp = det.toUpperCase();
+          var semCausa = !(r.causa || '').trim();
+          var semDetalhe = !det || det === '#';
+          // Condição 1: sem causa e sem informação no detalhe
+          if (semCausa && semDetalhe) return true;
+          // Condição 2: detalhe contém "AGUARDANDO ACIONAMENTO" (com ou sem causa)
+          if (detUp.indexOf('AGUARDANDO ACIONAMENTO') >= 0) return true;
+          return false;
         });
       }
 

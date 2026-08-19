@@ -64,6 +64,11 @@
   // ── ícone folha ──────────────────────────────────────────────────────
   var FOLHA = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
 
+  // ── ícones SVG das categorias ─────────────────────────────────────────
+  var ICO_B2B = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>';
+  var ICO_BACKBONE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>';
+  var ICO_CONC = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="20" cy="19" r="2"/><path d="M12 6v6M12 12 4 17M12 12l8 5"/></svg>';
+
   // ── bgCell: ícone de update (igual ao ultimoUpdateCell do dashboard) ──
   // Não mostra prévia do texto — só ícone com tooltip. Clicar abre modal.
   var ICONE_FOLHA_PRIO = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17 8C8 10 5.9 16.17 3.82 21.34L5.71 22l1-2.3A4.49 4.49 0 0 0 8 20C19 20 22 3 22 3c-1 2-8 5.25-8 5.25S17 5 17 8z"/></svg>';
@@ -352,7 +357,7 @@
       },
       onclick: opts.onclick
     }, [
-      opts.icon ? U.h('span', { style: { fontSize: '22px' }, text: opts.icon }) : null,
+      opts.icon ? U.h('span', { style: { display: 'inline-flex', alignItems: 'center', flexShrink: '0' }, html: opts.icon }) : null,
       U.h('div', { style: { textAlign: 'left' } }, [
         U.h('div', { text: opts.label }),
         U.h('div', { style: { fontSize: '11px', fontWeight: '400', opacity: '0.85' }, text: opts.count + ' tarefa(s) em aberto' })
@@ -416,9 +421,9 @@
     }
 
     function renderBotoes() {
-      btnRow.appendChild(btnCategoria({ icon: '⭐', label: 'B2B / Premium', count: b2bTasks.length, cor: '#3498db', ativo: catAtiva.v === 'b2b', onclick: function () { setCategoria(catAtiva.v === 'b2b' ? null : 'b2b'); } }));
-      btnRow.appendChild(btnCategoria({ icon: '⚡', label: 'Backbone / Longa Distância', count: backboneTasks.length, cor: '#e74c3c', ativo: catAtiva.v === 'backbone', onclick: function () { setCategoria(catAtiva.v === 'backbone' ? null : 'backbone'); } }));
-      btnRow.appendChild(btnCategoria({ icon: '📍', label: 'Concentradores', count: concMatches.length, cor: '#9b59b6', ativo: catAtiva.v === 'conc', onclick: function () { setCategoria(catAtiva.v === 'conc' ? null : 'conc'); } }));
+      btnRow.appendChild(btnCategoria({ icon: ICO_B2B,      label: 'B2B / Premium',              count: b2bTasks.length,      cor: '#3498db', ativo: catAtiva.v === 'b2b',      onclick: function () { setCategoria(catAtiva.v === 'b2b'      ? null : 'b2b'); } }));
+      btnRow.appendChild(btnCategoria({ icon: ICO_BACKBONE, label: 'Backbone / Longa Distância', count: backboneTasks.length,  cor: '#e74c3c', ativo: catAtiva.v === 'backbone', onclick: function () { setCategoria(catAtiva.v === 'backbone' ? null : 'backbone'); } }));
+      btnRow.appendChild(btnCategoria({ icon: ICO_CONC,     label: 'Concentradores',              count: concMatches.length,   cor: '#9b59b6', ativo: catAtiva.v === 'conc',     onclick: function () { setCategoria(catAtiva.v === 'conc'     ? null : 'conc'); } }));
     }
     renderBotoes();
     container.appendChild(btnRow);
@@ -434,11 +439,12 @@
           style: { fontSize: '11px', padding: '2px 9px', display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid rgba(255,255,255,.15)', marginLeft: 'auto' },
           onclick: function () { copyText(onCopiar()); }
         }, [U.h('span', { text: '📋' }), U.h('span', { text: 'Copiar' })]);
+        var icoEl = icon ? U.h('span', { style: { display: 'inline-flex', alignItems: 'center', opacity: '0.85' }, html: icon }) : null;
         return U.h('div', { class: 'flex items-center gap-2 mb-4', style: { flexWrap: 'wrap' } }, [
-          U.h('span', { style: { fontSize: '18px' }, text: icon }),
+          icoEl,
           U.h('span', { style: { fontWeight: '800', fontSize: '16px', color: cor }, text: titulo }),
           btnCopy
-        ]);
+        ].filter(Boolean));
       }
 
       if (cat === 'b2b') {

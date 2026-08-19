@@ -21,11 +21,14 @@
     'CELL', 'ENODEB DOWN', 'ENODEB DOWN-CELL', 'COMMUNICATION FAILURE',
     'INACESSIVEL', 'EQUIPAMENTO INACESSIVEL', 'SITE FORA', 'NR GNODEB DOWN',
     'FALHA DE ENERGIA', 'RETIFICADOR', 'ENODB', 'ISOLATED NE',
-    'S1 APP LINK DOWN', 'BATERIA', 'NODEB DOWN', 'DISJUNTOR'
+    'S1 APP LINK DOWN', 'BATERIA', 'BATERIA EM DESCARGA', 'NODEB DOWN', 'DISJUNTOR'
   ];
 
   // DJ que EXCLUEM a task dos normalizados
   var DJ_EXCLUIR = ['PREDITIVA', 'MABE', 'ACESSO FA'];
+
+  // Tipos de falha que NUNCA devem entrar nos normalizados
+  var TIPO_FALHA_EXCLUIR_NORM = ['SISTEMA IRRADIANTE'];
 
   function ehValidoParaPesquisa(t) {
     if (!t) return false;
@@ -220,6 +223,7 @@
         { id:'endid', label:'END_ID',       fn: function(t,q){ return norm(t.enderecoId||'').indexOf(norm(q)) >= 0; } },
         { id:'site',  label:'Site',         fn: function(t,q){ return norm(t.siteId||'').indexOf(norm(q)) >= 0; } },
         { id:'tsk',   label:'TSK',          fn: function(t,q){ return norm(t.osNumero||'').indexOf(norm(q)) >= 0; } },
+        { id:'falha', label:'Tipo de Falha',fn: function(t,q){ return norm(t.tipoFalha||'').indexOf(norm(q)) >= 0; } },
       ];
       // Botões de opção de campo
       var campoBtns = {};
@@ -384,6 +388,11 @@
           var dj = norm(t.isocDJ||'');
           for (var i=0; i<DJ_EXCLUIR.length; i++) {
             if (dj.indexOf(norm(DJ_EXCLUIR[i])) >= 0) return;
+          }
+          // 2b. Excluir tipos de falha que nunca devem aparecer nos normalizados
+          var tfNorm = norm(t.tipoFalha||'');
+          for (var j=0; j<TIPO_FALHA_EXCLUIR_NORM.length; j++) {
+            if (tfNorm.indexOf(norm(TIPO_FALHA_EXCLUIR_NORM[j])) >= 0) return;
           }
           // 3. Verificar palavras-chave em tipoFalha, BG (motivoCancelamento) e filaAtual
           // (O VBA buscava na coluna EB; no nosso modelo o BG e fila também carregam info de alarme)
