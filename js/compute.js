@@ -128,14 +128,27 @@
     return t.trim() || null;
   }
 
+  // Extrai o timestamp de última atualização inserido pelos operadores no final
+  // do campo detalhe do GENESIS, no formato "- DD/MM/YY HH:MM" ou "- DD/MM/YYYY HH:MM".
+  function extrairTimestampDetalheGenesis(texto) {
+    if (!texto) return null;
+    var m = texto.match(/[-–]\s*(\d{1,2}\/\d{2}\/\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)\s*$/);
+    if (!m) return null;
+    var p = m[1].trim().match(/^(\d{1,2})\/(\d{2})\/(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (!p) return null;
+    var a = +p[3]; if (a < 100) a += 2000;
+    var dt = new Date(a, +p[2]-1, +p[1], +p[4], +p[5], p[6]?+p[6]:0);
+    return isNaN(dt.getTime()) ? null : dt;
+  }
+
   function genesisToIncidents(genesisRows, validMap) {
     var base = new Date();
     return (genesisRows || []).map(function (r) {
-      // o painel de origem às vezes entrega texto com acentos bagunçados
-      // (ex.: "IntervenûÏûÈo" em vez de "Intervenção") — corrige antes de usar.
       var site0 = D.corrigirAcentos(r.site);
       var causa0 = D.corrigirAcentos(r.causa);
-      var detalhe0 = limparDetalheGenesis(D.corrigirAcentos(r.detalhe));
+      var detalheRaw = D.corrigirAcentos(r.detalhe);
+      var ultimaAtGenesis = extrairTimestampDetalheGenesis(detalheRaw);
+      var detalhe0 = limparDetalheGenesis(detalheRaw);
       var alarme0 = D.corrigirAcentos(r.alarme);
       var infra0 = D.corrigirAcentos(r.infra);
       var cidadeUf0 = D.corrigirAcentos(r.cidadeUf);
@@ -167,6 +180,7 @@
         detalhe: detalhe0 || null,
         obs: obs,
         tsk: null,
+        ultimaAtGenesis: ultimaAtGenesis ? ultimaAtGenesis.toISOString() : null,
         statusTrat: derivarStatusTrat(r)
       };
     });

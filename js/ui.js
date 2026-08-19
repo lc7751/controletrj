@@ -694,6 +694,23 @@
     return linhas.join('\n').trim();
   };
 
+  // Formata tempo decorrido desde o timestamp de atualização no campo detalhe do GENESIS.
+  // Verde < 30min · Amarelo 30–60min · Vermelho > 60min (com ponto pulsante).
+  function formatElapsedGenesis(iso) {
+    if (!iso) return null;
+    var ms = Date.now() - new Date(iso).getTime();
+    if (ms < 0) ms = 0;
+    var min = Math.floor(ms / 60000);
+    var hh = Math.floor(min / 60), mm = min % 60;
+    var texto = hh > 0 ? (hh + 'h' + (mm > 0 ? mm + 'min' : '')) : (min + 'min');
+    var cor, bg;
+    if (min < 30)      { cor = '#2ecc71'; bg = 'rgba(46,204,113,.15)'; }
+    else if (min < 60) { cor = '#f1c40f'; bg = 'rgba(241,196,15,.15)'; }
+    else               { cor = '#e74c3c'; bg = 'rgba(231,76,60,.15)'; }
+    return { texto: texto, cor: cor, bg: bg, min: min };
+  }
+  U.formatElapsedGenesis = formatElapsedGenesis;
+
   // ---------- Tabela de incidentes G.E.N.E.S.I.S (Sites Fora + drills) ----------
   // Colunas iguais ao painel de origem (Horário/Duração/Tec/Site/END_ID/ANF/Cidade-UF),
   // troca a coluna "Status" do GENESIS pela TSK aberta na fila (tasksEnriched),
@@ -725,8 +742,19 @@
         h('td', { text: r.causa || '/' }),
         h('td', null, function(){
           var textoDetalhe = r.detalhe || '';
+          var elapsed = formatElapsedGenesis(r.ultimaAtGenesis);
+          function timeBadge() {
+            if (!elapsed) return null;
+            var bits = [];
+            if (elapsed.min >= 60) bits.push(h('span', { class: 'trj-pulse-dot', style: { marginRight: '3px' } }));
+            bits.push(h('span', { text: 'há ' + elapsed.texto }));
+            return h('span', { class: 'trj-badge', style: { color: elapsed.cor, background: elapsed.bg, fontSize: '10px', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '2px', marginTop: '2px' } }, bits);
+          }
           if (!textoDetalhe || textoDetalhe === '#') {
-            return h('span', { style: { color: 'var(--trj-muted)', fontStyle: 'italic', fontSize: '11px' }, text: 'SEM INFO' });
+            var semInfo = h('span', { style: { color: 'var(--trj-muted)', fontStyle: 'italic', fontSize: '11px' }, text: 'SEM INFO' });
+            var tb = timeBadge();
+            if (!tb) return semInfo;
+            return h('span', { style: { display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start' } }, [semInfo, tb]);
           }
           var resumo = textoDetalhe.replace(/\n+/g, ' ').slice(0, 38) + (textoDetalhe.length > 38 ? '…' : '');
           var cel = h('span', {
@@ -738,7 +766,9 @@
             var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontSize: '13px', lineHeight: '1.8', padding: '4px' }, text: textoDetalhe });
             U.openModal('Detalhe', cid);
           });
-          return cel;
+          var tb2 = timeBadge();
+          if (!tb2) return cel;
+          return h('span', { style: { display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start' } }, [cel, tb2]);
         }())
       ]);
     });

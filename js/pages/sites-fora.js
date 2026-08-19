@@ -18,7 +18,7 @@
   function setAgrupado(v) { try { localStorage.setItem(LS_AGRUPADO, v ? '1' : '0'); } catch (e) {} }
 
   // estado persiste entre re-renders (closure do módulo)
-  var state = { busca: '', agrupado: getAgrupado() };
+  var state = { busca: '', agrupado: getAgrupado(), causaFiltro: '', filtroSemAtualizacao: false };
 
   TRJ.pages.sitesFora = function (container, ctx) {
     var incidents = (ctx.data && ctx.data.incidentsEnriched) || [];
@@ -56,6 +56,58 @@
     wrap.appendChild(headRow);
     wrap.appendChild(U.h('p', { class: 'text-xs mb-3', style: { color: 'var(--trj-muted)' }, text: 'Busque por site, end id, cidade, ANF, causa ou alarme. ⚡ = correlacionado a outro(s) incidente(s) (mesma ANF/horário próximo).' }));
 
+    // ---- filtros: causa + atualização ----
+    var causaCount = {};
+    incidents.forEach(function(i) {
+      var c = (i.causa || '').trim();
+      causaCount[c || '__SEM__'] = (causaCount[c || '__SEM__'] || 0) + 1;
+    });
+    var causaKeys = Object.keys(causaCount)
+      .filter(function(k) { return k !== '__SEM__'; })
+      .sort(function(a, b) { return causaCount[b] - causaCount[a]; });
+
+    var filtrosEl = U.h('div', { class: 'flex flex-wrap gap-2 mb-3 mt-2' });
+
+    function chipStyle(active, danger) {
+      return {
+        fontSize: '11px', padding: '3px 10px', borderRadius: '20px', cursor: 'pointer',
+        background: active ? (danger ? 'rgba(231,76,60,.25)' : 'rgba(255,140,0,.25)') : 'rgba(255,255,255,.06)',
+        color: active ? (danger ? '#e74c3c' : 'var(--trj-primary)') : 'var(--trj-muted)',
+        border: '1px solid ' + (active ? (danger ? '#e74c3c' : 'var(--trj-primary)') : 'rgba(255,255,255,.12)'),
+        fontWeight: active ? '700' : '400'
+      };
+    }
+
+    function renderFiltros() {
+      filtrosEl.innerHTML = '';
+
+      var allActive = !state.causaFiltro;
+      var allChip = U.h('button', { class: 'trj-btn trj-btn-ghost', style: chipStyle(allActive, false), text: 'Todos' });
+      allChip.addEventListener('click', function() { state.causaFiltro = ''; renderFiltros(); renderLista(); });
+      filtrosEl.appendChild(allChip);
+
+      causaKeys.forEach(function(k) {
+        var active = state.causaFiltro === k;
+        var chip = U.h('button', { class: 'trj-btn trj-btn-ghost', style: chipStyle(active, false), text: k + ' (' + causaCount[k] + ')' });
+        chip.addEventListener('click', function() { state.causaFiltro = active ? '' : k; renderFiltros(); renderLista(); });
+        filtrosEl.appendChild(chip);
+      });
+
+      if (causaCount['__SEM__']) {
+        var semActive = state.causaFiltro === '__SEM__';
+        var semChip = U.h('button', { class: 'trj-btn trj-btn-ghost', style: chipStyle(semActive, true), text: 'SEM CAUSA (' + causaCount['__SEM__'] + ')' });
+        semChip.addEventListener('click', function() { state.causaFiltro = semActive ? '' : '__SEM__'; renderFiltros(); renderLista(); });
+        filtrosEl.appendChild(semChip);
+      }
+
+      var semAt = state.filtroSemAtualizacao;
+      var semAtBtn = U.h('button', { class: 'trj-btn trj-btn-ghost', style: chipStyle(semAt, true), text: '⚠️ > 1h sem atualização' });
+      semAtBtn.addEventListener('click', function() { state.filtroSemAtualizacao = !semAt; renderFiltros(); renderLista(); });
+      filtrosEl.appendChild(semAtBtn);
+    }
+    renderFiltros();
+    wrap.appendChild(filtrosEl);
+
     var listEl = U.h('div', { class: 'mt-3' });
     var search = U.searchInput('🔎 Buscar incidente...', function (q) { state.busca = q; renderLista(); }, { value: state.busca });
     wrap.appendChild(search);
@@ -63,6 +115,24 @@
 
     function renderLista() {
       var base = state.agrupado ? Comp.agruparIncidentesPorEndId(incidents) : incidents;
+
+      if (state.causaFiltro) {
+        var cf = state.causaFiltro;
+        base = base.filter(function(r) {
+          var c = (r.causa || '').trim();
+          return cf === '__SEM__' ? !c : c === cf;
+        });
+      }
+
+      if (state.filtroSemAtualizacao) {
+        var agora = Date.now();
+        base = base.filter(function(r) {
+          if ((r.statusTrat || '').toUpperCase() === 'RESOLVIDO') return false;
+          if (!r.ultimaAtGenesis) return true;
+          return (agora - new Date(r.ultimaAtGenesis).getTime()) > 3600000;
+        });
+      }
+
       var q = (state.busca || '').toLowerCase().trim();
       var rows = !q ? base : base.filter(function (r) {
         try {
