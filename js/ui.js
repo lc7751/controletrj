@@ -823,14 +823,39 @@
   // Caso contrário, usa o formato original agrupado por região.
   U.incidentTableCopyText = function (rows, titulo, tasksEnriched) {
     if (tasksEnriched) {
-      var linhasN = ['*' + (titulo || 'Sites Fora') + '*', 'Total: ' + (rows || []).length, ''];
+      var porRegiao = {};
       (rows || []).forEach(function (r) {
-        var site = priorizarSite(r.site || '');
-        var endId = r.enderecoId || '—';
-        var st = statusCopiaGenesis(r, tasksEnriched);
-        linhasN.push('• ' + site + ' / ' + endId + (st ? ' - ' + st : ''));
+        var reg = (C.REGIAO_LABELS && C.REGIAO_LABELS[r.regiao]) || r.regiao || 'OUTROS';
+        porRegiao[reg] = porRegiao[reg] || [];
+        porRegiao[reg].push(r);
       });
-      return linhasN.join('\n').trim();
+      var linhas = ['*' + (titulo || 'Sites Fora') + '*', 'Total: ' + (rows || []).length, ''];
+      var agora30 = Date.now();
+      function parseHorarioDt(hor) {
+        var m = String(hor || '').match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+        if (!m) return null;
+        var now = new Date();
+        var dt = new Date(now.getFullYear(), +m[2]-1, +m[1], +m[3], +m[4], 0, 0);
+        if (dt.getTime() > agora30 + 3600000) dt.setFullYear(dt.getFullYear() - 1);
+        return dt;
+      }
+      Object.keys(porRegiao).sort().forEach(function (reg) {
+        var linhasReg = [];
+        porRegiao[reg].forEach(function (r) {
+          var dtHor = parseHorarioDt(r.horario);
+          if (dtHor && (agora30 - dtHor.getTime()) < 30 * 60000) return; // menos de 30 min — ignora
+          var hor  = (r.horario || '—').trim();
+          var site = priorizarSite(r.site || '');
+          var endId = r.enderecoId || '—';
+          var st = statusCopiaGenesis(r, tasksEnriched);
+          linhasReg.push('• ' + hor + ' - ' + site + ' / ' + endId + (st ? ' - ' + st : ''));
+        });
+        if (!linhasReg.length) return; // região vazia após filtro — omite
+        linhas.push('*' + reg + '*');
+        linhasReg.forEach(function (l) { linhas.push(l); });
+        linhas.push('');
+      });
+      return linhas.join('\n').trim();
     }
     var porRegiao = {};
     (rows || []).forEach(function (r) {
