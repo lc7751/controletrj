@@ -47,11 +47,20 @@
   function buildListaIncidentes(incidents, tasksEnriched) {
     var wrap = U.h('div', { class: 'trj-card p-5' });
 
+    var currentRows = [];
+    var btnCopy = U.h('button', {
+      class: 'trj-btn trj-btn-ghost', title: 'Copiar lista filtrada em texto (formato WhatsApp)',
+      style: { padding: '3px 9px', fontSize: '12px' }, text: '📋',
+      onclick: function() { U.copyText(U.incidentTableCopyText(currentRows, 'Sites Fora'), 'Lista copiada!'); }
+    });
     var headRow = U.h('div', { class: 'flex items-center justify-between flex-wrap gap-3 mb-1' }, [
       U.h('h3', { class: 'text-base font-bold', text: '📋 Lista de Incidentes' }),
-      U.switch(state.agrupado, 'Agrupar por END_ID (junta sites com a mesma queda)', function (checked) {
-        state.agrupado = checked; setAgrupado(checked); renderLista();
-      })
+      U.h('div', { class: 'flex items-center gap-3' }, [
+        btnCopy,
+        U.switch(state.agrupado, 'Agrupar por END_ID (junta sites com a mesma queda)', function (checked) {
+          state.agrupado = checked; setAgrupado(checked); renderLista();
+        })
+      ])
     ]);
     wrap.appendChild(headRow);
     wrap.appendChild(U.h('p', { class: 'text-xs mb-3', style: { color: 'var(--trj-muted)' }, text: 'Busque por site, end id, cidade, ANF, causa ou alarme. ⚡ = correlacionado a outro(s) incidente(s) (mesma ANF/horário próximo).' }));
@@ -146,6 +155,7 @@
           return hay2.indexOf(q) >= 0;
         }
       });
+      currentRows = rows;
       listEl.innerHTML = '';
       if (!incidents.length) {
         listEl.appendChild(U.h('div', { class: 'text-sm py-10 text-center', style: { color: 'var(--trj-muted)' }, html: 'Nenhum incidente importado ainda.<br>Vá em <b>Importar dados</b> e use a busca automática (ou cole o painel G.E.N.E.S.I.S).' }));

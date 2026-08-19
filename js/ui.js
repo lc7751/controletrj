@@ -743,6 +743,19 @@
         h('td', null, function(){
           var textoDetalhe = r.detalhe || '';
           var elapsed = formatElapsedGenesis(r.ultimaAtGenesis);
+          // Detecta se a TSK tem atualização mais recente que o timestamp do GENESIS
+          var genesisAtMs = r.ultimaAtGenesis ? new Date(r.ultimaAtGenesis).getTime() : 0;
+          var tskInfo = tskAberta(r, tasksEnriched);
+          var tskBloco = tskInfo ? classificarUltimoBloco(tskInfo.motivoCancelamento) : null;
+          var stTsk = (tskInfo && tskInfo.status || '').toString().trim().toUpperCase();
+          var precisaAtualizar = !!(tskInfo && tskBloco && tskBloco.estado !== 'sem' &&
+                                    tskBloco.dt && tskBloco.dt.getTime() > genesisAtMs &&
+                                    (stTsk === 'INICIADO' || stTsk === 'NÃO INICIADO' || stTsk === 'NAO INICIADO'));
+          function atualizarBadge() {
+            if (!precisaAtualizar) return null;
+            return h('span', { class: 'trj-badge', style: { color: 'var(--trj-primary)', background: 'rgba(255,140,0,.2)', fontSize: '10px', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '3px' } },
+              [h('span', { class: 'trj-pulse-dot' }), h('span', { text: 'ATUALIZAR GENESIS' })]);
+          }
           function timeBadge() {
             if (!elapsed) return null;
             var bits = [];
@@ -750,11 +763,13 @@
             bits.push(h('span', { text: 'há ' + elapsed.texto }));
             return h('span', { class: 'trj-badge', style: { color: elapsed.cor, background: elapsed.bg, fontSize: '10px', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '2px', marginTop: '2px' } }, bits);
           }
+          function buildCel(mainEl) {
+            var parts = [atualizarBadge(), mainEl, timeBadge()].filter(Boolean);
+            return parts.length === 1 ? parts[0] :
+              h('span', { style: { display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start' } }, parts);
+          }
           if (!textoDetalhe || textoDetalhe === '#') {
-            var semInfo = h('span', { style: { color: 'var(--trj-muted)', fontStyle: 'italic', fontSize: '11px' }, text: 'SEM INFO' });
-            var tb = timeBadge();
-            if (!tb) return semInfo;
-            return h('span', { style: { display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start' } }, [semInfo, tb]);
+            return buildCel(h('span', { style: { color: 'var(--trj-muted)', fontStyle: 'italic', fontSize: '11px' }, text: 'SEM INFO' }));
           }
           var resumo = textoDetalhe.replace(/\n+/g, ' ').slice(0, 38) + (textoDetalhe.length > 38 ? '…' : '');
           var cel = h('span', {
@@ -766,9 +781,7 @@
             var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontSize: '13px', lineHeight: '1.8', padding: '4px' }, text: textoDetalhe });
             U.openModal('Detalhe', cid);
           });
-          var tb2 = timeBadge();
-          if (!tb2) return cel;
-          return h('span', { style: { display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start' } }, [cel, tb2]);
+          return buildCel(cel);
         }())
       ]);
     });
