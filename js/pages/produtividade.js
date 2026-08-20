@@ -79,10 +79,28 @@
     try { localStorage.removeItem(LS_KEY); } catch (e) {}
   }
 
+  // Retorna somente o registro mais recente por TSK (maior sequenciaId = col C).
+  // Garante que TSKs reabertas (Concluída → Iniciado) não sejam contadas como encerradas.
+  function maisRecentePorTSK(tasks) {
+    var mapa = {};
+    (tasks || []).forEach(function (t) {
+      var tsk = t.osNumero || '';
+      if (!tsk) return;
+      var seq = Number(t.sequenciaId) || 0;
+      var atual = mapa[tsk];
+      if (!atual || seq > (Number(atual.sequenciaId) || 0)) mapa[tsk] = t;
+    });
+    return Object.keys(mapa).map(function (k) { return mapa[k]; });
+  }
+
   // ── Computar métricas de um array de tasksEnriched ─────────────────
-  // Retorna objeto { diasMap: { 'YYYY-MM-DD': {total,dentro,fora,cci,campo} }, reinciByDay }
+  // Retorna objeto { byDay, byDayFiltro, reinciByDay }
   function computarMetricas(tasks) {
-    var concluidas = (tasks || []).filter(function (t) {
+    // Deduplica por TSK usando sequenciaId (col C) — somente o status mais recente conta.
+    // Evita contar como encerrada uma TSK que voltou para Iniciado/Não Iniciado.
+    var uniqueTasks = maisRecentePorTSK(tasks);
+
+    var concluidas = uniqueTasks.filter(function (t) {
       return isConcluida(t) && toIsoDay(t.fimCalc);
     });
 
@@ -115,7 +133,7 @@
       });
     });
 
-    // Reincidentes: mesmo END_ID encerrado em dois dias com gap ≤7 dias
+    // Índice de fechamentos por enderecoId (para reincidência)
     var endClosures = {};
     concluidas.forEach(function (t) {
       if (!t.enderecoId) return;
@@ -126,6 +144,8 @@
     });
 
     var reinciByDay = {};
+
+    // Tipo 1: mesmo END_ID encerrado duas vezes com gap ≤ 7 dias
     Object.keys(endClosures).forEach(function (eid) {
       var list = endClosures[eid].slice().sort(function (a, b) {
         return a.dia < b.dia ? -1 : 1;
@@ -137,6 +157,33 @@
           var d = list[i].dia;
           if (!reinciByDay[d]) reinciByDay[d] = [];
           reinciByDay[d].push({ eid: eid, task: list[i].task, prevTask: list[i - 1].task, gap: gapDia });
+        }
+      }
+    });
+
+    // Tipo 2: END_ID encerrado em dia anterior com nova TSK ABERTA hoje (reincidente ativo)
+    var hoje = toIsoDay(new Date());
+    var eidsAbertos = {};
+    uniqueTasks.forEach(function (t) {
+      if (!isBacklog(t) || !t.enderecoId) return;
+      var eid = String(t.enderecoId).trim();
+      if (!eidsAbertos[eid]) eidsAbertos[eid] = [];
+      eidsAbertos[eid].push(t);
+    });
+
+    Object.keys(eidsAbertos).forEach(function (eid) {
+      if (!endClosures[eid]) return;
+      var lastClosure = endClosures[eid].reduce(function (best, c) {
+        return (!best || c.dia > best.dia) ? c : best;
+      }, null);
+      if (!lastClosure || lastClosure.dia >= hoje) return; // ignora: sem fechamento anterior
+      var gapMs  = new Date(hoje).getTime() - new Date(lastClosure.dia).getTime();
+      var gapDia = Math.round(gapMs / 864e5);
+      if (gapDia >= 1 && gapDia <= 7) {
+        if (!reinciByDay[hoje]) reinciByDay[hoje] = [];
+        var jaEsta = reinciByDay[hoje].some(function (r) { return r.eid === eid; });
+        if (!jaEsta) {
+          reinciByDay[hoje].push({ eid: eid, task: eidsAbertos[eid][0], prevTask: lastClosure.task, gap: gapDia });
         }
       }
     });
@@ -167,13 +214,15 @@
 
   // ── Hoje: backlog + encerramentos parciais ─────────────────────────
   function computarHoje(tasks) {
+    // Deduplica por TSK (maior sequenciaId): evita contar tarefas reabertas como encerradas.
+    var uniqueTasks = maisRecentePorTSK(tasks);
     var hoje = toIsoDay(new Date());
     var backlogTotal = 0, backlogVencendo = 0;
     var encHoje = 0, dentroHoje = 0, foraHoje = 0, cciHoje = 0, campoHoje = 0;
     var tasksHoje = [];
     var now = Date.now();
 
-    (tasks || []).forEach(function (t) {
+    uniqueTasks.forEach(function (t) {
       if (isBacklog(t)) {
         backlogTotal++;
         if (t.vencimentoCalc) {
