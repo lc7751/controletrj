@@ -121,13 +121,23 @@
     var incidents = data.incidentsEnriched || [];
     var tasks     = data.tasksEnriched     || [];
 
-    // Dados de mapa: contexto > localStorage > defaultCoordMap (embutido) > vazio
-    // defaultCoordMap vem de js/data/mapa-coords.js — 2874 coords extraídas do Genesis HTML.
-    // Não precisa de import para ter coordenadas — só o status em tempo real precisa da ponte.
-    var coordMap    = ctx.mapaCoordMap || loadLS(LS_COORDS)  || TRJ.defaultCoordMap || {};
-    var mwData      = ctx.mapaMwData   || loadLS(LS_MW)      || [];
-    var foData      = ctx.mapaFoData   || loadLS(LS_FO)      || [];
-    var mapaMarkers = loadLS(LS_MARKERS) || [];  // sites fora do Genesis Mapa (markerData)
+    // Dados de mapa: contexto > localStorage > estáticos embutidos > vazio
+    var coordMap = ctx.mapaCoordMap || loadLS(LS_COORDS) || TRJ.defaultCoordMap || {};
+    var mapaMarkers = loadLS(LS_MARKERS) || [];
+
+    // mwData e foData: formato compacto [la,loa,lb,lob,enlace2,forn] → normalizar para objetos
+    function _normMw(x) {
+      if (!Array.isArray(x)) return x;
+      return { LAT_A: x[0], LONG_A: x[1], LAT_B: x[2], LONG_B: x[3], Enlace: x[4], Enlace2: x[4], FORNECEDOR: x[5] };
+    }
+    function _normFo(x) {
+      if (!Array.isArray(x)) return x;
+      return { LAT_A: x[0], LONG_A: x[1], HUB: x[2], NEName: x[3] };
+    }
+    var rawMw = ctx.mapaMwData || loadLS(LS_MW) || TRJ.defaultMwData || [];
+    var rawFo = ctx.mapaFoData || loadLS(LS_FO) || TRJ.defaultFoData || [];
+    var mwData = rawMw.map(_normMw);
+    var foData = rawFo.map(_normFo);
 
     // ── Construir lookup ENDID → {site} a partir das tarefas ─
     var siteByEndId = {};
@@ -164,8 +174,9 @@
       .catch(function(e){ cb('Erro na geocodificação: ' + e.message); });
     }
 
-    // ── Medição de distância ─────────────────────────────────────────────
-    var measMode = { active: false, pts: [], layer: null };
+    // ── Rota / distância ─────────────────────────────────────────────────
+    var rotaLayer = null;
+    var rotaPainelEl = null;
     function haversineKm(lat1, lon1, lat2, lon2) {
       var R = 6371;
       var dLat = (lat2 - lat1) * Math.PI / 180;
@@ -203,13 +214,6 @@
 
     var statsEl = U.h('div', { style: { fontSize:'12px', color:'var(--trj-muted)', display:'flex', gap:'14px', flexWrap:'wrap', alignItems:'center' } });
 
-    // Botão de medição de distância
-    var btnMedir = U.h('button', {
-      class: 'trj-btn trj-btn-ghost clickable',
-      style: { fontSize:'12px', padding:'4px 12px', display:'inline-flex', alignItems:'center', gap:'6px' },
-      title: 'Medir distância entre dois sites (clique em dois marcadores)'
-    }, [U.h('span',{text:'📏 Distância'})]);
-
     // Botão buscar via ponte
     var btnPonte = U.h('button', {
       class: 'trj-btn trj-btn-primary clickable',
@@ -228,18 +232,149 @@
       style: { display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', marginBottom:'10px',
                padding:'10px 14px', background:'var(--trj-card)', borderRadius:'10px', border:'1px solid var(--trj-border)',
                position:'relative', zIndex:'1' }
-    }, [searchInput, ckFlag0.el, ckMW.el, ckFO.el, btnMedir]
+    }, [searchInput, ckFlag0.el, ckMW.el, ckFO.el]
        .concat(readOnly ? [] : [U.h('div', {style:{marginLeft:'auto',display:'flex',gap:'8px'}}, [btnPonte, btnImport])]));
 
-    // Painel de resultado da distância (inserido após ctrlBar/statsEl, antes do mapDiv)
-    var distPanel = U.h('div', {
-      style: { display:'none', background:'var(--trj-card2)', border:'1px solid var(--trj-primary)',
-               borderRadius:'8px', padding:'8px 14px', fontSize:'12px', marginTop:'6px', marginBottom:'4px',
-               color:'var(--trj-fg)', position:'relative', zIndex:'1' }
-    });
     container.appendChild(ctrlBar);
     container.appendChild(statsEl);
-    container.appendChild(distPanel);
+
+    // ── Painel de rota ────────────────────────────────────────────────────
+    (function buildRotaPanel() {
+      var letras = 'ABCDEFGHIJKLMNOP';
+      var expanded = false;
+      var pontoInputs = []; // {inp, el}
+
+      // Datalist com todos os ENDIDs + nome
+      var dlId = 'rota-sites-dl';
+      if (!document.getElementById(dlId)) {
+        var dl = document.createElement('datalist');
+        dl.id = dlId;
+        Object.keys(coordMap).forEach(function(eid) {
+          var opt = document.createElement('option');
+          opt.value = eid + (siteByEndId[eid] ? ' — ' + siteByEndId[eid] : '');
+          dl.appendChild(opt);
+        });
+        document.body.appendChild(dl);
+      }
+
+      var pontosWrap = U.h('div', { style: { display:'flex', flexDirection:'column', gap:'5px' } });
+      var resultDiv  = U.h('div', { style: { display:'none', marginTop:'8px', fontSize:'12px' } });
+
+      function criarLinhaPonto(idx) {
+        var inp = U.h('input', {
+          type: 'text', list: dlId,
+          placeholder: 'ENDID ou nome do site...',
+          style: { flex:'1', background:'var(--trj-card2)', border:'1px solid var(--trj-border)',
+                   borderRadius:'6px', color:'var(--trj-fg)', padding:'4px 8px', fontSize:'12px',
+                   outline:'none' }
+        });
+        var btnX = U.h('button', {
+          style: { background:'none', border:'none', color:'var(--trj-muted)', cursor:'pointer', fontSize:'15px', lineHeight:'1', padding:'0 4px', flexShrink:'0' },
+          text: '×'
+        });
+        var badge = U.h('span', {
+          style: { fontSize:'11px', fontWeight:'700', color:'var(--trj-primary)', width:'16px', textAlign:'center', flexShrink:'0' },
+          text: letras[idx] || String(idx+1)
+        });
+        var linha = U.h('div', { style: { display:'flex', alignItems:'center', gap:'6px' } },
+          [badge, inp, btnX]);
+        var entry = { inp: inp, el: linha, badge: badge };
+        pontoInputs.push(entry);
+
+        btnX.addEventListener('click', function() {
+          var i = -1;
+          for (var j=0;j<pontoInputs.length;j++) { if (pontoInputs[j].el === linha) { i=j; break; } }
+          if (pontoInputs.length > 2 && i >= 0) {
+            pontoInputs.splice(i,1);
+            pontosWrap.removeChild(linha);
+            for (var k=0;k<pontoInputs.length;k++) pontoInputs[k].badge.textContent = letras[k]||String(k+1);
+          } else { inp.value = ''; }
+        });
+        return linha;
+      }
+
+      pontosWrap.appendChild(criarLinhaPonto(0));
+      pontosWrap.appendChild(criarLinhaPonto(1));
+
+      var btnAdd = U.h('button', {
+        class: 'trj-btn trj-btn-ghost clickable',
+        style: { fontSize:'11px', padding:'2px 10px' }, text: '+ Adicionar ponto'
+      });
+      var btnCalc = U.h('button', {
+        class: 'trj-btn trj-btn-primary clickable',
+        style: { fontSize:'11px', padding:'2px 12px' }, text: 'Calcular Rota'
+      });
+      var btnLimpar = U.h('button', {
+        class: 'trj-btn trj-btn-ghost clickable',
+        style: { fontSize:'11px', padding:'2px 10px' }, text: 'Limpar'
+      });
+
+      btnAdd.addEventListener('click', function() {
+        if (pontoInputs.length >= 8) { U.toast('Máximo de 8 pontos.', 'err'); return; }
+        var novaLinha = criarLinhaPonto(pontoInputs.length);
+        pontosWrap.appendChild(novaLinha);
+      });
+
+      function parseEid(val) {
+        val = (val||'').trim();
+        var sep = val.indexOf(' — ');
+        return (sep > 0 ? val.substring(0, sep) : val).trim();
+      }
+
+      btnCalc.addEventListener('click', function() {
+        var pts = [];
+        pontoInputs.forEach(function(p) {
+          var eid = parseEid(p.inp.value);
+          if (!eid) return;
+          var c = coordMap[eid];
+          if (!c) {
+            var low = eid.toLowerCase();
+            var keys = Object.keys(coordMap);
+            for (var i=0;i<keys.length;i++) { if (keys[i].toLowerCase()===low) { c=coordMap[keys[i]]; eid=keys[i]; break; } }
+          }
+          if (!c) { U.toast('Site "'+eid+'" não encontrado.','err'); return; }
+          pts.push({ lat:c[0], lon:c[1], nome: eid+(siteByEndId[eid]?' — '+siteByEndId[eid]:'') });
+        });
+        if (pts.length < 2) { U.toast('Informe pelo menos 2 sites válidos.','err'); return; }
+        calcularRota(pts, resultDiv);
+      });
+
+      btnLimpar.addEventListener('click', function() {
+        pontoInputs.forEach(function(p){ p.inp.value=''; });
+        while (pontoInputs.length > 2) { pontosWrap.removeChild(pontoInputs.pop().el); }
+        for (var k=0;k<pontoInputs.length;k++) pontoInputs[k].badge.textContent=letras[k];
+        if (rotaLayer) { rotaLayer.remove(); rotaLayer=null; }
+        resultDiv.style.display='none'; resultDiv.innerHTML='';
+      });
+
+      var acoesEl = U.h('div', { style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'6px',flexWrap:'wrap'} },
+        [btnAdd, btnCalc, btnLimpar]);
+
+      var bodyEl = U.h('div', { style:{marginTop:'8px',display:'none'} }, [pontosWrap, acoesEl, resultDiv]);
+
+      var toggleBtn = U.h('button', {
+        style:{background:'none',border:'none',color:'var(--trj-muted)',cursor:'pointer',fontSize:'12px',padding:'0'},
+        text: '▸'
+      });
+
+      var headerEl = U.h('div', {
+        style:{display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer'}
+      }, [
+        U.h('span',{style:{fontSize:'12px',fontWeight:'600',color:'var(--trj-fg)'},text:'📏 Calcular Rota de Atendimento'}),
+        toggleBtn
+      ]);
+      headerEl.addEventListener('click', function() {
+        expanded = !expanded;
+        bodyEl.style.display = expanded ? '' : 'none';
+        toggleBtn.textContent = expanded ? '▾' : '▸';
+      });
+
+      rotaPainelEl = U.h('div', {
+        style:{background:'var(--trj-card)',border:'1px solid var(--trj-border)',borderRadius:'8px',
+               padding:'10px 14px',marginTop:'6px',marginBottom:'2px',position:'relative',zIndex:'1'}
+      }, [headerEl, bodyEl]);
+      container.appendChild(rotaPainelEl);
+    })();
 
     // ── Container do mapa ──────────────────────────────────────
     // z-index do mapa menor que a sidebar (a sidebar usa z-index 200+)
@@ -371,65 +506,75 @@
         timer = setTimeout(function() { filtrarMarcadores(searchInput.value.trim().toLowerCase()); }, 200);
       });
 
-      // ── Modo medição de distância ──────────────────────────────────────
-      function ativarMedMode(on) {
-        measMode.active = on;
-        measMode.pts = [];
-        if (measMode.layer) { measMode.layer.remove(); measMode.layer = null; }
-        distPanel.style.display = 'none';
-        btnMedir.style.background = on ? 'rgba(255,140,0,.25)' : '';
-        btnMedir.style.borderColor = on ? 'var(--trj-primary)' : '';
-        btnMedir.style.color = on ? 'var(--trj-primary)' : '';
-        mapInstance.getContainer().style.cursor = on ? 'crosshair' : '';
-        if (on) U.toast('Clique em dois marcadores para medir a distância.', 'ok');
-      }
-      btnMedir.addEventListener('click', function() { ativarMedMode(!measMode.active); });
     }
 
-    // ── Medir via OSRM (roteamento real) + Haversine (reta) ─────────────
-    function medirDistancia(latA, lonA, nomeA, latB, lonB, nomeB) {
-      var distReta = haversineKm(latA, lonA, latB, lonB);
-      distPanel.innerHTML = '<b>📏 ' + nomeA + '</b> → <b>' + nomeB + '</b> &nbsp;|&nbsp; '
-        + '<span style="color:var(--trj-primary)">Reta: ' + distReta.toFixed(1) + ' km</span>'
-        + ' &nbsp;<span style="color:var(--trj-muted)">(buscando rota...)</span>'
-        + ' &nbsp;<button onclick="this.parentElement.style.display=\'none\'" style="float:right;background:none;border:none;color:var(--trj-muted);cursor:pointer;font-size:14px">✕</button>';
-      distPanel.style.display = 'block';
+    // ── Calcular rota real via OSRM com polyline no mapa ────────────────
+    function calcularRota(pts, resultDiv) {
+      if (!mapInstance || pts.length < 2) return;
+      if (rotaLayer) { rotaLayer.remove(); rotaLayer = null; }
+      resultDiv.style.display = 'block';
+      resultDiv.innerHTML = '<span style="color:var(--trj-muted)">⏳ Calculando rota...</span>';
 
-      fetch('https://router.project-osrm.org/route/v1/driving/' + lonA + ',' + latA + ';' + lonB + ',' + latB + '?overview=false')
+      var waypoints = pts.map(function(p){ return p.lon+','+p.lat; }).join(';');
+      var url = 'https://router.project-osrm.org/route/v1/driving/'+waypoints+'?overview=full&geometries=geojson&steps=false';
+
+      fetch(url)
         .then(function(r){ return r.json(); })
         .then(function(data){
-          if (!data.routes || !data.routes.length) { return; }
+          if (!data.routes || !data.routes.length) throw new Error('sem_rota');
           var rota = data.routes[0];
-          var km = (rota.distance/1000).toFixed(1);
-          var tempo = fmtTempo(Math.round(rota.duration));
-          distPanel.innerHTML = '<b>📏 ' + nomeA + '</b> → <b>' + nomeB + '</b> &nbsp;|&nbsp; '
-            + '<span style="color:var(--trj-primary)">Reta: ' + distReta.toFixed(1) + ' km</span>'
-            + ' &nbsp;|&nbsp; <span style="color:#2ecc71">🚗 Rota: ' + km + ' km</span>'
-            + ' &nbsp;|&nbsp; <span style="color:#3498db">⏱ ' + tempo + '</span>'
-            + ' &nbsp;<button onclick="this.parentElement.style.display=\'none\'" style="float:right;background:none;border:none;color:var(--trj-muted);cursor:pointer;font-size:14px">✕</button>';
-        })
-        .catch(function(){ /* silencia — OSRM pode estar indisponível */ });
-    }
+          var geom = rota.geometry.coordinates; // [[lon,lat],...]
+          var latlngs = geom.map(function(c){ return [c[1],c[0]]; });
 
-    // ── Registrar clique num marcador para o modo distância ──────────────
-    function registrarPontoMed(lat, lon, nome) {
-      if (!measMode.active) return false;
-      measMode.pts.push({ lat:lat, lon:lon, nome:nome });
-      if (measMode.pts.length === 1) {
-        U.toast('Ponto A: ' + nome + '. Clique em outro marcador.', 'ok');
-        return true;
-      }
-      if (measMode.pts.length >= 2) {
-        var a = measMode.pts[0], b = measMode.pts[1];
-        if (measMode.layer) measMode.layer.remove();
-        measMode.layer = window.L.polyline([[a.lat,a.lon],[b.lat,b.lon]], {
-          color:'#ff8c00', weight:3, dashArray:'6,4', opacity:0.9
-        }).addTo(mapInstance);
-        medirDistancia(a.lat, a.lon, a.nome, b.lat, b.lon, b.nome);
-        measMode.pts = []; // reset para nova medição
-        return true;
-      }
-      return true;
+          rotaLayer = window.L.polyline(latlngs, { color:'#ff8c00', weight:5, opacity:0.88 }).addTo(mapInstance);
+          mapInstance.fitBounds(rotaLayer.getBounds().pad(0.15), { maxZoom:14 });
+
+          var legs = rota.legs || [];
+          var html = '<div style="border-radius:6px;overflow:hidden;border:1px solid var(--trj-border)">';
+          var totDist=0, totDur=0;
+          legs.forEach(function(leg,i){
+            var km=(leg.distance/1000).toFixed(1);
+            var t=fmtTempo(Math.round(leg.duration));
+            totDist+=leg.distance; totDur+=leg.duration;
+            html+='<div style="padding:5px 10px;border-bottom:1px solid var(--trj-border);display:flex;gap:10px;align-items:baseline">'
+              +'<b style="color:var(--trj-primary);white-space:nowrap">'+'ABCDEFGHIJKLMNOP'[i]+' → '+'ABCDEFGHIJKLMNOP'[i+1]+'</b>'
+              +'<span style="color:var(--trj-muted);font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+              +pts[i].nome+' → '+pts[i+1].nome+'</span>'
+              +'<span style="color:#2ecc71;white-space:nowrap">🚗 '+km+' km</span>'
+              +' <span style="color:#3498db;white-space:nowrap">⏱ '+t+'</span>'
+              +'</div>';
+          });
+          if (legs.length>1) {
+            html+='<div style="padding:5px 10px;background:var(--trj-card2);display:flex;gap:14px;font-weight:700">'
+              +'<span>Total</span>'
+              +'<span style="color:#2ecc71">🚗 '+(totDist/1000).toFixed(1)+' km</span>'
+              +'<span style="color:#3498db">⏱ '+fmtTempo(Math.round(totDur))+'</span>'
+              +'</div>';
+          }
+          html+='</div>';
+          resultDiv.innerHTML = html;
+        })
+        .catch(function(){
+          // Fallback: linha reta com Haversine
+          var html='<div style="color:var(--trj-muted);font-size:11px;margin-bottom:4px">OSRM indisponível — distância em linha reta:</div>'
+            +'<div style="border-radius:6px;overflow:hidden;border:1px solid var(--trj-border)">';
+          var totKm=0;
+          var latlngs = pts.map(function(p){ return [p.lat,p.lon]; });
+          for (var i=0;i<pts.length-1;i++){
+            var km=haversineKm(pts[i].lat,pts[i].lon,pts[i+1].lat,pts[i+1].lon);
+            totKm+=km;
+            html+='<div style="padding:5px 10px;border-bottom:1px solid var(--trj-border);display:flex;gap:10px">'
+              +'<b style="color:var(--trj-primary)">'+'ABCDEFGH'[i]+' → '+'ABCDEFGH'[i+1]+'</b>'
+              +'<span style="color:var(--trj-muted);flex:1">'+pts[i].nome+' → '+pts[i+1].nome+'</span>'
+              +'<span style="color:var(--trj-primary)">~'+km.toFixed(1)+' km (reta)</span>'
+              +'</div>';
+          }
+          if (pts.length>2) html+='<div style="padding:5px 10px;font-weight:700">Total reta: ~'+totKm.toFixed(1)+' km</div>';
+          html+='</div>';
+          resultDiv.innerHTML=html;
+          rotaLayer=window.L.polyline(latlngs,{color:'#ff8c00',weight:3,dashArray:'6,4',opacity:0.8}).addTo(mapInstance);
+          mapInstance.fitBounds(rotaLayer.getBounds().pad(0.15),{maxZoom:14});
+        });
     }
 
     function filtrarMarcadores(q) {
@@ -543,12 +688,6 @@
           + '</div>';
         marker.bindPopup(popContent, { maxWidth: 300 });
         marker.bindTooltip(nome + ' (' + eid + ')', { direction:'top' });
-        marker.on('click', function(e) {
-          if (registrarPontoMed(lat, lon, nome + ' (' + eid + ')')) {
-            e.originalEvent && e.originalEvent.stopPropagation();
-            return;
-          }
-        });
         marker.addTo(layers.flag1);
       });
 
@@ -707,11 +846,6 @@
           + '</div>';
         marker.bindPopup(popContent, { maxWidth:300 });
         marker.bindTooltip(nome + ' (' + eid + ')', { direction:'top' });
-        marker.on('click', function(e) {
-          if (registrarPontoMed(coords[0], coords[1], nome + ' (' + eid + ')')) {
-            e.originalEvent && e.originalEvent.stopPropagation();
-          }
-        });
         marker.addTo(layers.flag1);
       });
 
