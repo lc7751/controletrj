@@ -42,6 +42,9 @@
     ['enderecoId',         67, 's'],
     ['motivoCancelamento', 59, 's'],   // BG — diário de trabalho / notas de técnico
     ['siteId',             84, 's'],
+    ['enderecoLogradouro',  8, 's'],   // H — endereço/logradouro (usado no mapa p/ geocod. TSK)
+    ['cidade',             10, 's'],   // J — cidade
+    ['bairro',             31, 's'],   // AE — bairro
     ['tipoFalha',         132, 's'],
     ['isocDJ',            114, 's'],   // DJ — tipo de cliente (ex.: "ISOC SERVICOS FIXO PREMIUM CLASS")
     ['dataCriacaoAS',      45, 'd'],   // AS — data original de criação (usada para Aging do Backlog)

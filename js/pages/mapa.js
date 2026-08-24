@@ -107,6 +107,41 @@
     var mapInstance = null, layers = {};
     var sitesFlag1 = [], sitesFlag0Raw = [];
 
+    // ── Geocodificação TSK (Nominatim) — cache em localStorage ───────────
+    var GEO_CACHE_KEY = 'trj_geo_cache';
+    var geoCache = (function() { try { return JSON.parse(localStorage.getItem(GEO_CACHE_KEY)||'{}'); } catch(e){ return {}; } })();
+    function geocodificarEndereco(logradouro, cidade, bairro, cb) {
+      var q = [logradouro, bairro, cidade, 'Brasil'].filter(Boolean).join(', ');
+      if (geoCache[q]) { cb(null, geoCache[q]); return; }
+      fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q), {
+        headers: { 'Accept-Language': 'pt-BR,pt', 'User-Agent': 'ControleTRJ/1.0' }
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (!data || !data.length) { cb('Não encontrado'); return; }
+        var res = { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name };
+        try { geoCache[q] = res; localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(geoCache)); } catch(e){}
+        cb(null, res);
+      })
+      .catch(function(e){ cb('Erro na geocodificação: ' + e.message); });
+    }
+
+    // ── Medição de distância ─────────────────────────────────────────────
+    var measMode = { active: false, pts: [], layer: null };
+    function haversineKm(lat1, lon1, lat2, lon2) {
+      var R = 6371;
+      var dLat = (lat2 - lat1) * Math.PI / 180;
+      var dLon = (lon2 - lon1) * Math.PI / 180;
+      var a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+              Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+    function fmtTempo(seg) {
+      if (seg < 60) return seg + 's';
+      var m = Math.round(seg/60); if (m < 60) return m + 'min';
+      return Math.floor(m/60) + 'h' + (m%60 ? (m%60)+'min' : '');
+    }
+
     // ── Header ─────────────────────────────────────────────────
     container.appendChild(U.pageHeader('Mapa Operacional',
       'Sites fora georreferenciados, enlaces MW e hubs FO em tempo real.'));
@@ -130,6 +165,13 @@
 
     var statsEl = U.h('div', { style: { fontSize:'12px', color:'var(--trj-muted)', display:'flex', gap:'14px', flexWrap:'wrap', alignItems:'center' } });
 
+    // Botão de medição de distância
+    var btnMedir = U.h('button', {
+      class: 'trj-btn trj-btn-ghost clickable',
+      style: { fontSize:'12px', padding:'4px 12px', display:'inline-flex', alignItems:'center', gap:'6px' },
+      title: 'Medir distância entre dois sites (clique em dois marcadores)'
+    }, [U.h('span',{text:'📏 Distância'})]);
+
     // Botão buscar via ponte
     var btnPonte = U.h('button', {
       class: 'trj-btn trj-btn-primary clickable',
@@ -147,12 +189,19 @@
     var ctrlBar = U.h('div', {
       style: { display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', marginBottom:'10px',
                padding:'10px 14px', background:'var(--trj-card)', borderRadius:'10px', border:'1px solid var(--trj-border)',
-               // z-index garante que barra de controles fique sobre o mapa mas abaixo da sidebar
                position:'relative', zIndex:'1' }
-    }, [searchInput, ckFlag0.el, ckMW.el, ckFO.el]
+    }, [searchInput, ckFlag0.el, ckMW.el, ckFO.el, btnMedir]
        .concat(readOnly ? [] : [U.h('div', {style:{marginLeft:'auto',display:'flex',gap:'8px'}}, [btnPonte, btnImport])]));
+
+    // Painel de resultado da distância (inserido após ctrlBar/statsEl, antes do mapDiv)
+    var distPanel = U.h('div', {
+      style: { display:'none', background:'var(--trj-card2)', border:'1px solid var(--trj-primary)',
+               borderRadius:'8px', padding:'8px 14px', fontSize:'12px', marginTop:'6px', marginBottom:'4px',
+               color:'var(--trj-fg)', position:'relative', zIndex:'1' }
+    });
     container.appendChild(ctrlBar);
     container.appendChild(statsEl);
+    container.appendChild(distPanel);
 
     // ── Container do mapa ──────────────────────────────────────
     // z-index do mapa menor que a sidebar (a sidebar usa z-index 200+)
@@ -237,13 +286,17 @@
 
     function initMap() {
       if (mapInstance) return;
-      mapInstance = window.L.map('trj-mapa-leaflet', { preferCanvas: true })
+      mapInstance = window.L.map('trj-mapa-leaflet', { preferCanvas: true, zoomControl: true })
         .setView([-22.3, -43.1], 8);
 
       window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap | CARTO',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
         maxZoom: 19
       }).addTo(mapInstance);
+
+      // Garante re-render correto ao exibir em aba SPA (container pode estar oculto no primeiro render)
+      setTimeout(function() { mapInstance.invalidateSize(); }, 250);
 
       layers.flag1 = window.L.layerGroup().addTo(mapInstance);
       layers.flag0 = window.L.layerGroup();
@@ -279,6 +332,66 @@
         clearTimeout(timer);
         timer = setTimeout(function() { filtrarMarcadores(searchInput.value.trim().toLowerCase()); }, 200);
       });
+
+      // ── Modo medição de distância ──────────────────────────────────────
+      function ativarMedMode(on) {
+        measMode.active = on;
+        measMode.pts = [];
+        if (measMode.layer) { measMode.layer.remove(); measMode.layer = null; }
+        distPanel.style.display = 'none';
+        btnMedir.style.background = on ? 'rgba(255,140,0,.25)' : '';
+        btnMedir.style.borderColor = on ? 'var(--trj-primary)' : '';
+        btnMedir.style.color = on ? 'var(--trj-primary)' : '';
+        mapInstance.getContainer().style.cursor = on ? 'crosshair' : '';
+        if (on) U.toast('Clique em dois marcadores para medir a distância.', 'ok');
+      }
+      btnMedir.addEventListener('click', function() { ativarMedMode(!measMode.active); });
+    }
+
+    // ── Medir via OSRM (roteamento real) + Haversine (reta) ─────────────
+    function medirDistancia(latA, lonA, nomeA, latB, lonB, nomeB) {
+      var distReta = haversineKm(latA, lonA, latB, lonB);
+      distPanel.innerHTML = '<b>📏 ' + nomeA + '</b> → <b>' + nomeB + '</b> &nbsp;|&nbsp; '
+        + '<span style="color:var(--trj-primary)">Reta: ' + distReta.toFixed(1) + ' km</span>'
+        + ' &nbsp;<span style="color:var(--trj-muted)">(buscando rota...)</span>'
+        + ' &nbsp;<button onclick="this.parentElement.style.display=\'none\'" style="float:right;background:none;border:none;color:var(--trj-muted);cursor:pointer;font-size:14px">✕</button>';
+      distPanel.style.display = 'block';
+
+      fetch('https://router.project-osrm.org/route/v1/driving/' + lonA + ',' + latA + ';' + lonB + ',' + latB + '?overview=false')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (!data.routes || !data.routes.length) { return; }
+          var rota = data.routes[0];
+          var km = (rota.distance/1000).toFixed(1);
+          var tempo = fmtTempo(Math.round(rota.duration));
+          distPanel.innerHTML = '<b>📏 ' + nomeA + '</b> → <b>' + nomeB + '</b> &nbsp;|&nbsp; '
+            + '<span style="color:var(--trj-primary)">Reta: ' + distReta.toFixed(1) + ' km</span>'
+            + ' &nbsp;|&nbsp; <span style="color:#2ecc71">🚗 Rota: ' + km + ' km</span>'
+            + ' &nbsp;|&nbsp; <span style="color:#3498db">⏱ ' + tempo + '</span>'
+            + ' &nbsp;<button onclick="this.parentElement.style.display=\'none\'" style="float:right;background:none;border:none;color:var(--trj-muted);cursor:pointer;font-size:14px">✕</button>';
+        })
+        .catch(function(){ /* silencia — OSRM pode estar indisponível */ });
+    }
+
+    // ── Registrar clique num marcador para o modo distância ──────────────
+    function registrarPontoMed(lat, lon, nome) {
+      if (!measMode.active) return false;
+      measMode.pts.push({ lat:lat, lon:lon, nome:nome });
+      if (measMode.pts.length === 1) {
+        U.toast('Ponto A: ' + nome + '. Clique em outro marcador.', 'ok');
+        return true;
+      }
+      if (measMode.pts.length >= 2) {
+        var a = measMode.pts[0], b = measMode.pts[1];
+        if (measMode.layer) measMode.layer.remove();
+        measMode.layer = window.L.polyline([[a.lat,a.lon],[b.lat,b.lon]], {
+          color:'#ff8c00', weight:3, dashArray:'6,4', opacity:0.9
+        }).addTo(mapInstance);
+        medirDistancia(a.lat, a.lon, a.nome, b.lat, b.lon, b.nome);
+        measMode.pts = []; // reset para nova medição
+        return true;
+      }
+      return true;
     }
 
     function filtrarMarcadores(q) {
@@ -364,9 +477,14 @@
         var cor = tsk ? '#3498db' : (tempo === 0 ? '#f0b429' : '#e74c3c');
 
         var marker = window.L.marker([lat, lon], { icon: divIcon(cor, 14) });
-        marker._d = { eid:eid, site:nome, cidade:cidade };
+        marker._d = { eid:eid, site:nome, cidade:cidade, lat:lat, lon:lon };
 
-        var popContent = '<div style="font:12px ui-monospace,monospace;min-width:200px;padding:4px">'
+        // Monta endereço TSK se disponível
+        var tskEnd = tsk ? ((tsk.enderecoLogradouro||'') + (tsk.bairro ? ', '+tsk.bairro : '') + (tsk.cidade ? ' - '+tsk.cidade : '')) : '';
+        tskEnd = tskEnd.trim().replace(/^[,\s-]+|[,\s-]+$/g,'');
+
+        var popId = 'pop_' + eid.replace(/\W/g,'_');
+        var popContent = '<div id="' + popId + '" style="font:12px ui-monospace,monospace;min-width:210px">'
           + '<b style="color:' + cor + ';font-size:13px">' + nome + '</b><br>'
           + '<span style="color:#888">END_ID:</span> ' + eid + '<br>'
           + (cidade ? '<span style="color:#888">Cidade:</span> ' + cidade + '<br>' : '')
@@ -374,10 +492,25 @@
           + (site.evento ? '<span style="color:#888">Evento:</span> ' + site.evento + '<br>' : '')
           + (site.previsao ? '<span style="color:#888">Previsão:</span> ' + site.previsao + '<br>' : '')
           + (site.celulas ? '<span style="color:#888">Células:</span> ' + site.celulas + '<br>' : '')
-          + (tsk ? '<span style="color:#3498db;font-weight:700">TSK: ' + tsk.osNumero + '</span>' : '<span style="color:#e74c3c">Sem TSK aberta</span>')
+          + (tsk
+              ? '<b style="color:#3498db">TSK: ' + tsk.osNumero + '</b>'
+                + (tskEnd ? '<br><span style="color:#888">📍 Endereço TSK:</span> ' + tskEnd
+                   + '<br><button onclick="(function(){' +
+                     'var el=document.getElementById(\'' + popId + '\');' +
+                     'var btn=el.querySelector(\'.geo-btn\');btn.textContent=\'Geocodificando...\';btn.disabled=true;' +
+                     'TRJ._geocodTSK(\'' + eid + '\',' + lat + ',' + lon + ',\'' + encodeURIComponent(tsk.enderecoLogradouro||'') + '\',\'' + encodeURIComponent(tsk.cidade||'') + '\',\'' + encodeURIComponent(tsk.bairro||'') + '\', el);' +
+                   '})()" class="geo-btn" style="margin-top:4px;font-size:10px;padding:2px 7px;background:rgba(52,152,219,.15);color:#3498db;border:1px solid #3498db;border-radius:4px;cursor:pointer">📍 Ver endereço no mapa</button>'
+                   : '')
+              : '<span style="color:#e74c3c">Sem TSK aberta</span>')
           + '</div>';
-        marker.bindPopup(popContent, { maxWidth: 280 });
+        marker.bindPopup(popContent, { maxWidth: 300 });
         marker.bindTooltip(nome + ' (' + eid + ')', { direction:'top' });
+        marker.on('click', function(e) {
+          if (registrarPontoMed(lat, lon, nome + ' (' + eid + ')')) {
+            e.originalEvent && e.originalEvent.stopPropagation();
+            return;
+          }
+        });
         marker.addTo(layers.flag1);
       });
 
@@ -512,19 +645,35 @@
         var tempo = 99; // fallback; pode calcular a partir de inc.horario se necessário
         var cor = tsk ? '#3498db' : '#e74c3c';
         var marker = window.L.marker(coords, { icon: divIcon(cor, 14) });
-        marker._d = { eid:eid, site:nome, cidade:(inc.cidadeUf||'').split('/')[0].trim() };
-        var popContent = '<div style="font:12px ui-monospace,monospace;min-width:200px;padding:4px">'
+        var tskEnd2 = tsk ? ((tsk.enderecoLogradouro||'') + (tsk.bairro ? ', '+tsk.bairro : '') + (tsk.cidade ? ' - '+tsk.cidade : '')) : '';
+        tskEnd2 = tskEnd2.trim().replace(/^[,\s-]+|[,\s-]+$/g,'');
+        var popId2 = 'pop2_' + eid.replace(/\W/g,'_');
+        marker._d = { eid:eid, site:nome, cidade:(inc.cidadeUf||'').split('/')[0].trim(), lat:coords[0], lon:coords[1] };
+        var popContent = '<div id="' + popId2 + '" style="font:12px ui-monospace,monospace;min-width:210px">'
           + '<b style="color:' + cor + ';font-size:13px">' + nome + '</b><br>'
           + '<span style="color:#888">END_ID:</span> ' + eid + '<br>'
           + ((inc.cidadeUf) ? '<span style="color:#888">Cidade:</span> ' + inc.cidadeUf + '<br>' : '')
           + '<span style="color:#888">Queda:</span> ' + (inc.horario||'—') + '<br>'
           + '<span style="color:#888">Duração:</span> ' + (inc.downtime||'—') + '<br>'
           + '<span style="color:#888">Causa:</span> ' + (inc.causa||'/') + '<br>'
-          + (tsk ? '<span style="color:#3498db;font-weight:700">TSK: ' + tsk.osNumero + '</span>'
-                 : '<span style="color:#e74c3c">Sem TSK aberta</span>')
+          + (tsk
+              ? '<b style="color:#3498db">TSK: ' + tsk.osNumero + '</b>'
+                + (tskEnd2 ? '<br><span style="color:#888">📍 Endereço TSK:</span> ' + tskEnd2
+                   + '<br><button onclick="(function(){' +
+                     'var el=document.getElementById(\'' + popId2 + '\');' +
+                     'var btn=el.querySelector(\'.geo-btn\');btn.textContent=\'Geocodificando...\';btn.disabled=true;' +
+                     'TRJ._geocodTSK(\'' + eid + '\',' + coords[0] + ',' + coords[1] + ',\'' + encodeURIComponent(tsk.enderecoLogradouro||'') + '\',\'' + encodeURIComponent(tsk.cidade||'') + '\',\'' + encodeURIComponent(tsk.bairro||'') + '\', el);' +
+                   '})()" class="geo-btn" style="margin-top:4px;font-size:10px;padding:2px 7px;background:rgba(52,152,219,.15);color:#3498db;border:1px solid #3498db;border-radius:4px;cursor:pointer">📍 Ver endereço no mapa</button>'
+                   : '')
+              : '<span style="color:#e74c3c">Sem TSK aberta</span>')
           + '</div>';
-        marker.bindPopup(popContent, { maxWidth:280 });
+        marker.bindPopup(popContent, { maxWidth:300 });
         marker.bindTooltip(nome + ' (' + eid + ')', { direction:'top' });
+        marker.on('click', function(e) {
+          if (registrarPontoMed(coords[0], coords[1], nome + ' (' + eid + ')')) {
+            e.originalEvent && e.originalEvent.stopPropagation();
+          }
+        });
         marker.addTo(layers.flag1);
       });
 
@@ -603,6 +752,38 @@
       };
       reader.readAsText(file, 'utf-8');
     });
+
+    // ── Handler global de geocodificação para callbacks nos popups ───────
+    TRJ._geocodTSK = function(eid, latGenesis, lonGenesis, endEnc, cidEnc, bairroEnc, el) {
+      var log = decodeURIComponent(endEnc), cid = decodeURIComponent(cidEnc), bai = decodeURIComponent(bairroEnc);
+      geocodificarEndereco(log, cid, bai, function(err, res) {
+        var btn = el && el.querySelector('.geo-btn');
+        if (err) {
+          if (btn) { btn.textContent = '⚠ ' + err; btn.disabled = false; }
+          return;
+        }
+        // Marcar posição TSK com marcador laranja diferenciado
+        var mTSK = window.L.marker([res.lat, res.lon], { icon: divIcon('#ff8c00', 16) });
+        mTSK.bindPopup('<b style="color:#ff8c00">📍 Endereço TSK</b><br>' + log + (bai?', '+bai:'') + '<br>' + cid
+          + '<br><small style="color:#888">Coord. Genesis do site:</small> ' + latGenesis.toFixed(5) + ', ' + lonGenesis.toFixed(5)
+          + '<br><small style="color:#888">Coord. endereço TSK:</small> ' + res.lat.toFixed(5) + ', ' + res.lon.toFixed(5));
+        mTSK.addTo(mapInstance);
+
+        // Desenhar linha entre Genesis e endereço TSK
+        var linhaTSK = window.L.polyline([[latGenesis, lonGenesis],[res.lat, res.lon]], {
+          color:'#ff8c00', weight:2, dashArray:'4,4', opacity:0.7
+        }).addTo(mapInstance);
+
+        // Distância entre os dois pontos
+        var distM = haversineKm(latGenesis, lonGenesis, res.lat, res.lon);
+        if (btn) btn.textContent = '✓ ' + distM.toFixed(2) + ' km do endereço cadastral';
+
+        mapInstance.fitBounds([[latGenesis, lonGenesis],[res.lat, res.lon]], { padding:[40,40], maxZoom:15 });
+
+        // Limpa após 30s para não poluir o mapa
+        setTimeout(function(){ mTSK.remove(); linhaTSK.remove(); }, 30000);
+      });
+    };
 
     // ── Iniciar mapa automaticamente se tiver dados ────────────
     var temMW     = mwData.length > 0;
