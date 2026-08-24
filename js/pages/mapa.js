@@ -121,8 +121,10 @@
     var incidents = data.incidentsEnriched || [];
     var tasks     = data.tasksEnriched     || [];
 
-    // Dados de mapa: contexto (prioritário) > localStorage > vazio
-    var coordMap    = ctx.mapaCoordMap || loadLS(LS_COORDS)  || {};
+    // Dados de mapa: contexto > localStorage > defaultCoordMap (embutido) > vazio
+    // defaultCoordMap vem de js/data/mapa-coords.js — 2874 coords extraídas do Genesis HTML.
+    // Não precisa de import para ter coordenadas — só o status em tempo real precisa da ponte.
+    var coordMap    = ctx.mapaCoordMap || loadLS(LS_COORDS)  || TRJ.defaultCoordMap || {};
     var mwData      = ctx.mapaMwData   || loadLS(LS_MW)      || [];
     var foData      = ctx.mapaFoData   || loadLS(LS_FO)      || [];
     var mapaMarkers = loadLS(LS_MARKERS) || [];  // sites fora do Genesis Mapa (markerData)
@@ -830,22 +832,22 @@
     // ── Iniciar mapa automaticamente se tiver dados ────────────
     var temMW       = mwData.length > 0;
     var temMarkers  = mapaMarkers.length > 0;
-    var temCoords   = Object.keys(coordMap).length > 0;
+    var temCoords   = Object.keys(coordMap).length > 0; // true se defaultCoordMap carregou
     var temInc      = incidents.filter(function(i){ return (i.statusTrat||'').toUpperCase()!=='RESOLVIDO'; }).length > 0;
 
     getLeaflet(function() {
       initMap();
       // Prioridade de renderização:
-      // 1) mapaMarkers (do Genesis Mapa HTML — tem coords reais + campo tempo)
-      // 2) coordMap + incidentes (fallback para dados importados sem markerData)
+      // 1) mapaMarkers (do Genesis Mapa HTML — tem coords + campo tempo para coloração)
+      // 2) coordMap + incidentes (sempre disponível graças ao defaultCoordMap embutido)
       if (temMarkers) {
         renderSites(mapaMarkers);
       } else if (temCoords || temInc) {
         renderComCoordMap();
       }
-      renderEstaticos(); // MW e FO — calculado após sitesFlag1 ser populado
+      renderEstaticos();
       if (!temMarkers && !temCoords && !temInc) {
-        U.toast('Clique em "Buscar sites (ponte + VPN)" ou "Importar Genesis HTML" para carregar os marcadores.', 'ok');
+        U.toast('Importe os dados de incidentes ou use "Buscar sites (ponte + VPN)" para ver os marcadores.', 'ok');
       }
     });
   };
