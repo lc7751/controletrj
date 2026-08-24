@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
  * Página: Mapa Operacional TRJ
  * ============================================================
  * Mapa Leaflet com dados de sites vindos da ponte local
@@ -16,10 +16,11 @@
   TRJ.pages = TRJ.pages || {};
   var U = TRJ.ui, C = TRJ.constants;
 
-  var LS_COORDS = 'trj_coordMap';
-  var LS_MW     = 'trj_mwData';
-  var LS_FO     = 'trj_foData';
-  var PONTE_URL = 'http://localhost:5057';
+  var LS_COORDS   = 'trj_coordMap';
+  var LS_MW       = 'trj_mwData';
+  var LS_FO       = 'trj_foData';
+  var LS_MARKERS  = 'trj_mapaMarkers';  // sites fora com coordenadas (markerData do Genesis)
+  var PONTE_URL   = 'http://localhost:5057';
 
   // ── Cores exatas do mapa original ───────────────────────────
   var MW_CORES = {
@@ -39,14 +40,23 @@
   function saveLS(key, val) {
     try { localStorage.setItem(key, JSON.stringify(val)); } catch(e){}
   }
-  function salvarMapaDados(coordMap, mwData, foData) {
+  // Parseia coordenada com vírgula decimal, grau (°) e espaço-não-quebrável
+  function parseCoord(v) {
+    if (v == null) return NaN;
+    return parseFloat(String(v).replace(/\u00a0/g,'').replace(/°/g,'').replace(',','.'));
+  }
+
+  function salvarMapaDados(coordMap, mwData, foData, markers) {
     saveLS(LS_COORDS, coordMap);
     saveLS(LS_MW, mwData);
     saveLS(LS_FO, foData);
+    if (markers !== undefined) saveLS(LS_MARKERS, markers);
   }
   TRJ.mapaSetDados = salvarMapaDados;
 
-  // ── Parsear Genesis HTML → coordenadas + mwData + foData ──
+  // ── Parsear Genesis Mapa HTML → markerData + mwData + foData + coordMap ──
+  // markerData = sites fora com campos: NEName, Latitude, Longitude, ENDID, tempo, queda …
+  // Antes só extraía coords de mwData/foData — agora extrai do markerData (fonte principal).
   function parseGenesisParaMapa(htmlText) {
     function cleanJSON(raw) { return raw.replace(/\u00a0/g,'').replace(/\\u00a0/g,''); }
     function extract(pattern) {
@@ -54,27 +64,53 @@
       if (!m) return [];
       try { return JSON.parse(cleanJSON(m[1])); } catch(e){ return []; }
     }
-    var mwData = extract(/mwData\s*=\s*(\[[\s\S]*?\]);/);
-    var foData = extract(/foData\s*=\s*(\[[\s\S]*?\]);/);
 
-    function pc(s){ try { return parseFloat(String(s).replace(/\u00a0/g,'').replace(',','.')); } catch(e){ return null; } }
+    var markerData = extract(/markerData\s*=\s*(\[[\s\S]*?\]);/);
+    var mwData     = extract(/mwData\s*=\s*(\[[\s\S]*?\]);/);
+    var foData     = extract(/foData\s*=\s*(\[[\s\S]*?\]);/);
+
     var coordMap = {};
+
+    // 1) Sites fora — fonte principal (Latitude/Longitude capital, vírgula decimal)
+    markerData.forEach(function(site) {
+      var lat = parseCoord(site.Latitude  || site.latitude  || '');
+      var lon = parseCoord(site.Longitude || site.longitude || '');
+      var eid = String(site.ENDID || site.endId || '').trim();
+      if (eid && !isNaN(lat) && !isNaN(lon) && lat && lon && !coordMap[eid]) {
+        coordMap[eid] = [lat, lon];
+      }
+    });
+
+    // 2) Extremos dos enlaces MW (LAT_A/LONG_A … LAT_B/LONG_B)
     mwData.forEach(function(link) {
       var parts = (link.Enlace2||'').split(' - ').map(function(p){ return p.trim(); }).filter(Boolean);
-      var coords = [[pc(link.LAT_A), pc(link.LONG_A)], [pc(link.LAT_B), pc(link.LONG_B)]];
+      var coords = [
+        [parseCoord(link.LAT_A), parseCoord(link.LONG_A)],
+        [parseCoord(link.LAT_B), parseCoord(link.LONG_B)]
+      ];
       parts.slice(0,2).forEach(function(eid, idx) {
-        if (coords[idx][0] && coords[idx][1] && eid && !coordMap[eid]) coordMap[eid] = coords[idx];
+        var lat = coords[idx][0], lon = coords[idx][1];
+        if (eid && !isNaN(lat) && !isNaN(lon) && lat && lon && !coordMap[eid]) {
+          coordMap[eid] = [lat, lon];
+        }
       });
     });
+
+    // 3) Hubs FO
     foData.forEach(function(hub) {
-      var m = (hub.HUB||'').match(/\((\w+)\)/);
-      var eid = m ? m[1] : (hub.NEName||'');
-      var lat = pc(hub.LAT_A), lon = pc(hub.LONG_A);
-      if (lat && lon && eid && !coordMap[eid]) coordMap[eid] = [lat, lon];
+      var m2 = (hub.HUB||'').match(/\((\w+)\)/);
+      var eid = m2 ? m2[1] : (hub.NEName||'');
+      var lat = parseCoord(hub.LAT_A), lon = parseCoord(hub.LONG_A);
+      if (eid && !isNaN(lat) && !isNaN(lon) && lat && lon && !coordMap[eid]) {
+        coordMap[eid] = [lat, lon];
+      }
     });
 
-    salvarMapaDados(coordMap, mwData, foData);
-    return { coordMap: coordMap, mwData: mwData, foData: foData, coordCount: Object.keys(coordMap).length };
+    salvarMapaDados(coordMap, mwData, foData, markerData);
+    return {
+      coordMap: coordMap, mwData: mwData, foData: foData, markerData: markerData,
+      coordCount: Object.keys(coordMap).length, siteCount: markerData.length
+    };
   }
   TRJ.mapaParseGenesis = parseGenesisParaMapa;
 
@@ -86,10 +122,10 @@
     var tasks     = data.tasksEnriched     || [];
 
     // Dados de mapa: contexto (prioritário) > localStorage > vazio
-    // O contexto já vem preenchido pelo dashboard público quando carrega o snapshot.
-    var coordMap = ctx.mapaCoordMap || loadLS(LS_COORDS) || {};
-    var mwData   = ctx.mapaMwData   || loadLS(LS_MW)     || [];
-    var foData   = ctx.mapaFoData   || loadLS(LS_FO)     || [];
+    var coordMap    = ctx.mapaCoordMap || loadLS(LS_COORDS)  || {};
+    var mwData      = ctx.mapaMwData   || loadLS(LS_MW)      || [];
+    var foData      = ctx.mapaFoData   || loadLS(LS_FO)      || [];
+    var mapaMarkers = loadLS(LS_MARKERS) || [];  // sites fora do Genesis Mapa (markerData)
 
     // ── Construir lookup ENDID → {site} a partir das tarefas ─
     var siteByEndId = {};
@@ -459,8 +495,8 @@
       sitesFlag0Raw = sitesList.filter(function(s){ return _getFlag(s) === '0'; });
 
       sitesFlag1.forEach(function(site) {
-        var lat = parseFloat(site.latitude || site.lat || '');
-        var lon = parseFloat(site.longitude || site.lon || '');
+        var lat = parseCoord(site.Latitude || site.latitude || site.lat || '');
+        var lon = parseCoord(site.Longitude || site.longitude || site.lon || '');
         if (isNaN(lat) || isNaN(lon)) { cSemCoord++; return; }
 
         var eid    = (site.ENDID || site.endId || '').trim();
@@ -516,8 +552,8 @@
 
       // FLAG 0
       sitesFlag0Raw.forEach(function(site) {
-        var lat = parseFloat(site.latitude||site.lat||'');
-        var lon = parseFloat(site.longitude||site.lon||'');
+        var lat = parseCoord(site.Latitude||site.latitude||site.lat||'');
+        var lon = parseCoord(site.Longitude||site.longitude||site.lon||'');
         if (isNaN(lat) || isNaN(lon)) return;
         var eid  = (site.ENDID||site.endId||'').trim();
         var nome = site.NEName || site.nome || siteByEndId[eid] || eid;
@@ -746,9 +782,15 @@
       reader.onload = function(ev) {
         var result = parseGenesisParaMapa(ev.target.result);
         coordMap = result.coordMap; mwData = result.mwData; foData = result.foData;
-        U.toast('Genesis: ' + result.coordCount + ' coords importadas.', 'ok');
+        mapaMarkers = result.markerData || [];
+        U.toast('Genesis: ' + result.siteCount + ' sites / ' + result.coordCount + ' coords importadas.', 'ok');
         fileInput.value = '';
-        getLeaflet(function() { initMap(); renderComCoordMap(); renderEstaticos(); });
+        getLeaflet(function() {
+          initMap();
+          if (mapaMarkers.length) renderSites(mapaMarkers);
+          else renderComCoordMap();
+          renderEstaticos();
+        });
       };
       reader.readAsText(file, 'utf-8');
     });
@@ -786,19 +828,23 @@
     };
 
     // ── Iniciar mapa automaticamente se tiver dados ────────────
-    var temMW     = mwData.length > 0;
-    var temCoords = Object.keys(coordMap).length > 0;
-    var temInc    = incidents.filter(function(i){ return (i.statusTrat||'').toUpperCase()!=='RESOLVIDO'; }).length > 0;
+    var temMW       = mwData.length > 0;
+    var temMarkers  = mapaMarkers.length > 0;
+    var temCoords   = Object.keys(coordMap).length > 0;
+    var temInc      = incidents.filter(function(i){ return (i.statusTrat||'').toUpperCase()!=='RESOLVIDO'; }).length > 0;
 
     getLeaflet(function() {
       initMap();
-      // Renderiza sites PRIMEIRO (popula sitesFlag1) — depois os enlaces MW/FO
-      // usam essa informação para saber quais linhas conectam a sites fora.
-      if (temCoords || temInc) {
+      // Prioridade de renderização:
+      // 1) mapaMarkers (do Genesis Mapa HTML — tem coords reais + campo tempo)
+      // 2) coordMap + incidentes (fallback para dados importados sem markerData)
+      if (temMarkers) {
+        renderSites(mapaMarkers);
+      } else if (temCoords || temInc) {
         renderComCoordMap();
       }
-      renderEstaticos(); // MW e FO — já sabe quais eids estão em FLAG 1
-      if (!temCoords && !temInc) {
+      renderEstaticos(); // MW e FO — calculado após sitesFlag1 ser populado
+      if (!temMarkers && !temCoords && !temInc) {
         U.toast('Clique em "Buscar sites (ponte + VPN)" ou "Importar Genesis HTML" para carregar os marcadores.', 'ok');
       }
     });
