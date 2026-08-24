@@ -1098,37 +1098,52 @@
   // Ícone de folha SVG: verde = tem update, laranja = verificando acionamento, vermelho = sem update.
   U.ultimoUpdateCell = function (incident, tasksEnriched) {
     var m = tskAberta(incident, tasksEnriched);
-    if (!m) return h('span', { style: { color: 'var(--trj-muted)' }, text: '—' });
 
-    var resultado = classificarUltimoBloco(m.motivoCancelamento);
+    // Classificar a partir do diário TSK se disponível
+    var resultado = m ? classificarUltimoBloco(m.motivoCancelamento) : { estado: 'sem', dt: null, texto: null };
+
+    // Fallback: se o diário não tem entrada válida, usa o timestamp do detalhe Genesis
+    if (resultado.estado === 'sem' && incident.ultimaAtGenesis) {
+      var genesisAt = new Date(incident.ultimaAtGenesis);
+      if (!isNaN(genesisAt.getTime())) {
+        var agNow = new Date();
+        var ehHoje = genesisAt.getDate() === agNow.getDate() &&
+                     genesisAt.getMonth() === agNow.getMonth() &&
+                     genesisAt.getFullYear() === agNow.getFullYear();
+        resultado = { estado: ehHoje ? 'ok' : 'antigo', dt: genesisAt, texto: 'Genesis: ' + incident.ultimaAtGenesis };
+      }
+    }
+
     var estado = resultado.estado;
     var textoCompleto = resultado.texto;
 
     function abrirModal(ev) {
       ev.stopPropagation();
-      var dois = extrairDoisBlocosMaisRecentes(m.motivoCancelamento || '');
-      var conteudoModal = dois.length > 1
-        ? '── Último ──\n\n' + dois[0] + '\n\n── Penúltimo ──\n\n' + dois[1]
-        : (textoCompleto || '—');
+      var conteudoModal;
+      if (m && m.motivoCancelamento) {
+        var dois = extrairDoisBlocosMaisRecentes(m.motivoCancelamento || '');
+        conteudoModal = dois.length > 1
+          ? '── Último ──\n\n' + dois[0] + '\n\n── Penúltimo ──\n\n' + dois[1]
+          : (textoCompleto || '—');
+      } else {
+        conteudoModal = 'Última atualização registrada no Genesis:\n' + (incident.ultimaAtGenesis || '—');
+      }
       var cid = h('div', { style: { whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace,monospace', fontSize: '12px', maxHeight: '60vh', overflowY: 'auto', padding: '12px', lineHeight: '1.6', background: 'var(--trj-card2)', borderRadius: '8px' }, text: conteudoModal });
-      U.openModal((estado === 'acionamento' ? 'Acionamento' : 'Último Update') + ' — ' + (m.osNumero || ''), cid);
+      U.openModal((estado === 'acionamento' ? 'Acionamento' : 'Último Update') + ' — ' + ((m && m.osNumero) || incident.enderecoId || ''), cid);
     }
 
     if (estado === 'sem') {
-      // Só ponto pulsante vermelho — sem nenhum texto, sem botão (não clicável)
       return h('span', {
         style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px' },
-        title: 'Sem atualização do técnico'
+        title: 'Sem atualização'
       }, [h('span', { class: 'trj-pulse-dot' })]);
     }
 
-    // Tooltip com preview da última atualização (hover mostra info sem clicar)
     var previewHover = (textoCompleto || '')
       .replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?\s+-?\s*/, '')
       .trim().slice(0, 120);
 
     if (estado === 'acionamento') {
-      // Ícone de folha laranja — acionamento em andamento
       var btnAc = h('button', {
         class: 'trj-btn',
         style: { background: 'transparent', border: 'none', padding: '2px 4px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: 'var(--trj-primary)', opacity: '0.85' },
@@ -1138,7 +1153,6 @@
       return btnAc;
     }
 
-    // Estado 'antigo' — ícone de folha com brilho amarelo/muted + badge de data
     if (estado === 'antigo') {
       var dtLabel = '';
       if (resultado.dt) {
@@ -1158,7 +1172,6 @@
       return btnAnt;
     }
 
-    // Estado 'ok' — ícone de folha verde, tooltip com preview
     return h('button', {
       class: 'trj-btn',
       style: { background: 'transparent', border: 'none', padding: '2px 4px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: 'var(--trj-green)', opacity: '0.85' },

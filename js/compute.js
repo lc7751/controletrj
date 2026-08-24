@@ -191,11 +191,12 @@
     filtros = filtros || {};
     var now = Date.now();
     var regiaoFiltro = filtros.regiao || 'TODAS';
-    var prioridadeFiltro = filtros.prioridade || 'TODAS';
+    var prioFiltros = filtros.prioridades && filtros.prioridades.length ? filtros.prioridades
+      : (filtros.prioridade && filtros.prioridade !== 'TODAS' ? [filtros.prioridade] : []);
 
     var tasks = tasksEnriched.filter(function (t) {
       if (regiaoFiltro !== 'TODAS' && (t.regiao || 'OTHERS') !== regiaoFiltro) return false;
-      if (prioridadeFiltro !== 'TODAS' && up(t.prioridade) !== prioridadeFiltro) return false;
+      if (prioFiltros.length && prioFiltros.indexOf(up(t.prioridade)) < 0) return false;
       return true;
     });
 
@@ -492,7 +493,9 @@
     filtros = filtros || {};
     var tasks = tasksEnriched.filter(function (t) {
       if (filtros.regiao && filtros.regiao !== 'TODAS' && (t.regiao || 'OTHERS') !== filtros.regiao) return false;
-      if (filtros.prioridade && filtros.prioridade !== 'TODAS' && up(t.prioridade) !== filtros.prioridade) return false;
+      var _pf = filtros.prioridades && filtros.prioridades.length ? filtros.prioridades
+        : (filtros.prioridade && filtros.prioridade !== 'TODAS' ? [filtros.prioridade] : []);
+      if (_pf.length && _pf.indexOf(up(t.prioridade)) < 0) return false;
       return true;
     });
     var sep = D.separarTicketsManuais(tasks);

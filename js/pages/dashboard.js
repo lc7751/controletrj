@@ -2,7 +2,7 @@
 (function (TRJ) {
   TRJ.pages = TRJ.pages || {};
   var U = TRJ.ui, C = TRJ.constants, Comp = TRJ.compute;
-  var state = { regiao: 'TODAS', prioridade: 'TODAS' };
+  var state = { regiao: 'TODAS', prioridades: [] };
 
   TRJ.pages.dashboard = function (container, ctx) {
     var data = ctx.data, app = ctx.app;
@@ -25,10 +25,35 @@
       [U.h('option', { value: 'TODAS', text: 'Todas as regiões' })].concat(C.REGIOES.map(function (r) {
         return U.h('option', { value: r, text: C.REGIAO_LABELS[r] || r, selected: f.regiao === r ? 'selected' : null });
       })));
-    var selPri = U.h('select', { class: 'trj-select', style: { width: 'auto' }, onchange: function () { state.prioridade = this.value; app.render(); } },
-      [U.h('option', { value: 'TODAS', text: 'Todas as prioridades' })].concat(C.PRIORIDADES.map(function (p) {
-        return U.h('option', { value: p, text: p, selected: f.prioridade === p ? 'selected' : null });
-      })));
+    var selPri = (function () {
+      var wrap = U.h('div', { style: { display: 'flex', gap: '3px', flexWrap: 'wrap', alignItems: 'center' } });
+      function mkChip(lbl, ativo, onclick) {
+        return U.h('button', {
+          class: 'trj-btn trj-btn-ghost',
+          style: {
+            fontSize: '10px', padding: '2px 7px', borderRadius: '20px',
+            background: ativo ? 'rgba(255,140,0,.25)' : 'rgba(255,255,255,.06)',
+            color: ativo ? 'var(--trj-primary)' : 'var(--trj-muted)',
+            border: '1px solid ' + (ativo ? 'var(--trj-primary)' : 'rgba(255,255,255,.12)'),
+            fontWeight: ativo ? '700' : '400', cursor: 'pointer'
+          },
+          text: lbl, onclick: onclick
+        });
+      }
+      wrap.appendChild(mkChip('Todas', !state.prioridades.length, function () { state.prioridades = []; app.render(); }));
+      (C.PRIORIDADES || []).forEach(function (p) {
+        var ativo = state.prioridades.indexOf(p) >= 0;
+        wrap.appendChild(mkChip(p, ativo, function (pp) {
+          return function () {
+            var idx = state.prioridades.indexOf(pp);
+            if (idx >= 0) state.prioridades.splice(idx, 1);
+            else state.prioridades.push(pp);
+            app.render();
+          };
+        }(p)));
+      });
+      return wrap;
+    }());
     var btnWa = U.h('button', { class: 'trj-btn trj-btn-ghost', text: '📱 Copiar resumo', onclick: function () { copiarResumo(d); } });
     var btnExcel = U.h('button', {
       class: 'trj-btn clickable',
@@ -119,7 +144,7 @@
     function gerarTextoSitesFora(regiaoFiltro) {
       // Filtro efetivo: parâmetro explícito OU filtro do dashboard
       var regiaoEfetiva = regiaoFiltro || (state.regiao !== 'TODAS' ? state.regiao : null);
-      var prioFiltro    = state.prioridade !== 'TODAS' ? state.prioridade : null;
+      var prioFiltros   = state.prioridades || [];
 
       var incAtivos = (data.incidentsEnriched || []).filter(function(inc){
         return (inc.statusTrat||'').toUpperCase() !== 'RESOLVIDO' &&
@@ -162,8 +187,8 @@
           var tsk = U.tskAberta ? U.tskAberta(mainInc, tasksEnriched) : null;
           var tf = tsk ? tasksEnriched.filter(function(t){ return t.osNumero === tsk.osNumero; })[0] : null;
           // Filtro de prioridade: se há filtro ativo e a TSK não bate, pular
-          if (prioFiltro && tf && tf.prioridade !== prioFiltro) return;
-          if (prioFiltro && !tf) return; // sem TSK e filtro de prio ativo: ignorar
+          if (prioFiltros.length && tf && prioFiltros.indexOf(tf.prioridade) < 0) return;
+          if (prioFiltros.length && !tf) return; // sem TSK e filtro de prio ativo: ignorar
 
           // Só conta como "com TSK" se o tipo for Manutenção Corretiva.
           // TSK manual (outro tipo) é tratada como SEM TSK para fins de cópia.
@@ -218,7 +243,7 @@
     function gerarTextoPrazosRegiao(regiaoFiltro, bucketIdx) {
       var now = Date.now();
       var regiaoEfetiva = regiaoFiltro || (state.regiao !== 'TODAS' ? state.regiao : null);
-      var prioFiltro    = state.prioridade !== 'TODAS' ? state.prioridade : null;
+      var prioFiltros   = state.prioridades || [];
       // Dedup: um row por TSK (o mais recente), igual ao critério do gráfico
       var _dedup = TRJ.domain && TRJ.domain.dedupPorTsk;
       var dedup = _dedup ? _dedup(data.tasksEnriched || []) : (data.tasksEnriched || []);
@@ -227,7 +252,7 @@
         if (s !== 'NÃO INICIADO' && s !== 'NAO INICIADO' && s !== 'INICIADO') return false;
         if (t.statusSla !== 'DENTRO DO SLA' || !t.vencimentoCalc) return false;
         if (regiaoEfetiva && (t.regiao||'OTHERS') !== regiaoEfetiva) return false;
-        if (prioFiltro && t.prioridade !== prioFiltro) return false;
+        if (prioFiltros.length && prioFiltros.indexOf(t.prioridade) < 0) return false;
         var rest = Math.round((new Date(t.vencimentoCalc).getTime() - now) / 60000);
         if (rest < 0 || rest > 390) return false; // mesmo limite do gráfico (390min)
         if (bucketIdx != null) {

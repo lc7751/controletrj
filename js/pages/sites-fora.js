@@ -142,8 +142,21 @@
         var agora = Date.now();
         base = base.filter(function(r) {
           if ((r.statusTrat || '').toUpperCase() === 'RESOLVIDO') return false;
-          if (!r.ultimaAtGenesis) return true;
-          return (agora - new Date(r.ultimaAtGenesis).getTime()) > 3600000;
+          // Verificar diário TSK (entradas humanas válidas)
+          var tskTs = 0;
+          if (U.tskAberta && U.classificarUltimoBloco) {
+            var tskM = U.tskAberta(r, tasksEnriched);
+            if (tskM && tskM.motivoCancelamento) {
+              var bl = U.classificarUltimoBloco(tskM.motivoCancelamento);
+              if (bl && bl.dt) tskTs = bl.dt.getTime();
+            }
+          }
+          // Timestamp do detalhe Genesis
+          var genTs = r.ultimaAtGenesis ? new Date(r.ultimaAtGenesis).getTime() : 0;
+          // Usar o mais recente das duas fontes
+          var latest = Math.max(tskTs, genTs);
+          if (!latest) return true; // nenhuma atualização
+          return (agora - latest) > 3600000;
         });
       }
 
