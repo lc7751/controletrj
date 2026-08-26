@@ -74,7 +74,9 @@
   // Formato 2 (Data-Nome): DD/MM/YYYY HH:MM:SS - NOME COMPLETO
   var RE_TLP_A    = /TLP-T\d+-([^-\r\n]{3,60}?)\s*-\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
   var RE_DTNAME_A = /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?)\s*-\s*([^\r\n]{5,80})/g;
-  var RE_BOT_A    = /^(MONITOR\s*CCI|WFM\s*Agent|isoc_fixa|[Aa]utoma[çc][aã]o|Sistema\s*autom)/i;
+  var RE_TS_A     = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}:\d{2}(?::\d{2})?)/g;
+  // Bot filter: nomes de sistemas automáticos (início) OU "(Anotações de trabalho)" em qualquer posição
+  var RE_BOT_A = /^(?:MONITOR\s*CCI|WFM\s*Agent|isoc_fixa|[Aa]utoma[çc][aã]o|Sistema\s*autom|System\b|Raio-X|dsoc_[a-z_]|taischatbot|\w+chatbot)|\(anota/i;
 
   function parseTlpEntriesA(texto) {
     if (!texto) return [];
@@ -94,6 +96,18 @@
       if (!p2) continue;
       var dt2 = new Date(+p2[3], +p2[2]-1, +p2[1], +p2[4], +p2[5], p2[6]?+p2[6]:0);
       if (!isNaN(dt2.getTime())) entries.push({ dt: dt2, author: nome, content: '' });
+    }
+    // Formato 3: bloco "ATUALIZAÇÃO GMG" — localiza timestamp anterior mais próximo
+    var RE_GMG_A = /ATUALIZA[ÇC][AÃ]O\s+GMG/gi;
+    RE_GMG_A.lastIndex = 0;
+    while ((m = RE_GMG_A.exec(texto)) !== null) {
+      var before = texto.substring(0, m.index);
+      var reScan = new RegExp(RE_TS_A.source, 'g');
+      var tsMatch = null, tsMt;
+      while ((tsMt = reScan.exec(before)) !== null) tsMatch = tsMt;
+      if (!tsMatch) continue;
+      var dtGmg = parseTimestamp(tsMatch[1]);
+      if (!isNaN(dtGmg.getTime())) entries.push({ dt: dtGmg, author: 'GMG', content: '' });
     }
     return entries.sort(function (a, b) { return a.dt - b.dt; });
   }

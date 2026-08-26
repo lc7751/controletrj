@@ -75,7 +75,7 @@ body { min-height: 100vh; }
   var raw = { tasksEnriched: [], incidentsEnriched: [] };
   var savedAt = null;
   var view = 'welcome';
-  var state = { regiao: 'TODAS', prioridade: 'TODAS' };
+  var state = { regiao: 'TODAS', prioridades: [] };
 
   var REGIAO_ICONS_SVG = {
     'INTERIOR': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="26" height="26"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
@@ -295,7 +295,7 @@ body { min-height: 100vh; }
   }
 
   function escolherRegiao(r) {
-    state.regiao = r; state.prioridade = 'TODAS'; view = 'dashboard'; renderDashboard();
+    state.regiao = r; state.prioridades = []; view = 'dashboard'; renderDashboard();
   }
 
   // ── Helpers de cópia ────────────────────────────────────────────────────────
@@ -322,35 +322,15 @@ body { min-height: 100vh; }
     }
   }
 
-  // Calcula tempo desde a última atualização real do BG (analisa bloco mais recente)
+  // Calcula tempo desde a última atualização humana válida (delega ao U.classificarUltimoBloco)
   function calcUpdateStr(bg) {
     if (!bg) return 'SEM ATUALIZAÇÃO';
-    var texto = bg.toString();
-    var re = /(\d{4}[\/\-]\d{2}[\/\-]\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)/g;
-    var matches = [], m;
-    while ((m = re.exec(texto)) !== null) {
-      var dt = U.parseDataHoraBG ? U.parseDataHoraBG(m[1]) : null;
-      if (dt && !isNaN(dt.getTime())) matches.push({ dt: dt, idx: m.index });
-    }
-    if (!matches.length) return 'SEM ATUALIZAÇÃO';
-    matches.sort(function (a, b) { return b.dt - a.dt; });
-    var maisRec = matches[0];
-    var allByIdx = matches.slice().sort(function (a, b) { return a.idx - b.idx; });
-    var posInIdx = allByIdx.findIndex(function (x) { return x.idx === maisRec.idx; });
-    var endIdx = (posInIdx + 1 < allByIdx.length) ? allByIdx[posInIdx + 1].idx : texto.length;
-    var bloco = texto.slice(maisRec.idx, endIdx);
-    var blocoUp = bloco.toUpperCase();
-    var MONITOR_FRASES = ['IDENTIFICAMOS SEU REPARO NA FILA DA TLP', 'IDENTIFICAMOS ALARMES RELACIONADOS AO SEU REPARO'];
-    var ehMonitor = /MONITOR\s*CCI/i.test(bloco) && MONITOR_FRASES.some(function (f) { return blocoUp.indexOf(f) >= 0; });
-    var ehWFMForm = /WFM\s*Agent/i.test(bloco) && blocoUp.indexOf('ANOTAÇÕES DE TRABALHO') >= 0 &&
-      (['NOME DA OPERADORA', 'A ATIVIDADE VAI OCASIONAR', 'MOTIVO DA VISITA TÉCNICA']
-        .filter(function (f) { return blocoUp.indexOf(f) >= 0; }).length >= 2);
-    var ehGMGBot = /WFM\s*Agent/i.test(bloco) &&
-      blocoUp.indexOf('ALTERAÇÃO NO ENVIO') >= 0 &&
-      blocoUp.indexOf('JUSTIFICATIVA DA SELEÇÃO') >= 0 &&
-      blocoUp.indexOf('DATA DE ATIVAÇÃO DO GERADOR') >= 0;
-    if (ehMonitor || ehWFMForm || ehGMGBot) return 'SEM ATUALIZAÇÃO';
-    var diffMin = Math.round((Date.now() - maisRec.dt.getTime()) / 60000);
+    if (!U.classificarUltimoBloco) return 'SEM ATUALIZAÇÃO';
+    var res = U.classificarUltimoBloco(bg.toString());
+    if (res.estado === 'sem') return 'SEM ATUALIZAÇÃO';
+    if (res.estado === 'acionamento') return 'VERIFICANDO ACIONAMENTO';
+    if (!res.dt) return 'SEM ATUALIZAÇÃO';
+    var diffMin = Math.round((Date.now() - res.dt.getTime()) / 60000);
     if (diffMin < 0) return 'ATUALIZADO AGORA';
     if (diffMin < 60) return 'ATUALIZADO A ' + diffMin + 'min';
     var h = Math.floor(diffMin / 60), mn = diffMin % 60;
@@ -360,7 +340,7 @@ body { min-height: 100vh; }
   // Geração de texto Sites Fora — respeita filtros ativos, agrupa por END_ID
   function gerarTextoSitesFora(regiaoFiltro) {
     var regiaoEfetiva = regiaoFiltro || (state.regiao !== 'TODAS' ? state.regiao : null);
-    var prioFiltro = state.prioridade !== 'TODAS' ? state.prioridade : null;
+    var prioFiltros = state.prioridades || [];
     var incAtivos = (raw.incidentsEnriched || []).filter(function (inc) {
       return (inc.statusTrat || '').toUpperCase() !== 'RESOLVIDO' &&
         (!regiaoEfetiva || (inc.regiao || 'OTHERS') === regiaoEfetiva);
@@ -389,8 +369,8 @@ body { min-height: 100vh; }
       regioesMapa[r].forEach(function (grupo) {
         var tsk = U.tskAberta ? U.tskAberta(grupo.mainInc, tasks) : null;
         var tf = tsk ? tasks.filter(function (t) { return t.osNumero === tsk.osNumero; })[0] : null;
-        if (prioFiltro && tf && tf.prioridade !== prioFiltro) return;
-        if (prioFiltro && !tf) return;
+        if (prioFiltros.length && tf && prioFiltros.indexOf(tf.prioridade) < 0) return;
+        if (prioFiltros.length && !tf) return;
         if (tsk) comTSK.push({ grupo: grupo, tsk: tsk, tf: tf });
         else semTSK.push(grupo);
       });
@@ -417,11 +397,11 @@ body { min-height: 100vh; }
   function gerarTextoPrazosRegiao(regiaoFiltro) {
     var now = Date.now();
     var regiaoEfetiva = regiaoFiltro || (state.regiao !== 'TODAS' ? state.regiao : null);
-    var prioFiltro = state.prioridade !== 'TODAS' ? state.prioridade : null;
+    var prioFiltros = state.prioridades || [];
     var tasksVenc = (raw.tasksEnriched || []).filter(function (t) {
       return t.statusSla === 'DENTRO DO SLA' && t.vencimentoCalc &&
         (!regiaoEfetiva || (t.regiao || 'OTHERS') === regiaoEfetiva) &&
-        (!prioFiltro || t.prioridade === prioFiltro);
+        (!prioFiltros.length || prioFiltros.indexOf(t.prioridade) >= 0);
     });
     var regioesMapa = {};
     tasksVenc.forEach(function (t) {
@@ -467,7 +447,7 @@ body { min-height: 100vh; }
       ['FORA DO SLA', K.foraSla||0], ['BACKLOG TOTAL', K.backlogTotal||0],
       ['BACKLOG INDEFINIDO', K.backlogIndef||0], ['PREDITIVA', K.preditiva||0],
       ['PRODUTIVIDADE', K.produtividade||0], ['SLA GERAL (%)', K.slaGeral||0],
-      ['REGION', state.regiao], ['PRIORIDADE', state.prioridade],
+      ['REGION', state.regiao], ['PRIORIDADE', state.prioridades && state.prioridades.length ? state.prioridades.join(',') : 'TODAS'],
       ['GERADO EM', new Date().toLocaleString('pt-BR')]
     ], [40, 20]);
     var D2 = TRJ.domain;
@@ -521,17 +501,38 @@ body { min-height: 100vh; }
       U.h('span', { class: 'dot' }),
       U.h('span', { text: savedAt ? 'Atualizado em ' + new Date(savedAt).toLocaleString('pt-BR') : 'Dados publicados' })
     ]);
-    // Filtro de prioridade
-    var prioSelect = U.h('select', {
-      class: 'trj-btn trj-btn-ghost',
-      style: { padding: '4px 10px', fontSize: '12px', cursor: 'pointer', border: '1px solid rgba(255,255,255,.15)', borderRadius: '6px', background: 'var(--trj-card2)', color: 'var(--trj-text)' }
-    }, [U.h('option', { value: 'TODAS', text: 'Todas as prioridades' })]
-    .concat(['P1','P2','P3','P4','P5'].map(function(p){ return U.h('option', { value: p, text: p }); })));
-    prioSelect.value = state.prioridade || 'TODAS';
-    prioSelect.addEventListener('change', function () {
-      state.prioridade = prioSelect.value;
-      root.innerHTML = ''; renderDashboard();
-    });
+    // Filtro de prioridade — chips multi-select
+    var prioSelect = (function () {
+      var wrap = U.h('div', { style: { display: 'flex', gap: '3px', flexWrap: 'wrap', alignItems: 'center' } });
+      function mkChip(lbl, ativo, onclick) {
+        return U.h('button', {
+          class: 'trj-btn trj-btn-ghost',
+          style: {
+            fontSize: '10px', padding: '2px 7px', borderRadius: '20px',
+            background: ativo ? 'rgba(255,140,0,.25)' : 'rgba(255,255,255,.06)',
+            color: ativo ? 'var(--trj-primary)' : 'var(--trj-muted)',
+            border: '1px solid ' + (ativo ? 'var(--trj-primary)' : 'rgba(255,255,255,.12)'),
+            fontWeight: ativo ? '700' : '400', cursor: 'pointer'
+          },
+          text: lbl, onclick: onclick
+        });
+      }
+      wrap.appendChild(mkChip('Todas', !state.prioridades.length, function () {
+        state.prioridades = []; root.innerHTML = ''; renderDashboard();
+      }));
+      ['P1','P2','P3','P4','P5'].forEach(function (p) {
+        var ativo = state.prioridades.indexOf(p) >= 0;
+        wrap.appendChild(mkChip(p, ativo, function (pp) {
+          return function () {
+            var idx = state.prioridades.indexOf(pp);
+            if (idx >= 0) state.prioridades.splice(idx, 1);
+            else state.prioridades.push(pp);
+            root.innerHTML = ''; renderDashboard();
+          };
+        }(p)));
+      });
+      return wrap;
+    }());
 
     root.appendChild(U.h('div', { class: 'pub-topbar' }, [
       btnVoltar,

@@ -935,8 +935,10 @@
     for (var j = 0; j < FRASES_PADRAO_BOT_PARCIAIS.length; j++) {
       if (t.indexOf(FRASES_PADRAO_BOT_PARCIAIS[j]) >= 0) return true;
     }
-    // Formulário WFM Agent puro (sem anotação humana)
-    if (t.indexOf('ALTERAÇÃO NO ENVIO') >= 0 && t.indexOf('JUSTIFICATIVA DA SELEÇÃO') >= 0 && t.indexOf('DATA DE ATIVAÇÃO DO GERADOR') >= 0) return true;
+    // Formulário auto de GMG (WFM/System) — mas só se não houver bloco manual "ATUALIZAÇÃO GMG"
+    if (t.indexOf('ALTERAÇÃO NO ENVIO') >= 0 && t.indexOf('JUSTIFICATIVA DA SELEÇÃO') >= 0 && t.indexOf('DATA DE ATIVAÇÃO DO GERADOR') >= 0) {
+      if (t.indexOf('ATUALIZAÇÃO GMG') < 0) return true;
+    }
     return false;
   }
 
@@ -1010,7 +1012,8 @@
   // Bots/sistemas nunca geram o formato TLP-T; no Formato 2 são filtrados pelo nome.
   var RE_TLP_UI    = /TLP-T\d+-([^-\r\n]{3,60}?)\s*-\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)/g;
   var RE_DTNAME_UI = /(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?)\s*-\s*([^\r\n]{5,80})/g;
-  var RE_BOT_UI    = /^(MONITOR\s*CCI|WFM\s*Agent|isoc_fixa|[Aa]utoma[çc][aã]o|Sistema\s*autom)/i;
+  // Bot filter: nomes de sistemas automáticos (início) OU "(Anotações de trabalho)" em qualquer posição
+  var RE_BOT_UI = /^(?:MONITOR\s*CCI|WFM\s*Agent|isoc_fixa|[Aa]utoma[çc][aã]o|Sistema\s*autom|System\b|Raio-X|dsoc_[a-z_]|taischatbot|\w+chatbot)|\(anota/i;
   function parseTlpEntries(texto) {
     if (!texto) return [];
     var entries = [], m;
@@ -1031,6 +1034,18 @@
       if (!p2) continue;
       var dt2 = new Date(+p2[3], +p2[2]-1, +p2[1], +p2[4], +p2[5], p2[6]?+p2[6]:0);
       if (!isNaN(dt2.getTime())) entries.push({ dt: dt2, author: nome });
+    }
+    // Formato 3: bloco "ATUALIZAÇÃO GMG" — localiza timestamp anterior mais próximo
+    var RE_GMG_UI = /ATUALIZA[ÇC][AÃ]O\s+GMG/gi;
+    RE_GMG_UI.lastIndex = 0;
+    while ((m = RE_GMG_UI.exec(texto)) !== null) {
+      var before = texto.substring(0, m.index);
+      var RE_TS = new RegExp(BG_TIMESTAMP_RE.source, 'g');
+      var tsMatch = null, tsMt;
+      while ((tsMt = RE_TS.exec(before)) !== null) tsMatch = tsMt;
+      if (!tsMatch) continue;
+      var dtGmg = parseDataHoraBG(tsMatch[1]);
+      if (dtGmg && !isNaN(dtGmg.getTime())) entries.push({ dt: dtGmg, author: 'GMG' });
     }
     entries.sort(function(a, b) { return a.dt - b.dt; });
     return entries;
